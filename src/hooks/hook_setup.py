@@ -19,7 +19,7 @@ _HOOK_SCRIPTS = [
     ("block_rag_docs_layer.py",                  "Bash"),
     ("rewrite_worker_cli_response_noise.py",     "Bash"),
     ("rewrite_worker_cli_capture_noise.py",      "Bash"),
-    ("rewrite_searxng_scrape_noise.py",  "Bash"),
+    ("rewrite_websearch_scrape_noise.py",  "Bash"),
     ("block_unauthorized_background.py",   "Bash"),
     ("block_worker_send_background.py",     "Bash"),
     ("block_busywait_loop.py",              "Bash"),

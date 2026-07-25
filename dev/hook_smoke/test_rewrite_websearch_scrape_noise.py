@@ -3,7 +3,7 @@ import json
 import subprocess
 import sys
 
-HOOK = "src/hooks/rewrite_searxng_scrape_noise.py"
+HOOK = "src/hooks/rewrite_websearch_scrape_noise.py"
 
 # (description, command, expected_rewrite_or_None)
 # None = no rewrite expected (hook should emit nothing and exit 0)
@@ -11,83 +11,83 @@ CASES = [
     # --- positive: noise inside the scrape_url segment is stripped ---
     (
         "> /tmp/file 2>&1 redirect — strip (the actual real-world culprit)",
-        'searxng-cli scrape_url "https://x.com/a" > /tmp/scrape.md 2>&1',
-        'searxng-cli scrape_url "https://x.com/a"',
+        'websearch scrape_url "https://x.com/a" > /tmp/scrape.md 2>&1',
+        'websearch scrape_url "https://x.com/a"',
     ),
     (
         "| head -45 — strip",
-        'searxng-cli scrape_url "https://x.com/a" | head -45',
-        'searxng-cli scrape_url "https://x.com/a"',
+        'websearch scrape_url "https://x.com/a" | head -45',
+        'websearch scrape_url "https://x.com/a"',
     ),
     (
         "2>&1 | head — strip both",
-        'searxng-cli scrape_url "https://x.com/a" 2>&1 | head -45',
-        'searxng-cli scrape_url "https://x.com/a"',
+        'websearch scrape_url "https://x.com/a" 2>&1 | head -45',
+        'websearch scrape_url "https://x.com/a"',
     ),
     (
         "| tail -50 — strip",
-        'searxng-cli scrape_url "https://x.com/a" | tail -50',
-        'searxng-cli scrape_url "https://x.com/a"',
+        'websearch scrape_url "https://x.com/a" | tail -50',
+        'websearch scrape_url "https://x.com/a"',
     ),
     (
         "| sed -n 1,40p — strip",
-        'searxng-cli scrape_url "https://x.com/a" | sed -n "1,40p"',
-        'searxng-cli scrape_url "https://x.com/a"',
+        'websearch scrape_url "https://x.com/a" | sed -n "1,40p"',
+        'websearch scrape_url "https://x.com/a"',
     ),
     (
         "> /tmp/out redirect alone — strip",
-        'searxng-cli scrape_url "https://x.com/a" > /tmp/out.txt',
-        'searxng-cli scrape_url "https://x.com/a"',
+        'websearch scrape_url "https://x.com/a" > /tmp/out.txt',
+        'websearch scrape_url "https://x.com/a"',
     ),
     (
         "cd /path && scrape_url ... | head — strip pipe, keep cd chain",
-        'cd /path && searxng-cli scrape_url "https://x.com/a" | head',
-        'cd /path && searxng-cli scrape_url "https://x.com/a"',
+        'cd /path && websearch scrape_url "https://x.com/a" | head',
+        'cd /path && websearch scrape_url "https://x.com/a"',
     ),
     (
         "scrape_url ... > f ; echo done — strip redirect, keep trailing chain",
-        'searxng-cli scrape_url "https://x.com/a" > /tmp/o.md ; echo done',
-        'searxng-cli scrape_url "https://x.com/a" ; echo done',
+        'websearch scrape_url "https://x.com/a" > /tmp/o.md ; echo done',
+        'websearch scrape_url "https://x.com/a" ; echo done',
     ),
     (
         "scrape_url ... | head || echo fail — strip pipe, keep || chain",
-        'searxng-cli scrape_url "https://x.com/a" | head || echo fail',
-        'searxng-cli scrape_url "https://x.com/a" || echo fail',
+        'websearch scrape_url "https://x.com/a" | head || echo fail',
+        'websearch scrape_url "https://x.com/a" || echo fail',
     ),
     # --- negative: nothing to strip, hook is no-op ---
     (
         "bare scrape_url — no-op",
-        'searxng-cli scrape_url "https://x.com/a"',
+        'websearch scrape_url "https://x.com/a"',
         None,
     ),
     (
         "cd /path && scrape_url ... bare — no-op (chain preserved)",
-        'cd /path && searxng-cli scrape_url "https://x.com/a"',
+        'cd /path && websearch scrape_url "https://x.com/a"',
         None,
     ),
     (
         "scrape_url ... ; bd list — no-op (trailing chain, no pipe in segment)",
-        'searxng-cli scrape_url "https://x.com/a" ; bd list',
+        'websearch scrape_url "https://x.com/a" ; bd list',
         None,
     ),
     (
         "search_web | head — out of scope, no-op",
-        'searxng-cli search_web "rag chunking" | head -40',
+        'websearch search_web "rag chunking" | head -40',
         None,
     ),
     (
         "search_engine_drilldown | head — out of scope, no-op",
-        'searxng-cli search_engine_drilldown "x" --engine duckduckgo | head',
+        'websearch search_engine_drilldown "x" --engine duckduckgo | head',
         None,
     ),
     (
         "download_pdf > file — out of scope, no-op",
-        'searxng-cli download_pdf "https://x.com/a.pdf" > /tmp/log.txt',
+        'websearch download_pdf "https://x.com/a.pdf" > /tmp/log.txt',
         None,
     ),
     (
         "scrape_url inside quoted echo — no-op (token in string, not active)",
-        'echo "searxng-cli scrape_url foo | head"',
+        'echo "websearch scrape_url foo | head"',
         None,
     ),
 ]
@@ -96,7 +96,7 @@ CASES = [
 # ORCHESTRATOR
 
 # Run all cases and print results; exit 1 if any fail
-def test_rewrite_searxng_scrape_noise_workflow() -> None:
+def test_rewrite_websearch_scrape_noise_workflow() -> None:
     failures = []
     for desc, cmd, expected_rewrite in CASES:
         exit_code, rewrite = _run_hook(cmd)
@@ -141,4 +141,4 @@ def _run_hook(command: str):
 
 
 if __name__ == "__main__":
-    test_rewrite_searxng_scrape_noise_workflow()
+    test_rewrite_websearch_scrape_noise_workflow()

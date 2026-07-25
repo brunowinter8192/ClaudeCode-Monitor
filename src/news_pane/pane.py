@@ -14,7 +14,7 @@ from ..input.click_handler import (
     enable_mouse, disable_mouse, read_mouse_event,
 )
 from .log_parser import (
-    TARGET_COLLECTION, SEARXNG_ROOT, read_last_run_ts,
+    TARGET_COLLECTION, WEBSEARCH_ROOT, read_last_run_ts,
     find_log_file, RUN_START_MARKER, RUN_END_MARKER,
 )
 
@@ -132,8 +132,8 @@ def _fetch_chunk_count() -> int | None:
 def _fire_pipeline() -> None:
     global _pipeline_proc
     _pipeline_proc = subprocess.Popen(
-        [str(SEARXNG_ROOT / 'venv' / 'bin' / 'python'), '-m', 'src.news', '--source', 'coindesk'],
-        cwd=str(SEARXNG_ROOT),
+        [str(WEBSEARCH_ROOT / 'venv' / 'bin' / 'python'), '-m', 'src.news', '--source', 'coindesk'],
+        cwd=str(WEBSEARCH_ROOT),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
