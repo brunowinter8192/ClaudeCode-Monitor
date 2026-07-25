@@ -4,8 +4,8 @@ Status: **Stages 1–4 CODE-COMPLETE; LIVE-VERIFY pending (proxy restart require
 
 ## Origin
 
-Two live proxy-pane bugs (issue #5 bundle), both surfaced 2026-06-08:
-- **Green-overlay false-injection** — unchanged content rendered green (injected). Documented arc: `14_green_overlay_false_injection.md`.
+Two live proxy-pane bugs, both surfaced 2026-06-08:
+- **Green-overlay false-injection** — unchanged content rendered green (injected). Documented arc: the green-overlay false-injection entry in this area.
 - **bg-exit double-inject** — `_WAKEUP_TEXT` rendered green TWICE on a single bg-exit block (user screenshot "doppelt der inj gerendert").
 
 ## Layer diagnosis (the key reframing)

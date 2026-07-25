@@ -2,7 +2,7 @@
 
 Iteration history and process findings from the session in which the 5 remaining tracked issues were worked through + a module-split refactor + a skill extension. The state of the code at the time lived in `src/menubar/DOCS.md` (post-split: 8 modules). This file documents how we got there.
 
-## Hook-Based Activity Detection (resolves Issue 1 / Thinking Phase)
+## Hook-Based Activity Detection (Thinking-Phase fix)
 
 **Starting point:** discover.py used JSONL mtime as the working indicator (≤10s = working). While Opus reasons (Anthropic-side, no streaming output), the JSONL doesn't update → falsely "idle".
 
@@ -382,7 +382,7 @@ The `--no-resizable` result refutes the "drop NSWindowStyleMaskResizable" branch
 
 ### Migration outcome
 
-Tracking-area pattern, `hitTest_`, state-driven `resetCursorRects` + `invalidateCursorRectsForView_`, `_CursorlessButton` — alle implementiert und mechanisch korrekt. Events feuern perfekt in production:
+Tracking-area pattern, `hitTest_`, state-driven `resetCursorRects` + `invalidateCursorRectsForView_`, `_CursorlessButton` — all implemented and mechanically correct. Events fire perfectly in production:
 
 | Signal | Count | Interpretation |
 |---|---|---|

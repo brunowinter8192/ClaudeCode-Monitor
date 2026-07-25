@@ -1,6 +1,6 @@
 # Signal-Grace — Fix A (worker_spawn signal) + Fix 6 (worker-cli hooks.json)
 
-## What was open (from initial_design.md)
+## What was open (from the initial design in this area)
 
 **Bug 1 — worker-cli false-working (deferred):** worker-cli used tmux `window_activity` heuristic
 which is bumped by CC UI updates (spinner, cursor blinks). This produces stale `working` reports
@@ -10,7 +10,7 @@ divergent from menubar's hooks.json-based truth. Explicitly deferred in the init
 entries. Newly spawned workers in their initial thinking phase had no signal protection. If the
 worker JSONL-mtime went stale before the first write (common during long thinking phases), the
 menubar would demote to idle → all_idle=True → abort fires. With the original 5s buffer this
-could fire within 5s of spawn; with the 60s buffer (see buffer_60s_bump.md) this window extended
+could fire within 5s of spawn; with the 60s buffer (the 5s→60s bump in this area) this window extended
 to 60s, but the spawn use case was still structurally unprotected.
 
 ## Fix A — worker_spawn writes orchestrator-signal

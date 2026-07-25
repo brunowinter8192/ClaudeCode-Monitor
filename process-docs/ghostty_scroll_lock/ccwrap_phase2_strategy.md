@@ -66,7 +66,7 @@ trigger without altering any visible character or color.
 **Synchronized Output Mode (`CSI ?2026h` / `CSI ?2026l`) is the prime suspect.**
 
 Reasoning:
-1. CC's TUI does a full-screen repaint on every render cycle (`\033[2J\033[H` confirmed in `initial.md` line 71 and smoke test output). Synchronized Output Mode is the standard way to suppress the flicker that would otherwise result from the partial-erase-then-repaint sequence.
+1. CC's TUI does a full-screen repaint on every render cycle (`\033[2J\033[H` confirmed in the initial investigation in this area and smoke test output). Synchronized Output Mode is the standard way to suppress the flicker that would otherwise result from the partial-erase-then-repaint sequence.
 2. `\033[?2026l` (sync OFF) is semantically "I have finished painting a frame — display it now." A terminal that conflates "new frame committed" with "scroll to show latest output" would jump here.
 3. Thinking phases and text streaming do NOT trigger jumps (per original symptom description). Thinking output is streamed without full-screen repaints; it is unlikely to emit sync-output wrappers. Tool_use renders do full repaints → sync wrappers → jump.
 4. The jump correlates with tool_use rendering, not with raw output volume, which is consistent with a per-frame signal rather than a byte-count threshold.

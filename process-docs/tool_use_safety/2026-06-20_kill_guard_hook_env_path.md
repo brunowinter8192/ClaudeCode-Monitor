@@ -43,7 +43,7 @@ Fixed → working worker (kt3) → `worker-cli kill kt3` **BLOCKED**; idle worke
 
 ## Lessons
 
-1. **Hook env ≠ Bash-tool env.** CC hook subprocesses get a stripped PATH (no `~/.local/bin`, no plugin-cache bins). Any subprocess-hook invoking a plugin CLI MUST resolve it by absolute path (`shutil.which` + plugin-cache glob), never by bare name — else `FileNotFoundError` → fail-open → the hook silently never fires. Captured as a `src/hooks/DOCS.md` Gotcha + a Hook 20 note in `pipe07_safety_hooks.md`.
+1. **Hook env ≠ Bash-tool env.** CC hook subprocesses get a stripped PATH (no `~/.local/bin`, no plugin-cache bins). Any subprocess-hook invoking a plugin CLI MUST resolve it by absolute path (`shutil.which` + plugin-cache glob), never by bare name — else `FileNotFoundError` → fail-open → the hook silently never fires. Captured as a `src/hooks/DOCS.md` Gotcha + a Hook 20 note in the pipeline safety-hooks record.
 2. **Instrument the actual execution context.** The PATH hypothesis was raised early, dismissed on Bash-tool evidence, and only in-hook instrumentation proved it. Don't assume the Bash tool's environment equals the hook's.
 3. **Hypothesis ≠ Conclusion.** The "reload" claim was asserted as proof; a pure-regex differential hook (`block_manual_worker_cleanup`) refuted it in one test.
 

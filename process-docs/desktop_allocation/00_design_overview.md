@@ -48,10 +48,10 @@ Phase A of the probe worker found that AppleScript `bounds of (window of termina
 
 ## Stages
 
-1. **Stage 1 — Detection probe** (`dev/desktop_detection/01_probe.py`, commit `fee6566`): DONE. 100% detection success, proven. Cwd-drift bug uncovered + fixed in `1725bfb`. Phase A/B log in `A1_detection_probe.md`.
-2. **Stage 2 — Menubar display desktop number**: ON ICE (2026-05-28). Code-complete across commit chain `15c0319` → `5507c89` → `a719139` → `19986b9` → `3f0f0c7` (spinner-normalize + CGSCopyWindowProperty + .app-bundle wrapper). Detection pipeline cleanly architected and functionally proven — but a TCC restriction for launchd-spawned Python prevents the menubar from seeing owner PIDs for Ghostty windows. Full investigation + future refactor paths in `B1_tcc_responsibility_chain.md`. Next session: py2app or nuitka refactor.
+1. **Stage 1 — Detection probe** (`dev/desktop_detection/01_probe.py`, commit `fee6566`): DONE. 100% detection success, proven. Cwd-drift bug uncovered + fixed in `1725bfb`. Phase A/B log in the detection-probe entry in this area.
+2. **Stage 2 — Menubar display desktop number**: ON ICE (2026-05-28). Code-complete across commit chain `15c0319` → `5507c89` → `a719139` → `19986b9` → `3f0f0c7` (spinner-normalize + CGSCopyWindowProperty + .app-bundle wrapper). Detection pipeline cleanly architected and functionally proven — but a TCC restriction for launchd-spawned Python prevents the menubar from seeing owner PIDs for Ghostty windows. Full investigation + future refactor paths in the TCC-responsibility-chain entry in this area. Next session: py2app or nuitka refactor.
 3. **Stage 3 — Worker placement on the caller's desktop** (`Meta/blank/src/spawn/tmux_spawn.sh:open_tmux_viewer`, commit `cfd0d14`): DONE. After the osascript window spawn, `python3 desktop_targeting.py wait-and-move "$PPID" "Ghostty" 5` is invoked in the background. Functionally verified — TCC unaffected because the helper runs from a CC Bash-subprocess context (screen-recording grant inherited from CC via the responsibility chain).
-4. **Stage 4 — File-open placement** (`Meta/blank/bin/show`, commit `cfd0d14`): DONE. Identical pattern: after `open`, a helper call with `app_name` (CotEditor for md/txt, empty for others → cross-app polling). See `file_open_routing.md` for details. Functionally verified via the helper call from CC context. Caveat: invoking from Terminal.app without screen recording would also fail there — doesn't affect the user-specific use case.
+4. **Stage 4 — File-open placement** (`Meta/blank/bin/show`, commit `cfd0d14`): DONE. Identical pattern: after `open`, a helper call with `app_name` (CotEditor for md/txt, empty for others → cross-app polling). Details in the file-open-routing area. Functionally verified via the helper call from CC context. Caveat: invoking from Terminal.app without screen recording would also fail there — doesn't affect the user-specific use case.
 
 ## Stage 2 — Phase B Implementation (2026-05-28)
 
@@ -85,7 +85,7 @@ Detection successful, 100%, strategy breakdown expected to be `name-unique:2` or
 ## Status (2026-05-28 — Session End)
 
 - **Stage 1** DONE: detection probe `dev/desktop_detection/01_probe.py` — 100% success in shell context, proven
-- **Stage 2** ON ICE: code-complete, but a TCC restriction blocks detection in the launchd-spawned menubar process. User grant for the `Monitor_CC_Menubar.app` bundle was activated, still blocked — root cause identified empirically: `exec` from the Bash launcher to Python loses bundle identity (the audit token at API-call time is Python.app, not our bundle). Full investigation + three refactor paths (py2app / nuitka / shell-helper) documented in `B1_tcc_responsibility_chain.md`. **Resume next session via a tracking task.**
+- **Stage 2** ON ICE: code-complete, but a TCC restriction blocks detection in the launchd-spawned menubar process. User grant for the `Monitor_CC_Menubar.app` bundle was activated, still blocked — root cause identified empirically: `exec` from the Bash launcher to Python loses bundle identity (the audit token at API-call time is Python.app, not our bundle). Full investigation + three refactor paths (py2app / nuitka / shell-helper) documented in the TCC-responsibility-chain entry in this area. **Resume next session.**
 - **Stage 3** DONE: worker-spawn placement — verified the helper detects space_id correctly from a CC Bash-subprocess context (TCC inheritance from CC functional)
 - **Stage 4** DONE: show file-open placement — identical pattern, verified the same way
 - **Cwd-drift bug**: DONE — mains show the project-root name (no longer drifting via JSONL cwd), Cmd+digit focus functional
@@ -111,7 +111,7 @@ Worker `menubar-hotkey-log` was reused after the Phase 5 recap of the hotkey-log
 
 - The pre-approved Phase A plan (in this file above + in the successor prompt)
 - Zero commits — so not a handoff-resume but a fresh spawn with a pre-approved plan
-- The area folder already existed; `A1_detection_probe.md` was to be created by the successor in Phase B
+- The area folder already existed; the detection-probe entry was to be created by the successor in Phase B
 
 ## Sources
 

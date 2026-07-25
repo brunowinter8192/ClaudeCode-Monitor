@@ -16,7 +16,7 @@ Added a preserve-guard in `_apply_role_system_strip`, mirroring the `_PRESERVE_P
 
 - `_TRUNCATION_NOTICE_MARKER = "[Truncated:"` (module constant).
 - Guard placed before the `.`-nuke, after the existing empty/already-`.` idempotency guard: `if isinstance(old_content, str) and old_content.startswith(_TRUNCATION_NOTICE_MARKER): result.append(msg); continue`.
-- Deliberately `startswith` on the prefix, NOT a substring `in` check — anchoring on the exact prefix avoids a false-positive on a doc/tool_result that merely quotes the marker (the same FP-nuke class documented elsewhere in this folder for `bg_launch_ack_anchor.md` and `plan_mode_branch.md` — substring-anywhere matching is the recurring root cause across this whole class of bugs).
+- Deliberately `startswith` on the prefix, NOT a substring `in` check — anchoring on the exact prefix avoids a false-positive on a doc/tool_result that merely quotes the marker (the same FP-nuke class documented elsewhere in this folder for the bg-launch-ack anchor and the plan-mode branch — substring-anywhere matching is the recurring root cause across this whole class of bugs).
 
 ## Downstream attribution — confirmed no separate change needed
 

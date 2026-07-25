@@ -82,4 +82,4 @@ Read-only label text color: explicit `NSForegroundColorAttributeName: NSColor.la
 - Phase-A probe + manual osascript live test
 - AppKit docs: NSView wantsLayer, CALayer backgroundColor
 - See `nsgridview_migration/` for the underlying grid pattern
-- See `ghostty_native_delivery/` for the delivery code path
+- Delivery code path: the Ghostty-native delivery entry in this area

@@ -2,7 +2,7 @@
 
 Process record for the codebase-wide LOC-ceiling cleanup driven by the `iterative-dev-refactor`
 scan (2026-06-09). Clears files >400 LOC (hard ceiling) and functions ≥100 LOC. Distinct from
-`refactor_roadmap.md` (that tracks FUNCTIONAL refactors — menubar/blank/logging-janitor/dolt).
+the roadmap entry in this area (that tracks FUNCTIONAL refactors — menubar/blank/logging-janitor/dolt).
 This campaign is purely structural, behavior-preserving.
 
 ## Scan Baseline (2026-06-09, pre-campaign)

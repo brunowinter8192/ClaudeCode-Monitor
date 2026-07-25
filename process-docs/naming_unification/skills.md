@@ -6,7 +6,7 @@ Part of the naming-unification cleanup. Hard rule (user 2026-06-02): **plugins c
 
 Every skill name = `<plugin-name>-<descriptor>`. Plugin-name prefix → instant attribution. Redundant tool-name in the descriptor is dropped (`gh-cli-search`, NOT `gh-cli-github-search`).
 
-Three places MUST be identical per skill (else drift-error, see tooling.md § drift validation):
+Three places MUST be identical per skill (else drift-error, per the drift validation spec in this area's tooling entry):
 - folder name `skills/<name>/`
 - SKILL.md frontmatter `name:`
 - registration in `plugin.json` `"skills"`

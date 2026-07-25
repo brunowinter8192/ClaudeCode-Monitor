@@ -1,6 +1,6 @@
 # gh-cli Positional-Arg Rewrite Hook (2026-05-28)
 
-**Status:** Proposal. Hook not yet built. Tracked by bead.
+**Status:** Proposal as of 2026-05-28. Hook not yet built.
 
 ## Problem
 

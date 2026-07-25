@@ -1,6 +1,6 @@
 # Proxy Modification Completeness — CC→Proxy→API Traceability
 
-Investigation track (Frage 2 of the proxy investigation). Goal: for every modification the proxy makes
+Investigation track (Question 2 of the proxy investigation). Goal: for every modification the proxy makes
 to a CC request, can we fully reconstruct what CC sent (CC→proxy) from the log alone? Where are the
 gaps — modifications that strip/overwrite without recording the original? Status: pipeline mapped,
 preliminary audit done (error-prone, see corrections), DEEP systematic investigation pending.

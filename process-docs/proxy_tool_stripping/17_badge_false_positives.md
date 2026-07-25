@@ -1,6 +1,6 @@
 # 17 — Badge False-Positives in the Strip/Inject Count
 
-Discovered 2026-06-09 during #12 live-verify of the operation-transcript span-derivation. The
+Discovered 2026-06-09 during live-verify of the operation-transcript span-derivation. The
 REQ-header `{n}strip {n}inj` badge (count of distinct strip/inject fns per request, via
 `_strip_fns_lookup`/`_inject_fns_lookup`, built in `parser.py:accumulate_dual_log` from the
 `_stripped`/`_injected` log `fn_map`) over-counts. Three distinct phantom sources, ALL verified

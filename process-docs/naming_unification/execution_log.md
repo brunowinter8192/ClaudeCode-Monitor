@@ -1,6 +1,6 @@
 # Naming Unification — Execution Log
 
-Live progress log for the naming-unification structure migration. Resume state for a fresh session.
+Progress log for the naming-unification structure migration, as of 2026-06-02.
 
 ## Docker cleanup — DONE (2026-06-02)
 
@@ -45,6 +45,6 @@ Verified: `rag-cli list_collections` ✓, `gh-cli`/`reddit-cli`/`searxng-cli` �
 - **Docker**: cleaned to only rag-postgres (pg18+pgvector) + rag-cli_default network + pgvector image. All other containers/volumes/networks pruned.
 - **Branches**: ✅ DONE — rag-cli + iterative-dev master→main (GitHub rename-endpoint + local). All repos now `main` (+`dev`). No `master`.
 - **Phase E rules**: ✅ DONE — workers-1.md, tool-use.md, documentation.md, plugins.md updated + committed/pushed (`brunowinter8192/GlobalRules`). plugins.md catalog rewritten (5 skill-only plugins, no agents/MCP/commands). `_reference` convention → `-reference`. `~/.claude/shared-rules` confirmed canonical (own git repo, not plugin-synced). beads.md left untouched (slated for deletion in beads→gh migration).
-- **Phase E feature**: PENDING — plugin-publish drift-validation (ERROR if skill folder/frontmatter not registered in manifest, OR registered without source; match key = skill name; user's 2-error example) + remove dead MCP-kill step (step 8, no plugin has MCP anymore). File: `~/Documents/ai/Meta/iterative-dev/bin/plugin-publish`. Full spec in tooling.md.
+- **Phase E feature**: PENDING — plugin-publish drift-validation (ERROR if skill folder/frontmatter not registered in manifest, OR registered without source; match key = skill name; user's 2-error example) + remove dead MCP-kill step (step 8, no plugin has MCP anymore). File: `~/Documents/ai/Meta/iterative-dev/bin/plugin-publish`. Full spec in the tooling entry in this area.
 - **monitor-cc**: GitHub repo `ClaudeCode-Monitor`→`monitor-cc` + remote-url DONE (Opus, RECAP). REMAINS for USER: local folder `Monitor_CC`→`monitor-cc` (`cd ~/Documents/ai && mv Monitor_CC monitor-cc` from a FRESH session, outside the dir — underscore→hyphen+case, not case-only, so direct mv works) + CC restart (loads the renamed plugins/skills).
 - **RAG re-index (update_docs) DEFERRED**: `embedding-8b` didn't start in 90s (cold-load timeout after docker/folder churn; PID 61300 RUNNING-but-UNHEALTHY + "No managed servers" → native llama-server likely orphaned from the OLD path `/MCP/RAG/`). Monitor_CC OldThemes are COMMITTED (git) but NOT yet indexed into `monitor-cc-docs`. Next session from the `monitor-cc` folder: restart RAG servers clean from `cli/rag-cli` (kill stale PIDs 61300/94605 or `rag-cli server restart embedding-8b`), then `rag-cli update_docs .`.

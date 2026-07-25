@@ -8,7 +8,7 @@ Menubar RAG pane showed `{collection}: 0/0 · {elapsed}` during a large index ru
 ## Alternatives
 | Option | Mechanism | Verdict |
 |---|---|---|
-| A — menubar reads DB | menubar queries the same Postgres signal as `rag-cli progress` (collection from lock, done/total from DB) | REJECTED — adds a DB query / `rag-cli` subprocess into the 1.5s GUI tick; violates the deliberate menubar design (pure JSON-file read, no IPC/subprocess — see `planning.md` § Lock file vs pgrep) |
+| A — menubar reads DB | menubar queries the same Postgres signal as `rag-cli progress` (collection from lock, done/total from DB) | REJECTED — adds a DB query / `rag-cli` subprocess into the 1.5s GUI tick; violates the deliberate menubar design (pure JSON-file read, no IPC/subprocess — per the lock-file-vs-pgrep decision in this area's planning entry) |
 | B — rag-cli logs both levels into the lock | `index_json_workflow` writes chunk-level progress into the lock per batch; menubar stays a pure lock reader | CHOSEN — single source of truth (the lock), menubar role unchanged, `rag-cli status` also benefits |
 
 User ask: "rag-cli logs the full detail, the menubar just does the reading part." → Option B.

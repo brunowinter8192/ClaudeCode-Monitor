@@ -2,7 +2,7 @@
 
 ## Context
 
-Follow-up to `initial.md` (Hypothesis 3 open: CC TUI emits ANSI cursor/scroll directives
+Follow-up to the initial investigation in this area (Hypothesis 3 open: CC TUI emits ANSI cursor/scroll directives
 that bypass Ghostty's `scroll-to-bottom` config). Phase 1 builds the diagnostic tooling
 to identify the exact sequence. Phase 2 (filter/suppress the trigger) is not built here.
 
