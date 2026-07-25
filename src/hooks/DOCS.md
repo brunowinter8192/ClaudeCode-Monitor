@@ -681,23 +681,26 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ---
 
-### block_po_read.py (76 LOC)
+### block_po_read.py (79 LOC)
 
-**Purpose:** PreToolUse hook (Bash) — blocks shell reads that feed a Claude Code persisted-output export path (`tool-results/<id>.txt` under a `.claude/` dir — CC's full-output export when a tool result exceeds the inline preview limit) to a content-reading tool (`head`, `tail`, `grep`, `egrep`, `fgrep`, `rg`, `sed`, `awk`, `cut`, `less`, `more`, `cat`, `tac`, `nl`, `zcat`). These exports must be consumed IN FULL — the Read tool (with `offset`/`limit` for paging) is the sanctioned reader; a partial shell view (`head`/`tail`/`grep`/piped `cat … | head`) risks acting on an incomplete result. Discriminator is path-schema only (`/.claude/` substring AND `.txt` suffix on the same token) — no size threshold, no Read-tool matcher (Read stays fully allowed). Direct structural clone of `block_log_read.py.disabled`'s Branch B (reader-tool + matching input-path segment → block) with no state file / no session counting. Exits 2 + stderr on match. Exits 0 on any parse error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — blocks shell reads that feed a Claude Code persisted-output export path (`tool-results/<id>.txt` under a `.claude/` dir — CC's full-output export when a tool result exceeds the inline preview limit) to a content-reading or content-partitioning tool (`head`, `tail`, `grep`, `egrep`, `fgrep`, `rg`, `sed`, `awk`, `cut`, `less`, `more`, `cat`, `tac`, `nl`, `zcat`, `split`, `dd`). These exports must be consumed via the Read tool — a partial shell view (`head`/`tail`/`grep`/piped `cat … | head`) or a partitioning escape (`split -l N <path> /tmp/...`, `dd if=<path> of=...`) risks acting on an incomplete result. Discriminator is path-schema only (`/.claude/` substring AND `.txt` suffix on the same token) — no size threshold, no Read-tool matcher (Read stays fully allowed). Direct structural clone of `block_log_read.py.disabled`'s Branch B (reader-tool + matching input-path segment → block) with no state file / no session counting. Exits 2 + stderr on match. Exits 0 on any parse error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
-**Writes:** stderr (block message naming the Read-tool alternative) on match only.
+**Writes:** stderr (block message naming the Read-tool paging escalation) on match only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
 **Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert); `_fire_log.log_fire`.
 
 **Blocked patterns:**
 - `head`/`tail`/`grep`/`cat`/`sed`/`rg`/etc. on `~/.claude/projects/.../tool-results/<id>.txt` (or `/Users/.../.claude/.../<id>.txt`)
 - `cat <PO-export-path> | head -20` — reader + path co-occur in the same pipeline segment
+- `split -l N <PO-export-path> /tmp/...`, `dd if=<PO-export-path> of=...` — partitions content for later partial consumption, same escape class as head/tail (live incident 2026-07: `split` bypassed the hook and fed a copy to `awk`)
 
 **Allowed patterns:** any reader tool on a file NOT under `.claude/` (e.g. `/tmp/foo.txt`); any reader tool on a `.claude/` path NOT ending `.txt` (e.g. `settings.json`); a PO-export path as a redirect WRITE target (`echo x > .../x.txt`, stripped before the input-path check); a PO-export path appearing only inside a quoted string (blanked by `_strip_non_shell_active`); parse errors (fail-open).
 
 **Segment split.** Same `_SEGMENT_SPLIT`/`_REDIRECT_STRIP` mechanic as `block_log_read.py.disabled`: split on `&&`/`||`/`|`/`;`/newline, strip redirect-write targets per segment before checking for a reader-tool + PO-path co-occurrence.
 
-**Smoke:** `dev/hook_smoke/test_block_po_read.py` (14 cases: 7 block including the piped `cat | head` case, 7 no-op including redirect-write, quoted-string, and parse-error fail-open).
+**Block message escalation.** States the verified-correct escape: read via the Read tool; when the total exceeds the per-call token cap, page with MULTIPLE Read calls via `offset`/`limit` (offset starts at 1); files with very long single lines need a small line-count limit per call.
+
+**Smoke:** `dev/hook_smoke/test_block_po_read.py` (16 cases: 9 block including the piped `cat | head` case and the `split`/`dd` partitioning cases, 7 no-op including redirect-write, quoted-string, and parse-error fail-open).
 
 ---
 

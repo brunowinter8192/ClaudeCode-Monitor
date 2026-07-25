@@ -23,6 +23,10 @@ CASES = [
      f"rg foo {PO_PATH}", 2),
     ("piped cat-to-head BLOCK",
      f"cat {PO_PATH} | head -20", 2),
+    ("split on PO export BLOCK",
+     f"split -l 400 {PO_PATH} /tmp/x", 2),
+    ("dd on PO export BLOCK",
+     f"dd if={PO_PATH} of=/tmp/x", 2),
     # --- no-ops: must pass ---
     ("head on normal file PASS",
      "head -50 /tmp/normal_file.py", 0),
