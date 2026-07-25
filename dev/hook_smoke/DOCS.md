@@ -164,6 +164,19 @@ python3 dev/hook_smoke/test_rewrite_worker_cli_response_noise.py
 
 ---
 
+### test_rewrite_websearch_scrape_noise.py (144 LOC)
+
+**Purpose:** 16-case smoke for `rewrite_websearch_scrape_noise.py`. Verifies 9 positive-strip cases (`| head`, `| tail`, `| sed`, `2>&1`, `2>&1 | head`, `> redirect`, `cd &&` chain, trailing `; echo done` chain, `|| echo fail` chain) and 7 negative no-op cases (bare `scrape_url`, cd chain no noise, trailing chain no pipe, `search_web | head` out of scope, `search_engine_drilldown | head` out of scope, `download_pdf > file` out of scope, `scrape_url` inside quoted echo).
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_rewrite_websearch_scrape_noise.py
+```
+
+**Expected output:** `All 16 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+
+---
+
 ### test_rewrite_background_sleep.py (117 LOC)
 
 **Purpose:** 11-case smoke for `rewrite_background_sleep.py`. Verifies 5 positive-rewrite cases
