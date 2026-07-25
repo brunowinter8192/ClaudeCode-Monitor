@@ -26,7 +26,7 @@ Overlay `tool_errors.jsonl` (hook errors) against proxy logs to extract exact tr
 ```
 
 **Output report answers three questions:**
-1. Hook-error counts: historisch (raw/unique) vs current-config-relevant vs stale
+1. Hook-error counts: historical (raw/unique) vs current-config-relevant vs stale
 2. `error_full` text examples per hook
 3. Exact triggering command + error per current-config-relevant entry (legit/FP basis)
 
@@ -39,4 +39,4 @@ Overlay `tool_errors.jsonl` (hook errors) against proxy logs to extract exact tr
 
 ## Reports
 
-`reports/YYYY-MM-DD.md` — one report per run, named by UTC date.
+`md/YYYY-MM-DD.md` — one report per run, named by UTC date.
