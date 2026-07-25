@@ -11,9 +11,10 @@ from _fire_log import log_fire
 # contains "/.claude/" AND ends in ".txt" — no other .txt file under any .claude/ dir
 # is ever legitimately read via shell.
 _PO_PATH_RE = re.compile(r'\S*/\.claude/\S*\.txt\b')
-# Reader tools that consume file content as INPUT (block_log_read reader set, plus rg + cut)
+# Reader tools that consume file content as INPUT (block_log_read reader set, plus rg + cut;
+# split + dd partition content for later partial consumption — same escape class)
 _READ_TOOL_RE = re.compile(
-    r'\b(?:head|tail|grep|egrep|fgrep|rg|sed|awk|cut|less|more|cat|tac|nl|zcat)\b'
+    r'\b(?:head|tail|grep|egrep|fgrep|rg|sed|awk|cut|less|more|cat|tac|nl|zcat|split|dd)\b'
 )
 # Output redirect targets to strip before checking for a PO-path input arg:
 # > file, >> file, N> file, N>> file, &> file, &>> file, 2>&1, 1>&2 (no path in fd-forms)
@@ -23,8 +24,10 @@ _SEGMENT_SPLIT = re.compile(r'\s*(?:&&|\|\||\||\n|;)\s*')
 
 _BLOCK_MSG = (
     "BLOCKED: this path is a Claude Code persisted-output export (contains /.claude/, ends .txt) — "
-    "it MUST be read IN FULL via the Read tool, never partially via head/tail/grep/sed/etc. "
-    "Read supports offset/limit to page through large exports.\n"
+    "it MUST be read via the Read tool, never partially via head/tail/grep/sed/split/dd/etc. "
+    "If the total exceeds the per-call token cap, page it with MULTIPLE Read calls using "
+    "offset/limit (offset starts at 1); files with very long single lines need a small line "
+    "limit per call.\n"
 )
 
 

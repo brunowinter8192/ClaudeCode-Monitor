@@ -253,9 +253,9 @@ normalization. Does NOT require a live mitmproxy process — uses minimal mock h
 
 ---
 
-### test_block_po_read.py (90 LOC)
+### test_block_po_read.py (94 LOC)
 
-**Purpose:** 14-case smoke for `block_po_read.py`. Verifies 7 blocked cases (`head`/`tail`/`grep`/`cat`/`sed`/`rg` each on a `~/.claude/.../tool-results/<id>.txt` persisted-output path, plus the piped `cat <path> | head -20` case) and 7 no-op cases (reader on a normal file, reader on a `.log` file, reader on `/tmp/foo.txt` not under `.claude/`, reader on a `.claude/` path not ending `.txt`, redirect-write to a PO path, PO path only inside a quoted string, malformed-JSON stdin fail-open).
+**Purpose:** 16-case smoke for `block_po_read.py`. Verifies 9 blocked cases (`head`/`tail`/`grep`/`cat`/`sed`/`rg` each on a `~/.claude/.../tool-results/<id>.txt` persisted-output path, the piped `cat <path> | head -20` case, and the `split -l 400 <path> /tmp/x` / `dd if=<path> of=/tmp/x` partitioning-escape cases) and 7 no-op cases (reader on a normal file, reader on a `.log` file, reader on `/tmp/foo.txt` not under `.claude/`, reader on a `.claude/` path not ending `.txt`, redirect-write to a PO path, PO path only inside a quoted string, malformed-JSON stdin fail-open).
 
 **Usage (from project root):**
 ```bash
