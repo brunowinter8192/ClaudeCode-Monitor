@@ -14,7 +14,7 @@ cd Monitor_CC/
 
 - [display/DOCS.md](display/DOCS.md) — Display layer tests + format_cache_tracker differential proof
 - [jsonl/DOCS.md](jsonl/DOCS.md) — extract_cache_turns differential proof harness
-- `hook_firing/md/` — Historical hook block-event analysis snapshots (read-only archive; `analyze.py` and `DOCS.md` deleted 2026-05-24 — replaced by `src/logs/hook_firing.jsonl` persistent log)
+- [hook_error_correlation/DOCS.md](hook_error_correlation/DOCS.md) — Hook-caused tool-error overlay analysis (`hook_firing.jsonl` × `tool_errors.jsonl`); `md/` also holds the historical 2026-05-22 hook block-event snapshot
 - [pipeline/DOCS.md](pipeline/DOCS.md) — Pipeline evaluation suite (memory, I/O, parsing, format stability)
 - [session_analysis/DOCS.md](session_analysis/DOCS.md) — Forensic session JSONL + proxy log analysis (cache behavior, rebuild detection, token attribution)
 - [tool_injection/DOCS.md](tool_injection/DOCS.md) — MCP tool schema extraction for proxy-side tool injection
@@ -22,7 +22,7 @@ cd Monitor_CC/
 - [tool_use_errors/DOCS.md](tool_use_errors/DOCS.md) — Empirical audit of `src/logs/tool_errors.jsonl` — cluster analysis + strip_hook_prefix.py cross-check (2026-05-30)
 - [cursor_edges/DOCS.md](cursor_edges/DOCS.md) — NSPanel cursor-rect investigation probe — edge hover ↔/↕ blockers (NonactivatingPanel, subview coverage, mask conflicts)
 - [menubar_nspanel/DOCS.md](menubar_nspanel/DOCS.md) — NSPanel sticky-toggle probe suite — persistent menubar panel replacing NSMenu auto-dismiss behavior
-- [cc_source_research/DOCS.md](cc_source_research/DOCS.md) — CC binary + source research artifacts — env-var inventory from npm binaries, cross-referenced against community decompiles
+- [cc_internals/DOCS.md](cc_internals/DOCS.md) — CC binary + source research artifacts — env-var inventory from npm binaries, cross-referenced against community decompiles
 - [ToolsSystemPrompts/DOCS.md](ToolsSystemPrompts/DOCS.md) — Captured CC built-in tool definitions + sys[3] segment — char-count corpus for proxy tool-injection/stripping budget analysis
 - [ram_audit/DOCS.md](ram_audit/DOCS.md) — Pane RAM snapshot investigation — SIGUSR1 dump handler + `dump_all.sh` for live RSS/allocator capture across all panes
 - [sleep_pattern_analysis/DOCS.md](sleep_pattern_analysis/DOCS.md) — Empirical audit of `block_chained_sleep` firing events; classifies cmd_before tokens as trivial-sync / load-bearing / mixed to inform `rewrite_chained_sleep.py` design

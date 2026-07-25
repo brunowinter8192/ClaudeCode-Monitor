@@ -5,7 +5,7 @@
 2026-04-28: a research worker ran 2 passes over GH issues + source-leak repos + binary
 extraction (v2.1.121), found 12+ undocumented env vars, uncovered the watchdog
 mechanism, and reverse-engineered 429/529 handling and the fast-mode cooldown. Output:
-`dev/cc_source_research/20260428_env_var_inventory_v2.1.121.md` (205 LOC, 67 confirmed
+`dev/cc_internals/md/20260428_env_var_inventory_v2.1.121.md` (205 LOC, 67 confirmed
 env vars in 5 categories + 8 dead-code fragments).
 
 Finding: the CC binary + leak repos are a rich, largely untapped source. Investigation
@@ -16,7 +16,7 @@ thread with many sub-questions, one worker pass per sub-question.
 ### Done
 
 1. **Complete env-var inventory (v2.1.121)** —
-   `dev/cc_source_research/20260428_env_var_inventory_v2.1.121.md`. Latency-subset
+   `dev/cc_internals/md/20260428_env_var_inventory_v2.1.121.md`. Latency-subset
    recommendations for `settings.json:env` documented
    (`CLAUDE_STREAM_IDLE_TIMEOUT_MS=300000`, `CLAUDE_ENABLE_STREAM_WATCHDOG=1`,
    `CLAUDE_ENABLE_BYTE_WATCHDOG=1`, `CLAUDE_SLOW_FIRST_BYTE_MS=8000`). 6 open questions
@@ -61,7 +61,7 @@ fresh worker per sub-question.
 ## Approach (if reactivated)
 
 - One worker pass per sub-question, with the github-search skill active.
-- Output as a markdown section under `dev/cc_source_research/`.
+- Output as a markdown section under `dev/cc_internals/`.
 - Findings with a concrete fix need → own bead.
 - Findings that are knowledge only → investigation doc.
 - Reused sources (decompile repos, binary versions, NPM tarballs) → `sources/sources.md`.
