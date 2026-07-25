@@ -31,7 +31,7 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 ---
 
-### log_pane.py (80 LOC)
+### log_pane.py (77 LOC)
 
 **Purpose:** Right log-tail pane. Polls newest log file every 0.5s; extracts current-run lines; filters to whitelist events; renders top-anchored (events grow top-down from the header, newest visible on overflow). No mouse (tmux native scroll active). `LOG_POLL_INTERVAL = 0.5` s; `MAX_LOG_LINES = 40`.
 **Reads:** log file via `find_log_file()` + `find_current_run_lines()` + `filter_events()` (every 0.5s).

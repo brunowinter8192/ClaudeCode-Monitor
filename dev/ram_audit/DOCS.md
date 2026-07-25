@@ -26,7 +26,7 @@ Each dump contains four sections:
 
 ## Scripts
 
-### dump_all.sh
+### dump_all.sh (44 LOC)
 
 Triggers a SIGUSR1 RAM dump on every running monitor_cc pane in one shot.
 

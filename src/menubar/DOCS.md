@@ -72,7 +72,7 @@ Standalone macOS status-bar (menubar) application that shows all currently-runni
 
 ---
 
-### paths.py (55 LOC)
+### paths.py (54 LOC)
 
 **Purpose:** Single source of truth for 8 APP_SUPPORT file paths under `~/Library/Application Support/com.brunowinter.monitor-cc-menubar/`: `SETTINGS_FILE`, `HOOKS_FILE`, `HOOKS_LOCK`, `PID_FILE`, `QUEUE_FILE` (`msg_queue.json`), `QUEUE_LOCK` (`queue.lock`), `GHOSTTY_CWD_UUID_FILE` (`ghostty_cwd_uuid.json`), `ORCHESTRATOR_SIGNALS_FILE` (`orchestrator_signals.json` — written by worker-cli send, read by menubar for auto-abort grace). Runs `_migrate_from_dotfiles()` and `_migrate_from_old_bundle_id()` at import.
 **Reads:** old dotfile paths under `~` on first import (`_migrate_from_dotfiles`); old bundle-id dir `~/Library/Application Support/com.brunowinter.monitor_cc_menubar/` on first import (`_migrate_from_old_bundle_id`).
@@ -204,7 +204,7 @@ Standalone macOS status-bar (menubar) application that shows all currently-runni
 
 ---
 
-### ghostty.py (155 LOC)
+### ghostty.py (153 LOC)
 
 **Purpose:** Ghostty terminal UUID mapping via OSC 2 title-marker probe. Maintains `_ghostty_tty_to_id` (tty → UUID) populated incrementally. Exposes `get_ghostty_terminal_id(cwd)` for click-to-focus routing in `system.py`. Also writes `APP_SUPPORT/ghostty_cwd_uuid.json` = `{cwd: uuid}` via `_write_cwd_uuid_map()` (called from `discover.py:list_alive_sessions` after each tick); used by `hook_writer.py` for queue delivery. `_APP_SUPPORT` imported from `paths.py`.
 **Reads:** `ps -A` (Ghostty PID + child TTYs); `/dev/ttys<NNN>` (OSC 2 marker writes); `osascript` (terminal id|||name pairs); `_cc_proc_cache`.
@@ -258,7 +258,7 @@ Standalone macOS status-bar (menubar) application that shows all currently-runni
 
 ---
 
-### setup_py2app.py (157 LOC) — at project root, NOT in src/menubar/
+### setup_py2app.py (162 LOC) — at project root, NOT in src/menubar/
 
 **Purpose:** py2app build + install + bootstrap script. Produces `dist/monitor-cc-menubar.app/` (native Mach-O, embedded Python framework), then post-`setup()` runs `_prune_bundle_bloat()` + `_install_bundle`. `_prune_bundle_bloat()` whitelist-prunes the bundle's `src/` to `{menubar, session_finder.py, constants.py, __init__.py, __pycache__}` — prevents `copy_package_data()` from sweeping `src/logs/` (runtime proxy logs, no `__init__.py`, ≥15 GB in main repo). `_install_bundle` copies to `~/Applications/`, ad-hoc codesigns, writes the LaunchAgent plist (inline template substitution — avoids `src.menubar` import chain triggering AppKit in build context), then launchctl bootout + bootstrap (with 1s retry on rc≠0). Placed at project root (not `src/menubar/`) to avoid stdlib `queue` shadowing by `src/menubar/queue.py` when setuptools is loaded.
 **Reads:** `src/menubar/menubar_main.py` (entry point); `src/menubar/com.brunowinter.monitor-cc-menubar.plist` (bundled as data file + read by `_install_bundle` for plist substitution).
@@ -274,7 +274,7 @@ Standalone macOS status-bar (menubar) application that shows all currently-runni
 
 ---
 
-### menubar_main.py (7 LOC)
+### menubar_main.py (11 LOC)
 
 **Purpose:** py2app entry wrapper. `from src.menubar import run; run()`. Avoids argparse dispatch in `workflow.py` and prevents heavy non-menubar modules (`src.core`, `src.proxy`, etc.) from entering modulegraph's import trace. No logic beyond the delegation.
 **Reads:** nothing.

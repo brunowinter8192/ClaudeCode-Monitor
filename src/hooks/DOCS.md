@@ -92,7 +92,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### rewrite_rag_cli_search_noise.py (~95 LOC)
+### rewrite_rag_cli_search_noise.py (107 LOC) (~95 LOC)
 
 **Purpose:** PreToolUse hook (Bash) — **rewrites** `rag-cli search` invocations by stripping downstream noise inside the logical command segment: pipes (`| head`, `| tail`, `| grep`, etc.), redirects (`>`, `>>`, `&>`, `<`, `2>&1`, `2>`), and single backgrounding `&`. Chains around the segment (`cd && rag-cli ...`, `rag-cli ... ; bd list`, `rag-cli ... || echo fail`) are preserved — only the rag-cli segment is cleaned. Scope is `search` only; `read_document`, `list_collections`, `server`, etc. pass through unchanged. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing.
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
@@ -607,7 +607,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_worker_spawn_placement.py (89 LOC)
+### block_worker_spawn_placement.py (94 LOC)
 
 **Purpose:** PreToolUse hook (Bash) — blocks `worker-cli spawn` calls that either (a) target a different project than the current session or (b) pass `--no-worktree`. Spawns always land in a worktree of the current project; cross-project or worktree-less spawns are a mis-dispatch. Exits 2 + stderr. Exits 0 when the session itself runs from inside a worktree (worker sessions don't spawn workers) or on any parse/resolution error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`); `os.getcwd()` (session CWD for project-root resolution).
@@ -663,7 +663,7 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ---
 
-### block_manual_worker_cleanup.py (54 LOC)
+### block_manual_worker_cleanup.py (59 LOC)
 
 **Purpose:** PreToolUse hook (Bash) — blocks raw manual worker-cleanup commands that bypass `worker-cli kill <name>` and leave orphaned state. Two patterns: (1) `tmux kill-session -t worker-*` — kills the tmux session without removing the worktree, registry entry, or branch; (2) `git worktree remove .claude/worktrees/*` — removes the worktree without stopping the session or clearing the registry. Both patterns use `[^;&|\n]*` (not `.*`) to prevent bridging across shell separators — `tmux kill-session -t main ; cmd -t worker-x` does not trigger. `git branch -D` is deliberately excluded (worker branches have no distinguishing prefix; blocking would FP on normal feature-branch deletes). Exits 2 + stderr with `worker-cli kill <name>` as the fix. Exits 0 on any parse error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).

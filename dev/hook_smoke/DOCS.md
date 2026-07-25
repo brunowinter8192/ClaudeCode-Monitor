@@ -11,7 +11,7 @@ or fix existing test script); verifying after merges that no hook regressed.
 
 ## Modules
 
-### test_block_chained_sleep.py
+### test_block_chained_sleep.py (67 LOC)
 
 **Purpose:** 13-case smoke for the now-disabled `block_chained_sleep.py`. Preserved for regression
 reference — the file still exists as `block_chained_sleep.py.disabled`.
@@ -81,7 +81,7 @@ python3 dev/hook_smoke/test_block_dangerous_kill.py
 
 ---
 
-### test_block_read_worktree.py
+### test_block_read_worktree.py (74 LOC)
 
 **Purpose:** Smoke test for `block_read_worktree.py` — foreign worktree reads blocked, own-worktree
 reads allowed.
@@ -108,7 +108,7 @@ python3 dev/hook_smoke/test_log_janitor.py
 
 ---
 
-### test_rewrite_rag_cli_search_noise.py (140 LOC)
+### test_rewrite_rag_cli_search_noise.py (139 LOC)
 
 **Purpose:** 15-case smoke for `rewrite_rag_cli_search_noise.py`. Verifies 9 positive-strip cases (`| head`, `| tail`, `| grep`, `> redirect`, `2>&1`, `2>&1 | head`, `cd &&` chain, trailing `; bd list` chain, `|| echo fail` chain) and 6 negative no-op cases (bare search_hybrid, cd chain no noise, trailing chain no pipe, `list_collections | head` out of scope, `read_document | head` out of scope, search_hybrid inside quoted echo).
 
@@ -177,7 +177,7 @@ python3 dev/hook_smoke/test_rewrite_websearch_scrape_noise.py
 
 ---
 
-### test_rewrite_background_sleep.py (117 LOC)
+### test_rewrite_background_sleep.py (138 LOC)
 
 **Purpose:** 11-case smoke for `rewrite_background_sleep.py`. Verifies 5 positive-rewrite cases
 (`sleep 300`, `sleep 5`, `sleep 1200` with `run_in_background=true`; bare `sleep 300` alone;
@@ -207,7 +207,7 @@ python3 dev/hook_smoke/test_rewrite_background_sleep.py
 
 ---
 
-### test_rewrite_chained_sleep.py (104 LOC)
+### test_rewrite_chained_sleep.py (226 LOC)
 
 **Purpose:** 8-case smoke for `rewrite_chained_sleep.py`. Verifies 3 positive-strip cases (`echo`
 and `true` cmd_before → sleep stripped) and 5 negative no-op cases (load-bearing: `kill`, `launchctl`;

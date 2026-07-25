@@ -8,7 +8,7 @@ and completeness of the strip/inject diff engine (`src/proxy/diff_engine.py`).
 
 ## Modules
 
-### verify_delta.py
+### verify_delta.py (272 LOC)
 
 **Purpose:** Reads a `_original.jsonl` + `_forwarded.jsonl` pair, reconstructs the full forwarded
 payload from the delta stream (per-model-family chain), and verifies two invariants:
@@ -42,7 +42,7 @@ status, delta indices) + PASS/FAIL summary line.
 
 ---
 
-### verify_strip_inject.py
+### verify_strip_inject.py (346 LOC)
 
 **Purpose:** Completeness proof for the strip/inject diff engine (`src/proxy/diff_engine.py`).
 Simulates `_build_stripped_injected_deltas` on every request pair from a real `_original` +
@@ -82,7 +82,7 @@ Imports `src.proxy.diff_engine` and `src.proxy.logging` via `sys.path.insert(0, 
 
 ---
 
-### diff_strip_inject.py
+### diff_strip_inject.py (239 LOC)
 
 **Purpose:** Span-level strip/inject diff of Original vs Forwarded proxy logs. Shows what the
 proxy stripped (delete spans = yellow) and injected (insert spans = green) per request. Reads
@@ -122,7 +122,7 @@ line per request.
 
 ---
 
-### span_inline_probe.py
+### span_inline_probe.py (625 LOC)
 
 **Purpose:** Form A vs Form B inline-render data model probe. Validates that Form B (full
 ordered span list per log) is the minimal enrichment that lets the read-side render
@@ -147,7 +147,7 @@ Inlines `_strip_cache_control` (5-line mirror of `logging.py:_strip_cache_contro
 
 ---
 
-### main_log_elimination_probe.py
+### main_log_elimination_probe.py (625 LOC)
 
 **Purpose:** Feasibility probe for eliminating the main log (`api_requests_<id>.jsonl`).
 Answers two questions on a real session using the `_forwarded` + `_original` quartet logs:
@@ -180,7 +180,7 @@ Default session: `opus_monitor_cc_1780602018`
 
 ---
 
-### green_overlay_probe.py
+### green_overlay_probe.py (538 LOC)
 
 **Purpose:** Reproduces the green-overlay false-injection bug in `_diff_text` (word-level path)
 on real log data and validates the char-level candidate fix. The bug: when a JSON-serialized
@@ -214,7 +214,7 @@ test) to confirm no span explosion and correct whitespace fidelity.
 
 ---
 
-### groundtruth_message_spans_probe.py
+### groundtruth_message_spans_probe.py (669 LOC)
 
 **Purpose:** Validates `build_message_spans(orig_text, fwd_text, stripped_chunks)` — the
 ground-truth span construction algorithm that replaces the blind `_diff_text` for messages.
@@ -247,7 +247,7 @@ chars (`"is_error": false}`) are never coloured.
 
 ---
 
-### composition_probe.py
+### composition_probe.py (547 LOC)
 
 **Purpose:** Proves multi-pass span composition over C0. Models each proxy pass as an
 `Op(offset_in_Ck, removed, injected)` derived from the pass's `(before, after)` block-text
@@ -274,7 +274,7 @@ the removal range become "stripped"; prior "injected" bytes re-removed disappear
 
 ---
 
-### attribution_coverage.py
+### attribution_coverage.py (479 LOC)
 
 **Purpose:** Read-only function-attribution coverage analysis for `_stripped`/`_injected` dual-logs.
 Answers: can every strip AND inject entry be attributed to a responsible proxy function?

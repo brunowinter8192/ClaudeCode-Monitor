@@ -8,7 +8,7 @@ Scripts for testing and verifying the display layer (tmux layout, rules renderin
 
 ## Scripts
 
-### test_tmux_layout.sh
+### test_tmux_layout.sh (55 LOC)
 
 Tests tmux pane layout for the monitor. Originally 3-pane, now 5-window / 10-pane (main+tokens | proxy+metadata | rules+hooks | workers+worker-proxy+worker-metadata | warnings).
 
@@ -23,7 +23,7 @@ bash dev/display/test_tmux_layout.sh
 
 **Source:** tmux man page (github.com/tmux/tmux `tmux.1` L3591-3648) — `-l size%` = percentage of target pane's available space.
 
-### scan_jsonl_rules.py
+### scan_jsonl_rules.py (108 LOC)
 
 Scans a Claude Code session JSONL to find how loaded rules appear in the data.
 
@@ -38,7 +38,7 @@ python3 dev/display/scan_jsonl_rules.py
 
 **Status:** Concluded — confirmed that Session-JSONL contains NO rules/instructions data (Contents of: 0, system-reminder: 0, claudeMd: 0). InstructionsLoaded hook is the only viable Claude-infrastructure source. Superseded by jsonl_exploration/ suite for detailed structure analysis.
 
-### screenshot_panes.py
+### screenshot_panes.py (142 LOC)
 
 Captures all 10 tmux panes of a running Monitor_CC session (5 windows) and combines them into a single PNG screenshot.
 
@@ -54,7 +54,7 @@ Captures all 10 tmux panes of a running Monitor_CC session (5 windows) and combi
 
 **Dependencies:** `termshot` (`brew install homeport/tap/termshot`), `Pillow` (`pip install Pillow`)
 
-### A_format_cache_tracker_proof.py
+### A_format_cache_tracker_proof.py (128 LOC)
 
 **Purpose:** Differential proof harness for `format_cache_tracker` decomposition. Loads 10 real session JSONLs via `extract_cache_turns`, calls `format_cache_tracker(turns, pane_height, pane_width)` across 6 parameter combinations (2 heights × 3 widths), serializes the 5-tuple return as JSON, verifies byte-identical against baseline. Exercises `_render_expanded_call_lines`, `_compute_cache_viewport`, and `_fmt_rl_reset_time` transitively.
 

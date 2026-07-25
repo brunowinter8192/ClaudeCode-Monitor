@@ -17,7 +17,7 @@ that writes `dev/ram_audit/dumps/<ts>_<pane_name>.txt`.
 
 ## Modules
 
-### instrument.py (97 LOC)
+### instrument.py (101 LOC)
 
 **Purpose:** Shared RAM-dump helper — tracemalloc start, PID file write, SIGUSR1 handler registration, dump file writer.
 **Reads:** `module_state_provider()` callback for pane globals; `/proc/<pid>` or macOS `resource.getrusage` for RSS.

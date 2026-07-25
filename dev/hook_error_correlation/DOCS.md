@@ -16,7 +16,7 @@ Tool-result errors in `src/logs/tool_errors.jsonl` contain `PreToolUse:<Tool> ho
 
 ## Scripts
 
-### analyze.py
+### analyze.py (349 LOC)
 
 Overlay `tool_errors.jsonl` (hook errors) against proxy logs to extract exact triggering commands; replay active hooks against those inputs; classify as current-config-relevant or stale.
 

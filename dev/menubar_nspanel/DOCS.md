@@ -9,7 +9,7 @@ Build narrative: `process-docs/menubar_nspanel/A2.md`.
 
 ## Scripts
 
-### p1_nspanel_probe.py
+### p1_nspanel_probe.py (260 LOC)
 
 Self-contained NSPanel menubar probe. Does **not** modify `src/`. Imports `src.menubar.discover` (read-only) for live session data.
 

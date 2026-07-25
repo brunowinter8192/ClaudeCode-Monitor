@@ -8,7 +8,7 @@ are agent-relevant (KEEP) vs strippable CC-wrapper noise, and verifies that
 
 ## Scripts
 
-### A_error_cluster_audit.py
+### A_error_cluster_audit.py (365 LOC)
 
 Loads `tool_errors.jsonl` → clusters by error shape → classifies each bucket → cross-checks
 via available proxy logs whether `strip_hook_prefix.py` modifications reach Anthropic.

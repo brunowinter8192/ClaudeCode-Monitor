@@ -8,7 +8,7 @@ Scripts to map the full structure of Claude Code session JSONL files. Each scrip
 
 ## Scripts
 
-### 01_map_message_types.py
+### 01_map_message_types.py (163 LOC)
 
 Maps all message types in a session JSONL.
 
@@ -21,7 +21,7 @@ python3 dev/display/jsonl_exploration/01_map_message_types.py [path/to/session.j
 
 **Output:** `01_reports/message_types_<timestamp>.md`
 
-### 02_map_content_blocks.py
+### 02_map_content_blocks.py (239 LOC)
 
 Deep-dive into `message.content` blocks.
 
@@ -34,7 +34,7 @@ python3 dev/display/jsonl_exploration/02_map_content_blocks.py [path/to/session.
 
 **Output:** `02_reports/content_blocks_<timestamp>.md`
 
-### 03_scan_instructions.py
+### 03_scan_instructions.py (237 LOC)
 
 Scans for anything rules/instructions-related.
 

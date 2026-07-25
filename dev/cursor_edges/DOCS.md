@@ -18,7 +18,7 @@
 
 ## Scripts
 
-### probe.py
+### probe.py (728 LOC)
 
 Standalone foreground NSPanel that mirrors the production layout exactly (same geometry, same z-order, same autoresizingMasks). Every view is a logging subclass that prints to stderr on:
 

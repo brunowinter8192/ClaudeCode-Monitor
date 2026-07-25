@@ -49,7 +49,7 @@ Buffer: `monitor_display._buffer_append()` appends each event to `main_event_buf
 
 ---
 
-### monitor_session.py (146 LOC)
+### monitor_session.py (141 LOC)
 
 **Purpose:** Per-session JSONL processor — reads new lines, classifies tool calls as task requests/responses, subagent calls, or regular tools, and routes each to the appropriate handler.
 **Reads:** Session JSONL files (incremental, via file positions in `monitor.py` state); shared state from `monitor.py`.

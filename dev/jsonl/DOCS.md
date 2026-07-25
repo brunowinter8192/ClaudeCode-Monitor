@@ -6,7 +6,7 @@ Differential proof harnesses for `src/jsonl/` module decompositions. Captures ba
 
 ## Modules
 
-### A_extract_cache_turns_proof.py
+### A_extract_cache_turns_proof.py (116 LOC)
 
 **Purpose:** Differential proof harness for `extract_cache_turns` decomposition. Calls `extract_cache_turns(messages)` on 10 real Monitor_CC session JSONLs (most-recent by mtime from `~/.claude/projects/-Users-brunowinter2000-Documents-ai-Monitor-CC/`), serializes the full turns list as JSON, verifies byte-identical against baseline.
 
