@@ -60,7 +60,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ### block_chained_sleep.py.disabled
 
-**Disabled 2026-05-24** — superseded by `rewrite_chained_sleep.py`. Renamed via `git mv` (file still in repo for history). Previously blocked all non-canonical `sleep N` chains. Replaced by a rewrite hook that strips trivial-sync sleeps (`echo`, `true` cmd_before) and passes load-bearing patterns through. See `process-docs/hook_false_positives/sleep_pattern_audit_2026-05-24.md` for audit rationale.
+**Disabled 2026-05-24** — superseded by `rewrite_chained_sleep.py`. Renamed via `git mv` (file still in repo for history). Previously blocked all non-canonical `sleep N` chains. Replaced by a rewrite hook that strips trivial-sync sleeps (`echo`, `true` cmd_before) and passes load-bearing patterns through. See `process-docs/hook_fp_audit/sleep_pattern_audit_2026-05-24.md` for audit rationale.
 
 ---
 
