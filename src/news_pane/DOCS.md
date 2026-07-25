@@ -2,7 +2,7 @@
 
 ## Role
 
-Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDesk news ingestion pipeline (lives in searxng-cli). LEFT pane NEWS (5.0): shows `searxng_crypto` collection stats (doc count + chunk count), last-run timestamp, clickable `[run pipeline]` button with running indicator. RIGHT pane NEWS-LOG (5.1): tails the pipeline's own log file, filters to meaningful stage events, renders top-anchored (events grow top-down from the header). No IPC between the two panes — both reference the same log file on disk. No dependency on `core/monitor.py` or `active_project_filter`.
+Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDesk news ingestion pipeline (lives in websearch). LEFT pane NEWS (5.0): shows `searxng_crypto` collection stats (doc count + chunk count), last-run timestamp, clickable `[run pipeline]` button with running indicator. RIGHT pane NEWS-LOG (5.1): tails the pipeline's own log file, filters to meaningful stage events, renders top-anchored (events grow top-down from the header). No IPC between the two panes — both reference the same log file on disk. No dependency on `core/monitor.py` or `active_project_filter`.
 
 ## Public Interface
 
@@ -43,7 +43,7 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 ### log_parser.py (82 LOC)
 
-**Purpose:** Pure parsing helper + package-level path constants. Provides `SEARXNG_ROOT`, `LOG_DIR`, `LAST_RUN_FILE`, `TARGET_COLLECTION`, run boundary markers, whitelist regex list. Functions are side-effect-free (no I/O beyond file reads).
+**Purpose:** Pure parsing helper + package-level path constants. Provides `WEBSEARCH_ROOT`, `LOG_DIR`, `LAST_RUN_FILE`, `TARGET_COLLECTION`, run boundary markers, whitelist regex list. Functions are side-effect-free (no I/O beyond file reads).
 **Reads:** `LOG_DIR/news_coindesk_*.log` (via `find_log_file`); `LAST_RUN_FILE` (via `read_last_run_ts`); log file text (via `find_current_run_lines`).
 **Writes:** nothing.
 **Called by:** `pane.py` (constants + `read_last_run_ts`), `log_pane.py` (all parsing functions).
@@ -60,7 +60,7 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 ## Gotchas
 
-- `log_parser.py` is the constant anchor for the package. `SEARXNG_ROOT`, `LOG_DIR`, `LAST_RUN_FILE`, `TARGET_COLLECTION` all live there. Both pane.py and log_pane.py import from it — no constants in `src/constants.py`.
+- `log_parser.py` is the constant anchor for the package. `WEBSEARCH_ROOT`, `LOG_DIR`, `LAST_RUN_FILE`, `TARGET_COLLECTION` all live there. Both pane.py and log_pane.py import from it — no constants in `src/constants.py`.
 - `_LOG_LINE_RE` `\s+` group before `(.*)` consumes ALL leading whitespace from the message — `msg` carries no leading spaces. Whitelist patterns must NOT include leading spaces (e.g. `\[(OK|FAIL)\]`, not `  \[(OK|FAIL)\]`).
 - `_button_regions` only registered when `running=False`. While `_is_running()` returns True, any click on the button position hits no registered region → silently ignored. No guard flag needed (unlike gpu_pane `_toggle_state`).
 - Running-state fallback (`_is_running_via_log`): log mtime gate of 60s prevents stale old logs from falsely signalling running. Only fires if log was modified within 60s AND start marker present without subsequent end marker.

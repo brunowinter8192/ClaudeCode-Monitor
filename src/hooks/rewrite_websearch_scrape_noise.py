@@ -8,12 +8,12 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _shell_strip import _strip_non_shell_active
 from _fire_log import log_fire
 
-# Anchor for the searxng-cli scrape invocation. Only `scrape_url` is in scope —
+# Anchor for the websearch scrape invocation. Only `scrape_url` is in scope —
 # `search_web`, `search_engine_drilldown`, `download_pdf` produce bounded output
 # (engine breakdown / URL list) and remain untouched.
-_SCRAPE_RE = re.compile(r'\bsearxng-cli\s+scrape_url\b')
+_SCRAPE_RE = re.compile(r'\bwebsearch\s+scrape_url\b')
 
-# Segment-end operators: terminate the searxng-cli logical command.
+# Segment-end operators: terminate the websearch logical command.
 # `(?<!>)&(?![&>])` matches a single backgrounding `&` but NOT `&&` (chain),
 # `&>` (redirect), or `&` inside `2>&1` (redirect — `&` preceded by `>`).
 _SEGMENT_END_RE = re.compile(r'&&|\|\||[;)\n]|(?<!>)&(?![&>])')
@@ -28,10 +28,10 @@ _NOISE_RE = re.compile(r'2>&1|2>|&>|>>|<<|>|<|(?<!\|)\|(?!\|)')
 
 # ORCHESTRATOR
 
-# Read Bash tool_input from stdin; for each `searxng-cli scrape_url` invocation,
+# Read Bash tool_input from stdin; for each `websearch scrape_url` invocation,
 # strip any downstream pipes/redirects/2>&1 inside its logical segment.
 # Chains around the segment (cd && ..., ... ; bd list) are preserved.
-def rewrite_searxng_scrape_noise_workflow() -> None:
+def rewrite_websearch_scrape_noise_workflow() -> None:
     command, session_id = _parse_command()
     if command is None:
         sys.exit(0)
@@ -64,7 +64,7 @@ def rewrite_searxng_scrape_noise_workflow() -> None:
     if rewritten == command:
         sys.exit(0)
     output = _emit_rewrite(rewritten)
-    log_fire("rewrite_searxng_scrape_noise", "rewrite", "Bash", command,
+    log_fire("rewrite_websearch_scrape_noise", "rewrite", "Bash", command,
              rewritten=rewritten, session_id=session_id)
     print(json.dumps(output))
     sys.exit(0)
@@ -108,4 +108,4 @@ def _emit_rewrite(rewritten: str) -> dict:
 
 
 if __name__ == "__main__":
-    rewrite_searxng_scrape_noise_workflow()
+    rewrite_websearch_scrape_noise_workflow()

@@ -2,8 +2,8 @@
 import re
 from pathlib import Path
 
-SEARXNG_ROOT   = Path('/Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/searxng-cli')
-LOG_DIR        = SEARXNG_ROOT / 'src' / 'logs'
+WEBSEARCH_ROOT = Path('/Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/websearch')
+LOG_DIR        = WEBSEARCH_ROOT / 'src' / 'logs'
 LAST_RUN_FILE  = LOG_DIR / 'news_coindesk_last_run.txt'
 TARGET_COLLECTION = 'searxng_crypto'
 
