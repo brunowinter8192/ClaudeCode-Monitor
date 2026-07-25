@@ -8,7 +8,7 @@ from typing import Deque, Dict, Tuple
 
 from AppKit import NSEvent, NSScreen, NSWorkspace
 
-_REPORTS_DIR = Path(__file__).parent / "07_reports"
+_REPORTS_DIR = Path(__file__).parent / "log"
 
 _CG = ctypes.CDLL('/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics')
 _CG.CGSMainConnectionID.argtypes = []

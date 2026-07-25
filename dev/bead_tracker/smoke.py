@@ -5,7 +5,7 @@ Smoke test for bead_tracker_hook per-subcommand processing.
 Creates two temporary test beads, pipes crafted PostToolUse payloads
 to the hook, verifies labels via 'bd label list --json', then cleans up.
 
-Usage (from project root): ./venv/bin/python3 dev/bead_tracker_chain/smoke.py
+Usage (from project root): ./venv/bin/python3 dev/bead_tracker/smoke.py
 """
 
 # INFRASTRUCTURE

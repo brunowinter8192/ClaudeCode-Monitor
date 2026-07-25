@@ -46,11 +46,11 @@ REAL active-Space change while the probe runs. Closed interactively on 2026-07-2
   exited).
 
 As of 2026-07-24 the probe was left running in the background on the user's machine
-(log under `dev/coteditor/07_reports/`), armed to capture the next real CotEditor
+(log under `dev/coteditor/log/`), armed to capture the next real CotEditor
 drag-selection jump. The discriminating readout for the hypothesis: at the jump moment,
 is `left_down=True` AND `at_edge=True` in the buffered samples.
 
 ## Sources
 
 - `dev/coteditor/07_space_jump_probe.py`
-- `dev/coteditor/07_reports/` (probe logs)
+- `dev/coteditor/log/` (probe logs)

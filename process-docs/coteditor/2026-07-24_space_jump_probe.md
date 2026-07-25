@@ -41,7 +41,7 @@ map, is required here.
   header + the full buffer (one line per sample, all fields) to the log file,
   flush, continue running (buffer keeps filling — multiple jumps per run land as
   separate blocks in the same file).
-- Log path: `dev/coteditor/07_reports/space_jump_<run_start_ts>.log`, opened once
+- Log path: `dev/coteditor/log/space_jump_<run_start_ts>.log`, opened once
   per run in append mode; printed once at startup, no other console output besides
   a one-line jump notice (log file remains the primary record).
 - Clean shutdown: `SIGINT`/`SIGTERM` handler sets a flag, loop exits, log closed

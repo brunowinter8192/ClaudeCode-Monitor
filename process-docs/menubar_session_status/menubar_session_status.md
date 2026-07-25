@@ -38,7 +38,7 @@ Session status detection in `src/menubar/` uses separate logic for Workers vs Ma
 
 Worker stale-demote sensor selection — three-option probe (`window_activity` vs JSONL mtime vs TTY mtime):
 - Script: `dev/worker_status_probes/` suite
-- Report: `dev/worker_status_probes/01_reports/comparison_20260524_183937.md`
+- Report: `dev/worker_status_probes/md/comparison_20260524_183937.md`
 - Dataset: ccwrap-phase1 worker session (idle) + status-probe worker session (idle); manually-observed working phases
 
 | Sensor | Working detection | False-positive rate (idle) | Notes |

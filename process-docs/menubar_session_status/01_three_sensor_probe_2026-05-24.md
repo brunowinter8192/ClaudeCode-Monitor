@@ -119,10 +119,10 @@ All scripts: `dev/worker_status_probes/` in the status-probe worktree.
 
 Reports from main run:
 ```
-dev/worker_status_probes/01_reports/raw_probe_a_20260524_183937.csv
-dev/worker_status_probes/01_reports/raw_probe_b_20260524_183937.csv
-dev/worker_status_probes/01_reports/raw_probe_c_20260524_183937.csv
-dev/worker_status_probes/01_reports/comparison_20260524_183937.md
+dev/worker_status_probes/csv/raw_probe_a_20260524_183937.csv
+dev/worker_status_probes/csv/raw_probe_b_20260524_183937.csv
+dev/worker_status_probes/csv/raw_probe_c_20260524_183937.csv
+dev/worker_status_probes/md/comparison_20260524_183937.md
 ```
 
 Supplemental run output (ephemeral, not committed):

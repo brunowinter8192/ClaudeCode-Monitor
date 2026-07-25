@@ -65,7 +65,7 @@ for subcmd in _SEP_RE.split(cmd):
 
 ## Smoke Evidence
 
-`dev/bead_tracker_chain/smoke.py` — 4 cases, two real test beads created/deleted per run.
+`dev/bead_tracker/smoke.py` — 4 cases, two real test beads created/deleted per run.
 
 ```
 Test beads created: Monitor_CC-v8cb  Monitor_CC-a7t7
