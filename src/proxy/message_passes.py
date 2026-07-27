@@ -26,6 +26,7 @@ from .strip_bg_launch_ack import _strip_bg_launch_ack, _BG_LAUNCH_ACK_MARKER
 from .strip_hook_prefix import _strip_hook_prefix, _HOOK_PREFIX_MARKER
 from .strip_git_lock import _strip_git_lock_advice, _GIT_LOCK_MARKER
 from .strip_bd_noise import _strip_bd_noise, _BD_NOISE_MARKERS
+from .strip_sn_notice import _strip_sn_notice, _SN_NOTICE_MARKER
 from .rule_ops import _ops_from_content_change
 
 # role=system messages starting with this marker are Read-truncation notices (CC 2.1.205+)
@@ -98,6 +99,38 @@ def _dedup_wakeup_blocks(messages: list) -> tuple:
         else:
             result.append(msg)
     return result, ops_by_msg_blk
+
+
+# SN-notice pass — strips the bare 4-line "[SYSTEM NOTIFICATION - NOT USER INPUT]" paragraph CC
+# injects ahead of <task-notification> tags in background-task wake-ups, from top-level str/text-block
+# content only. Runs BEFORE _apply_first_pass so the TN branch's top-level tag-contains guard and
+# tag-replacement operate on an already-cleaned prefix — the two concerns (paragraph noise vs. TN-tag
+# consumption) stay decoupled. Returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
+def _apply_sn_notice_strip(messages: list) -> tuple:
+    result = []
+    pass_mods = []
+    pass_removed_by_idx = {}
+    pass_injected_by_idx = {}
+    pass_ops_by_msg_blk: dict = {}
+    changed_indices = []
+    for idx, msg in enumerate(messages):
+        if msg.get("role") != "user":
+            result.append(msg)
+            continue
+        old_content = msg.get("content", "")
+        if not _top_level_content_contains(old_content, _SN_NOTICE_MARKER):
+            result.append(msg)
+            continue
+        new_content, sn_removed = _strip_sn_notice(old_content)
+        if sn_removed:
+            result.append({**msg, "content": new_content})
+            pass_mods.append("stripped_sn_notice_paragraph")
+            changed_indices.append(idx)
+            pass_removed_by_idx[idx] = sn_removed
+            pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_content)
+        else:
+            result.append(msg)
+    return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
 
 
 # First-pass message loop — elif-chain strips task-notification, task-tools-nag, deferred-tools, user-interrupt, rejection SRs — returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)

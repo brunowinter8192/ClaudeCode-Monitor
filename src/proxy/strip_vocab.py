@@ -45,6 +45,7 @@ RULES: dict[str, tuple[str, list[str]]] = {
     'ENV': ('stripped_env_context_sr',        ["As you answer the user's questions, you can use the following context:\n# userEmail"]),
     'HP':  ('stripped_hook_error_prefix',     ['PreToolUse:', 'hook error']),
     'SN':  ('stripped_system_notification_sr', ['[SYSTEM NOTIFICATION']),
+    'SNP': ('stripped_sn_notice_paragraph',    ['[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event']),  # bare paragraph ahead of <task-notification>, NOT SR-wrapped — see attribute_chunk startswith special-case (shares '[SYSTEM NOTIFICATION' text with SN, disambiguated structurally, not by marker order)
     'FM':  ('stripped_file_modified_sr',       [' was modified']),
     'RS':  ('stripped_role_system_msg',        []),  # role-gated, no content marker — attribution via om_norm.role in _process_messages_section
 }
@@ -64,9 +65,10 @@ STRIP_RULE_CODES: frozenset[str] = frozenset(RULES.keys())
 _FULL_NAME_TO_CODE: dict[str, str] = {fn: code for code, (fn, _) in RULES.items()}
 
 # Rule names that indicate an SR-wrapping strip (for LEAK:<SR> detection in classify_tags)
-# Excludes TN (tag-strip, not SR) and PP (PO-preview — wrapper preserved, not SR-wrapped)
+# Excludes TN (tag-strip, not SR), PP (PO-preview — wrapper preserved, not SR-wrapped), and SNP
+# (bare-paragraph strip, never wrapped in <system-reminder> tags — distinct from SN)
 _SR_STRIP_RULES: frozenset[str] = frozenset(
-    fn for code, (fn, _) in RULES.items() if code not in ('TN', 'PP')
+    fn for code, (fn, _) in RULES.items() if code not in ('TN', 'PP', 'SNP')
 )
 
 
@@ -76,6 +78,12 @@ _SR_STRIP_RULES: frozenset[str] = frozenset(
 def attribute_chunk(chunk: str) -> str | None:
     if chunk.startswith('<task-notification>'):
         return 'TN'
+    # Bare SN-notice paragraph (strip_sn_notice.py) is never <system-reminder>-wrapped, unlike the
+    # SN template chunk (strip_sr.py) which always starts with the '<system-reminder>' tag literal —
+    # both chunks contain '[SYSTEM NOTIFICATION' as a substring, so this startswith check must run
+    # before the generic marker loop to avoid the SN entry winning by dict-iteration order.
+    if chunk.startswith('[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event'):
+        return 'SNP'
     for code, (_full_name, markers) in RULES.items():
         if code in ('TN', 'ALL'):
             continue
