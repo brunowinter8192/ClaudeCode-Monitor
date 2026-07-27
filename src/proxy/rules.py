@@ -12,6 +12,7 @@ from .content_strip import _strip_session_guidance, _strip_git_status
 from .rules_config import _load_system2_rules
 from .message_passes import (
     _apply_role_system_strip,
+    _apply_sn_notice_strip,
     _apply_first_pass,
     _apply_cumulative_sr_strips,
     _apply_final_sr_pass,
@@ -44,6 +45,7 @@ def apply_modification_rules(payload: dict, model_family: str = "opus", project_
 
     _passes = [
         _apply_role_system_strip,
+        _apply_sn_notice_strip,
         _apply_first_pass,
         _apply_cumulative_sr_strips,
         _apply_final_sr_pass,

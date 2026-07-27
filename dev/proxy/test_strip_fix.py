@@ -329,9 +329,12 @@ import importlib as _wakeup_il
 _rules_mod = _wakeup_il.import_module('src.proxy.message_passes')
 _apply_first_pass = _rules_mod._apply_first_pass
 _apply_bg_exit_strip = _rules_mod._apply_bg_exit_strip
+_apply_sn_notice_strip = _rules_mod._apply_sn_notice_strip
 _bgk_mod = _wakeup_il.import_module('src.proxy.strip_bg_completed')
 _WAKEUP_TEXT = _bgk_mod._WAKEUP_TEXT
-del _wakeup_il, _rules_mod, _bgk_mod
+_sn_mod = _wakeup_il.import_module('src.proxy.strip_sn_notice')
+_SN_NOTICE_PARAGRAPH = _sn_mod._SN_NOTICE_PARAGRAPH
+del _wakeup_il, _rules_mod, _bgk_mod, _sn_mod
 
 
 def _has_wakeup(content) -> bool:
@@ -407,6 +410,65 @@ def w06_genuine_bgk_plain_string():
     check('W06_mod_replaced', 'replaced_bg_completed_text' in mods, f'mods: {mods}')
 
 
+# ── SN-NOTICE-PARAGRAPH TESTS ─────────────────────────────────────────────────
+# strip_sn_notice.py — bare 4-line paragraph ahead of <task-notification>, anchored startswith
+# decision (not substring-anywhere) — same FP-nuke class as bg_launch_ack / plan_mode, see
+# process-docs/message_strip_fp_nuke/.
+
+# W07 — genuine plain-string paragraph + <task-notification> tag → stripped, mod fired
+def w07_sn_notice_genuine_plain_string():
+    tn = '<task-notification>\n<status>completed</status>\n<summary>done</summary>\n</task-notification>\n'
+    content = _SN_NOTICE_PARAGRAPH + '\n\n' + tn
+    msgs = [{'role': 'user', 'content': content}]
+    new_msgs, mods, _, _c, _, _ops = _apply_sn_notice_strip(msgs)
+    result = new_msgs[0]['content']
+    check('W07_sn_notice_stripped', _SN_NOTICE_PARAGRAPH not in result, repr(result)[:80])
+    check('W07_tn_tag_preserved', result == tn, repr(result))
+    check('W07_mod_fired', 'stripped_sn_notice_paragraph' in mods, f'mods: {mods}')
+
+
+# W08 — genuine text-block at non-zero block index → stripped (do NOT hardcode index 0)
+def w08_sn_notice_text_block_index_one():
+    tn = '<task-notification>\n<status>failed</status>\n<summary></summary>\n</task-notification>\n'
+    content = [
+        {'type': 'text', 'text': 'preceding unrelated block'},
+        {'type': 'text', 'text': _SN_NOTICE_PARAGRAPH + '\n\n' + tn},
+    ]
+    msgs = [{'role': 'user', 'content': content}]
+    new_msgs, mods, _, _c, _, _ops = _apply_sn_notice_strip(msgs)
+    result = new_msgs[0]['content']
+    check('W08_block0_untouched', result[0]['text'] == 'preceding unrelated block')
+    check('W08_block1_stripped', result[1]['text'] == tn, repr(result[1]['text']))
+    check('W08_mod_fired', 'stripped_sn_notice_paragraph' in mods, f'mods: {mods}')
+
+
+# W09 — paragraph quoted as tool_result data → must NOT fire, byte-exact untouched
+def w09_sn_notice_tool_result_untouched():
+    data = 'log excerpt:\n' + _SN_NOTICE_PARAGRAPH + '\nend of excerpt'
+    msgs = [{'role': 'user', 'content': tool_result_str(data)}]
+    new_msgs, mods, _, _c, _, _ops = _apply_sn_notice_strip(msgs)
+    check('W09_tool_result_intact', new_msgs[0]['content'][0]['content'] == data)
+    check('W09_mod_not_fired', 'stripped_sn_notice_paragraph' not in mods, f'mods: {mods}')
+
+
+# W10 — paragraph mid-content in a text block (not at start) → must NOT fire, untouched
+def w10_sn_notice_mid_content_untouched():
+    text = 'user note before it:\n' + _SN_NOTICE_PARAGRAPH + '\n\nmore text after'
+    msgs = [{'role': 'user', 'content': text_block(text)}]
+    new_msgs, mods, _, _c, _, _ops = _apply_sn_notice_strip(msgs)
+    check('W10_mid_content_intact', new_msgs[0]['content'][0]['text'] == text)
+    check('W10_mod_not_fired', 'stripped_sn_notice_paragraph' not in mods, f'mods: {mods}')
+
+
+# W11 — role="system" with paragraph at start → NOT touched by the SN-notice pass (out of scope)
+def w11_sn_notice_role_system_untouched():
+    content = _SN_NOTICE_PARAGRAPH + '\n\nsome trailing detail'
+    msgs = [{'role': 'system', 'content': content}]
+    new_msgs, mods, _, _c, _, _ops = _apply_sn_notice_strip(msgs)
+    check('W11_role_system_intact', new_msgs[0]['content'] == content)
+    check('W11_mod_not_fired', 'stripped_sn_notice_paragraph' not in mods, f'mods: {mods}')
+
+
 if __name__ == '__main__':
     tests = [
         t01_task_tools_nag_real_text_block, t02_task_tools_nag_fp_code_literal, t03_task_tools_nag_tool_result_str,
@@ -424,6 +486,9 @@ if __name__ == '__main__':
         w01_tn_in_tool_result_str, w02_tn_in_tool_result_list, w03_bgk_in_tool_result_str,
         w04_genuine_tn_completed_plain_string, w05_genuine_tn_failed_plain_string,
         w06_genuine_bgk_plain_string,
+        w07_sn_notice_genuine_plain_string, w08_sn_notice_text_block_index_one,
+        w09_sn_notice_tool_result_untouched, w10_sn_notice_mid_content_untouched,
+        w11_sn_notice_role_system_untouched,
     ]
 
     print(f'Running {len(tests)} tests...\n')
