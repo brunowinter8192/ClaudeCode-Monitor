@@ -13,7 +13,7 @@ baseline; do NOT touch to change strip behavior — that lives in `src/proxy/`.
 
 ## Modules
 
-### audit_tool_result_sr_strips.py (645 LOC)
+### audit_tool_result_sr_strips.py (656 LOC)
 
 **Purpose:** Streams every request payload in `src/logs/dual_log/*_original.jsonl`, threads it
 through the 11 real `_apply_*` pass functions from `src.proxy.message_passes` in
@@ -53,3 +53,10 @@ first_line_idx)`) after reviewing one run's raw context, then folded in on the n
   literal 5-line block never appears with real newlines outside this worker's own excluded
   self-session (an artifact of investigating `strip_git_lock.py`'s escaped source, not production
   data). `_scan_ground_truth_git_lock` makes this check itself re-runnable.
+- **This script also served as the fix-milestone's verification tool.** After
+  `strip_sr.py::_strip_system_reminders` stopped descending into `tool_result` (2026-07-28), a
+  re-run showed the SR-family aggregate going from 1 occurrence to 0, non-SR unchanged in kind —
+  see `process-docs/message_strip_fp_nuke/2026-07-28_tool_result_sr_audit.md`. The report's
+  "Genuine CC injection — found?" section has an explicit `elif not sr_occ:` branch for this
+  post-fix state (distinct from the pre-fix "0 genuine, 1 FP" prose) — don't let the two states'
+  wording collide if the corpus regresses.

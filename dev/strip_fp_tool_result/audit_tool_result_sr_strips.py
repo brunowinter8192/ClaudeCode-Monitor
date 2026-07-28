@@ -155,6 +155,10 @@ _MANUAL_VERDICTS = {
     (_MC, 264, 0, 126): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack."),
     (_MC, 270, 0, 129): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (this file is a LIVE, currently-growing session log — this row appeared between two runs of this script)."),
     (_MC, 300, 0, 143): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (same LIVE-log growth as msg[270]; corpus keeps growing across re-runs during this report-framing fix)."),
+    (_MC, 315, 0, 150): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (same LIVE-log growth, milestone-2 fix-verification re-run)."),
+    (_MC, 329, 0, 157): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (same LIVE-log growth, milestone-2 fix-verification re-run)."),
+    (_MC, 351, 0, 167): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (same LIVE-log growth, milestone-2 fix-verification re-run)."),
+    (_MC, 370, 0, 176): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (same LIVE-log growth, milestone-2 fix-verification re-run)."),
     # posts
     (_PO, 30, 0, 16):   ('genuine CC injection', "Bash ran real `rag-cli search ... monitor-cc-reference | head -60` — tripped block_rag_cli_chained.py; genuine hook prefix."),
     (_PO, 70, 0, 35):   ('genuine CC injection', "Real backgrounded `sleep 600` timer — genuine ack."),
@@ -596,6 +600,13 @@ def _render_report(included, excluded, per_file_stats, occurrences, assertion_hi
     if sr_pending:
         lines.append(f'**NOT YET DETERMINED — {sr_pending} SR-family occurrence(s) still PENDING MANUAL '
                       'REVIEW.** Fill `_MANUAL_VERDICTS` and re-run before treating this as a final answer.')
+    elif not sr_occ:
+        lines.append('**SR family now produces 0 tool_result-level occurrences (was 1, the '
+                      '`sr:env-context` false positive below the fix milestone this ran against). '
+                      'Post-fix confirmation, not a fresh "0 genuine" measurement** — see '
+                      '`process-docs/message_strip_fp_nuke/2026-07-28_tool_result_sr_audit.md` for the '
+                      'pre-fix n=1 finding and its evidence-strength caveat; `strip_sr.py::_strip_system_reminders` '
+                      'no longer descends into tool_result at all, so there is nothing left here to classify.')
     else:
         occ_ref = ', '.join(f'Occurrence {n}' for n in sr_occ_numbers) if sr_occ_numbers else 'none'
         lines.append(f'**NO — 0 genuine CC injections, {sr_quoted} false positive found, for the SR strip '

@@ -154,7 +154,7 @@ def _apply_first_pass(messages: list) -> tuple:
                 if output_path else _WAKEUP_TEXT
             )
             new_msg["content"] = _replace_task_notification_tags(old_content, injected_text)
-            if _content_contains(new_msg["content"], "task tools haven"):
+            if _top_level_content_contains(new_msg["content"], "task tools haven"):
                 new_msg["content"] = _strip_system_reminder(new_msg["content"], "task tools haven")
                 pass_mods.append("stripped_task_tools_nag")
                 also_stripped_nag = True
@@ -169,7 +169,7 @@ def _apply_first_pass(messages: list) -> tuple:
                 pass_removed_by_idx[idx] = removed
                 pass_injected_by_idx[idx] = [injected_text]
                 pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_msg["content"])
-        elif msg.get("role") == "user" and _content_contains(msg.get("content", ""), "task tools haven"):
+        elif msg.get("role") == "user" and _top_level_content_contains(msg.get("content", ""), "task tools haven"):
             old_content = msg.get("content", "")
             new_msg = dict(msg)
             new_msg["content"] = _strip_system_reminder(old_content, "task tools haven")
@@ -179,7 +179,7 @@ def _apply_first_pass(messages: list) -> tuple:
                 pass_mods.append("stripped_task_tools_nag")
                 pass_removed_by_idx[idx] = _find_system_reminder_blocks(old_content, "task tools haven")
                 pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_msg["content"])
-        elif msg.get("role") == "user" and _content_contains(msg.get("content", ""), "deferred tools are now available via ToolSearch"):
+        elif msg.get("role") == "user" and _top_level_content_contains(msg.get("content", ""), "deferred tools are now available via ToolSearch"):
             old_content = msg.get("content", "")
             new_msg = dict(msg)
             new_msg["content"] = _strip_system_reminder(old_content, "deferred tools are now available via ToolSearch")
@@ -189,7 +189,7 @@ def _apply_first_pass(messages: list) -> tuple:
                 pass_mods.append("stripped_deferred_tools_sr")
                 pass_removed_by_idx[idx] = _find_system_reminder_blocks(old_content, "deferred tools are now available via ToolSearch")
                 pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_msg["content"])
-        elif msg.get("role") == "user" and _content_contains(msg.get("content", ""), "user sent a new message while you were working"):
+        elif msg.get("role") == "user" and _top_level_content_contains(msg.get("content", ""), "user sent a new message while you were working"):
             old_content = msg.get("content", "")
             new_msg = dict(msg)
             new_msg["content"] = _strip_user_interrupt_sr(old_content, "user sent a new message while you were working")
@@ -239,22 +239,22 @@ def _apply_cumulative_sr_strips(messages: list) -> tuple:
             continue
         original_before_pass = content
         cur_pass_mods = []
-        if _content_contains(content, _SKILLS_MARKER):
+        if _top_level_content_contains(content, _SKILLS_MARKER):
             new_content = _strip_system_reminder(content, _SKILLS_MARKER)
             if new_content != content:
                 content = new_content
                 cur_pass_mods.append("stripped_skills_sr")
-        if _content_contains(content, _AGENT_TYPES_MARKER):
+        if _top_level_content_contains(content, _AGENT_TYPES_MARKER):
             new_content = _strip_system_reminder(content, _AGENT_TYPES_MARKER)
             if new_content != content:
                 content = new_content
                 cur_pass_mods.append("stripped_agent_types_sr")
-        if _content_contains(content, _CLAUDEMD_MARKER):
+        if _top_level_content_contains(content, _CLAUDEMD_MARKER):
             new_content = _strip_system_reminder(content, _CLAUDEMD_MARKER)
             if new_content != content:
                 content = new_content
                 cur_pass_mods.append("stripped_claudemd_sr")
-        if _PYRIGHT_ENABLED and _content_contains(content, "<new-diagnostics>"):
+        if _PYRIGHT_ENABLED and _top_level_content_contains(content, "<new-diagnostics>"):
             new_content = _strip_pyright_diagnostics(content)
             if new_content != content:
                 content = new_content
