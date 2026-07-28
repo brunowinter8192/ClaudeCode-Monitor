@@ -12,7 +12,7 @@ does, by classification rather than log-diff).
 
 ## Modules
 
-### cc_injection_inventory.py (635 LOC)
+### cc_injection_inventory.py (712 LOC)
 
 **Purpose:** Streams `src/logs/dual_log/*_original.jsonl`, extracts every text segment
 (`system[0..3]`, message `content` — plain string / `text` blocks / `tool_result` content),
@@ -51,7 +51,7 @@ override name with `--out-name`). Console gets a 3-line summary only.
 | `--out-name` | Override report filename (written under `md/`) |
 | `--max-entries` | Debug: cap entries processed per file |
 
-**Runtime:** ~11s for the full corpus (738 entries, ~4GB total, one file 3.9GB) on the reference
+**Runtime:** ~11s for the full corpus (704 entries, ~4GB total, one file 3.9GB) on the reference
 run — dominated by JSON parsing; classification itself is cheap because exact-text dedup means
 the (expensive) real strip-pipeline call only runs once per distinct segment, never per raw
 occurrence.
@@ -63,27 +63,41 @@ occurrence.
 - **Dedup key:** `(file, role, section, block_type, exact segment text)` — segment-granularity
   refinement of the prior `(file, exact full message content)` convention, so a message combining
   one repeated block with one new block credits only the new block as a new distinct occurrence.
+- **tool_result vs top-level text.** `tool_result.content` is OUR tool's own return value — a
+  `<system-reminder>` or CLAUDE.md-preamble literal appearing INSIDE it is quoted DATA (a fetched
+  issue body, a `strings` dump, source containing the tag as a string), never a CC wrapper. The
+  CLAUDE.md-preserve and leftover-SR extraction passes (`_extract_claudemd_blocks`,
+  `_extract_leftover_sr_blocks`) therefore only run on top-level shapes (`_TOP_LEVEL_SHAPES` =
+  `plain_string`/`text`) — anything matching inside `tool_result` content stays part of that
+  segment's `OURS` residual instead of being pulled out as `KEEP`/`UNCLASSIFIED`.
 - **Grouping:** COVERED = one rule code; KEEP = one known wrapper; OURS = one tool name or the
   single user/assistant-text bucket; UNCLASSIFIED = one normalized-template signature (paths/
   IDs/numbers -> placeholders). Top-level user text uses a two-phase pass: a normalized signature
-  needs >=2 SUBSTANTIVELY DIFFERENT variants (exact text after `.strip()` — excludes a trailing-
-  newline shape artifact observed mid-corpus) at >=40 chars to count as a recurring CC template
-  (`UNCLASSIFIED`); everything else (singletons, short acks, whitespace-only variants) folds into
-  one `OURS` aggregate.
+  needs >=2 SUBSTANTIVELY DISTINCT variants at >=40 chars to count as a recurring CC template
+  (`UNCLASSIFIED`). Distinctness is containment-collapsed (`_distinct_variant_count`): whitespace-
+  only differences (a trailing-newline shape artifact observed mid-corpus) AND one variant being a
+  verbatim substring of another (prefix/suffix/mid-string extension — one human message edited/
+  resent as it grew, not a template recurring) both collapse to a single variant. Everything that
+  doesn't clear the bar (singletons, short acks, collapsed pairs) folds into one `OURS` aggregate.
 - **Known simplification:** `role=user` segments are tested independently per block, not as part
   of the full multi-block message — every strip pass gates only on a single block's own content,
   so this does not change any COVERED/KEEP decision, but is a deliberate divergence from
   production's whole-message pass loop.
+- **Self-scan exclusion:** the default glob excludes THIS session's own worker log — any file
+  matching `api_requests_worker_*` that also embeds the current task/worktree name
+  (`_current_task_name`, detected from the `.claude/worktrees/<name>/` path) — since that file is
+  written live while the script runs and would make the corpus non-reproducible mid-scan. Other
+  (past/unrelated) worker session logs are NOT excluded. An explicit `--logs-glob` bypasses this
+  entirely. Excluded files are listed in the report's Corpus section.
 
 ## Gotchas
 
 - The dual_log directory is gitignored and lives only in the main repo (not copied into a
   worktree) — the auto-resolve fallback assumes the fixed `.claude/worktrees/<name>/` nesting
   (matches `dev/proxy_dual_log/attribution_coverage.py`'s precedent); pass `--logs-glob` with an
-  absolute path if that assumption doesn't hold.
-- The default glob matches ALL `*_original.jsonl` in the directory, including a live worker's own
-  session log if one is running through the proxy at scan time — not filtered out; the corpus
-  table in the report always states exactly which files were scanned and their entry counts.
+  absolute path if that assumption doesn't hold. The same nesting check drives the self-scan
+  exclusion above — running the script directly from a non-worktree checkout disables it (no task
+  name to match against), so nothing is excluded in that case.
 - `system[2]`/`system[3]` are always fully replaced by the proxy regardless of content (verified:
   `_apply_system_passes` / `_strip_sys3` in `src/proxy/rules.py` and `content_strip.py`) — they
   get exactly one COVERED row each, not split by content. `system[0]`/`system[1]` are never

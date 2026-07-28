@@ -56,7 +56,7 @@ ResolvedHit = namedtuple("ResolvedHit", ["kind", "ref", "label", "origin", "char
 
 def inventory_workflow() -> None:
     args = _parse_args()
-    log_files = _resolve_log_files(args.logs_glob)
+    log_files, excluded_files = _resolve_log_files(args.logs_glob)
     if not log_files:
         raise RuntimeError(f"No log files matched: {args.logs_glob}")
 
@@ -74,7 +74,7 @@ def inventory_workflow() -> None:
 
     _finalize_pending_user_text(pending_user_text, registry)
 
-    report = _build_report(registry, file_stats, counters, log_files)
+    report = _build_report(registry, file_stats, counters, log_files, excluded_files)
     out_path = _write_report(report, args.out_name)
     _print_console_summary(registry, counters, out_path)
 
@@ -103,10 +103,37 @@ def _default_log_dir() -> Path:
     raise RuntimeError(f"dual_log directory not found at {local} or {fallback}")
 
 
-def _resolve_log_files(logs_glob: str | None) -> list:
+_WORKER_LOG_PREFIX = "api_requests_worker_"
+
+
+# Task/worktree name if running inside .claude/worktrees/<name>/, else None. Used only to
+# recognize (and exclude, default-glob path only) THIS session's own still-growing worker log —
+# never applied when the user passes an explicit --logs-glob.
+def _current_task_name() -> str | None:
+    parent = _WORKTREE_ROOT.parent
+    if parent.name == "worktrees" and parent.parent.name == ".claude":
+        return _WORKTREE_ROOT.name
+    return None
+
+
+# A worker log file is THIS session's own (live, still being appended to as this script runs)
+# iff it uses the worker naming convention AND embeds the current task/worktree name.
+def _is_own_live_session_log(path: Path, task_name: str | None) -> bool:
+    if task_name is None:
+        return False
+    return path.name.startswith(_WORKER_LOG_PREFIX) and task_name in path.name
+
+
+# Returns (included_files, excluded_files) — excluded is always [] when logs_glob is explicit.
+def _resolve_log_files(logs_glob: str | None) -> tuple:
     if logs_glob:
-        return sorted(Path(p) for p in globmod.glob(logs_glob))
-    return sorted(_default_log_dir().glob(_DEFAULT_GLOB))
+        return sorted(Path(p) for p in globmod.glob(logs_glob)), []
+    all_files = sorted(_default_log_dir().glob(_DEFAULT_GLOB))
+    task_name = _current_task_name()
+    included, excluded = [], []
+    for f in all_files:
+        (excluded if _is_own_live_session_log(f, task_name) else included).append(f)
+    return included, excluded
 
 
 # Stream one dual-log file, extracting + classifying every segment; returns per-file corpus stats
@@ -313,6 +340,14 @@ def _classify_role_system_segment(text) -> list:
                          "UNCLASSIFIED", len(text), text)]
 
 
+# Content shapes where CC genuinely delivers top-level framing/wrappers (plain user-typed text
+# or a CC-appended text block). tool_result content is OUR tool's own return value — an SR-looking
+# literal inside it is quoted DATA (a fetched issue body, a `strings` dump, RAG content, source
+# code containing the tag as a string), never a CC-injected wrapper, so the CLAUDE.md-preserve and
+# leftover-SR extraction below must not run against tool_result content.
+_TOP_LEVEL_SHAPES = ("plain_string", "text")
+
+
 # role=user segment — run the real proxy strip pipeline on a synthetic single-block message,
 # then peel off KEEP wrappers / leftover unmatched SR blocks from the residual, then bucket
 # whatever's left as OURS (tool/user content) or defer top-level text for two-phase resolution.
@@ -342,21 +377,22 @@ def _classify_user_segment(block_type, text, tool_name) -> list:
     if not residual or residual.strip() in ("", "."):
         return hits
 
-    claude_blocks, residual = _extract_claudemd_blocks(residual)
-    for cb in claude_blocks:
-        hits.append(ResolvedHit("CLASS", "KEEP:claudemd_context",
-                                 "CLAUDE.md context block (SR, preserve-guarded in strip_sr.py)",
-                                 "KEEP", len(cb), cb))
+    if block_type in _TOP_LEVEL_SHAPES:
+        claude_blocks, residual = _extract_claudemd_blocks(residual)
+        for cb in claude_blocks:
+            hits.append(ResolvedHit("CLASS", "KEEP:claudemd_context",
+                                     "CLAUDE.md context block (SR, preserve-guarded in strip_sr.py)",
+                                     "KEEP", len(cb), cb))
 
-    leftover_srs, residual = _extract_leftover_sr_blocks(residual)
-    for sr in leftover_srs:
-        sig = _normalize_template(sr)[:100]
-        hits.append(ResolvedHit("CLASS", f"UNCLASSIFIED:sr:{sig}",
-                                 f'Unmatched <system-reminder> block ("{sig}")',
-                                 "UNCLASSIFIED", len(sr), sr))
+        leftover_srs, residual = _extract_leftover_sr_blocks(residual)
+        for sr in leftover_srs:
+            sig = _normalize_template(sr)[:100]
+            hits.append(ResolvedHit("CLASS", f"UNCLASSIFIED:sr:{sig}",
+                                     f'Unmatched <system-reminder> block ("{sig}")',
+                                     "UNCLASSIFIED", len(sr), sr))
 
-    if not residual or residual.strip() in ("", "."):
-        return hits
+        if not residual or residual.strip() in ("", "."):
+            return hits
 
     if block_type in ("tool_result_str", "tool_result_text"):
         tname = tool_name or "(unresolved tool)"
@@ -402,7 +438,9 @@ def _unwrap_content(block_type, content) -> str:
     return ""
 
 
-# Peel out CLAUDE.md-context SR blocks (strip_sr._PRESERVE_PREAMBLE guard) from residual text
+# Peel out CLAUDE.md-context SR blocks (strip_sr._PRESERVE_PREAMBLE guard) from residual text.
+# Only called for top-level shapes (see `_TOP_LEVEL_SHAPES`) — CLAUDE.md context is delivered as
+# its own top-level message block, never nested inside a tool_result's own content.
 def _extract_claudemd_blocks(text: str) -> tuple:
     kept = []
 
@@ -420,7 +458,9 @@ def _extract_claudemd_blocks(text: str) -> tuple:
 
 
 # Any <system-reminder> block still standing after the full pipeline matched no known template —
-# a genuine gap: proxy strips nothing here, no strip_vocab entry exists for it.
+# a genuine gap: proxy strips nothing here, no strip_vocab entry exists for it. Only called for
+# top-level shapes (see `_TOP_LEVEL_SHAPES`) — inside tool_result this would be quoted OUR data,
+# not a CC wrapper.
 def _extract_leftover_sr_blocks(text: str) -> tuple:
     blocks = strip_sr._STANDALONE_SR_RE.findall(text)
     if not blocks:
@@ -437,16 +477,29 @@ def _normalize_template(text: str) -> str:
     return _WS_RE.sub(" ", t).strip()
 
 
-# Two-phase resolution for top-level user text: signatures recurring >=2x across distinct
-# occurrences are CC-authored templates humans don't retype verbatim -> UNCLASSIFIED, one row
-# each. Signatures seen exactly once are genuinely unique -> folded into one OURS aggregate row
-# (a human typed a different sentence every time; enumerating each would be a laundry-list, not
-# a class).
+# Collapse variants where one is a verbatim substring of another (prefix, suffix, or mid-string
+# extension) before counting distinctness — a message a human edited/extended between two sends
+# is still ONE evolving message, not two occurrences of a recurring CC template. Longest-first so
+# a shorter variant merges into whichever longer kept variant already contains it.
+def _distinct_variant_count(variants: set) -> int:
+    ordered = sorted((v for v in variants if v), key=len, reverse=True)
+    kept: list = []
+    for v in ordered:
+        if not any(v in longer for longer in kept):
+            kept.append(v)
+    return len(kept)
+
+
+# Two-phase resolution for top-level user text: signatures with >=2 SUBSTANTIVELY DISTINCT
+# variants (containment-collapsed, see `_distinct_variant_count`) are CC-authored templates
+# humans don't retype verbatim -> UNCLASSIFIED, one row each. Everything else (singletons, and
+# same-message-grew-longer pairs collapsing to 1 distinct variant) is genuinely unique -> folded
+# into one OURS aggregate row (enumerating each would be a laundry-list, not a class).
 def _finalize_pending_user_text(pending: dict, registry: dict) -> None:
     singleton_count = singleton_chars = 0
     singleton_sample = None
     for sig, stat in pending.items():
-        if len(stat["variants"]) >= 2 and len(stat["sample"] or "") >= 40:
+        if _distinct_variant_count(stat["variants"]) >= 2 and len(stat["sample"] or "") >= 40:
             registry[f"UNCLASSIFIED:user_text:{sig}"] = {
                 "label": f'Recurring unattributed user-message text ("{sig}")',
                 "origin": "UNCLASSIFIED", "role": stat["role"], "section": stat["section"],
@@ -475,7 +528,8 @@ def _md_escape(s: str) -> str:
     return s.replace("|", "\\|")
 
 
-def _build_report(registry: dict, file_stats: list, counters: dict, log_files: list) -> str:
+def _build_report(registry: dict, file_stats: list, counters: dict, log_files: list,
+                   excluded_files: list) -> str:
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     lines = [
         f"# CC Injection Inventory — {ts}",
@@ -511,15 +565,29 @@ def _build_report(registry: dict, file_stats: list, counters: dict, log_files: l
         "(Read-tool truncation notice, `<persisted-output>` wrapper, CLAUDE.md context SR) are",
         "detected explicitly on the pipeline's residual output -> `KEEP`. `role=assistant` text is",
         "never touched by any pass (verified: no `_apply_*` pass in `rules.py` gates on",
-        "`role=='assistant'`) -> `OURS` directly. Remaining `tool_result` residual is `OURS`,",
-        "bucketed by tool name. Remaining top-level user text uses a two-phase signature check:",
-        "normalized-text signatures >=40 chars with >=2 SUBSTANTIVELY DIFFERENT underlying variants",
-        "(exact text after stripping leading/trailing whitespace — this excludes a trailing-newline",
-        "shape artifact observed mid-corpus that would otherwise double-count long human messages)",
-        "are CC-authored templates (a human doesn't retype a whole sentence verbatim) ->",
-        "`UNCLASSIFIED`. Short recurring text (greetings/acks like \"done\", \"ok\"), whitespace-only",
-        "variants, and all singletons are folded into one `OURS` aggregate (genuinely unique or",
-        "naturally-repeated human prose). `system[2]`/",
+        "`role=='assistant'`) -> `OURS` directly.",
+        "",
+        "**tool_result vs top-level text — the enclosing shape decides, not the bytes.**",
+        "`tool_result.content` is OUR tool's own return value (bash/git/file output, retrieved",
+        "documents) — a `<system-reminder>` or CLAUDE.md-preamble literal appearing INSIDE it is",
+        "quoted DATA (a fetched issue body, a `strings` dump of the CC binary, source containing the",
+        "tag as a string), never a CC-injected wrapper, so the CLAUDE.md-preserve and leftover-SR",
+        "extraction passes only run on top-level shapes (`plain_string` / `text` blocks) — any such",
+        "literal inside `tool_result` content stays part of that segment's `OURS` residual, bucketed",
+        "by tool name like the rest of the tool's output. On a top-level shape, a leftover unmatched",
+        "`<system-reminder>` block after the full pipeline IS a genuine gap (no strip_vocab entry",
+        "exists for it) -> `UNCLASSIFIED`. Remaining `tool_result` residual (not otherwise KEEP/",
+        "COVERED) is `OURS`, bucketed by tool name.",
+        "",
+        "Remaining top-level user text uses a two-phase signature check: a normalized-text",
+        "signature (>=40 chars) needs >=2 SUBSTANTIVELY DISTINCT underlying variants to count as a",
+        "recurring CC template -> `UNCLASSIFIED`. Distinctness collapses two kinds of false",
+        "recurrence: (a) whitespace-only differences (a trailing-newline shape artifact observed",
+        "mid-corpus), and (b) containment — one variant being a verbatim substring (prefix, suffix,",
+        "or mid-string extension) of another, which is one human message edited/resent as it grew,",
+        "not two occurrences of a template. Short recurring text (greetings/acks like \"done\",",
+        "\"ok\"), whitespace/containment-collapsed pairs, and all singletons fold into one `OURS`",
+        "aggregate (genuinely unique or naturally-repeated human prose). `system[2]`/",
         "`system[3]` are unconditionally fully replaced by the proxy (`_apply_system_passes` /",
         "`_strip_sys3`) -> `COVERED`; `system[0]`/`system[1]` are never touched by any proxy",
         "function -> `UNCLASSIFIED`.",
@@ -535,6 +603,12 @@ def _build_report(registry: dict, file_stats: list, counters: dict, log_files: l
         "block's own content (all strip passes here) are unaffected; this does not change any",
         "COVERED/KEEP decision in this corpus.",
         "",
+        "**Self-scan exclusion.** The default glob excludes THIS session's own worker log",
+        "(`api_requests_worker_*` embedding the current task/worktree name) — that file is written",
+        "live while the script runs, so including it would make the corpus non-reproducible",
+        "mid-scan. An explicit `--logs-glob` is never filtered. Any file excluded this run is listed",
+        "below.",
+        "",
         "## Corpus",
         "",
         "| File | Entries | Messages (raw) | Size |",
@@ -547,6 +621,9 @@ def _build_report(registry: dict, file_stats: list, counters: dict, log_files: l
         total_size += fs["size_bytes"]
         lines.append(f"| `{fs['file']}` | {fs['entries']} | {fs['messages']} | {_fmt_bytes(fs['size_bytes'])} |")
     lines.append(f"| **Total** | **{total_entries}** | **{total_messages}** | **{_fmt_bytes(total_size)}** |")
+    if excluded_files:
+        lines += ["", "**Excluded (own live worker session, default glob only):**"]
+        lines += [f"- `{f.name}`" for f in excluded_files]
     lines += [
         "",
         "**Chosen metric — segments** (one text/tool_result block, used for all class counts below):",
