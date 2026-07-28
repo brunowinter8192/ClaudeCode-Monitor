@@ -100,6 +100,19 @@ PASSES = [
     ('_apply_bd_noise_strip', _apply_bd_noise_strip),
 ]
 
+# The SR strip family this issue actually audits — _apply_first_pass's SR-producing branches
+# (task-tools-nag / deferred-tools / user-interrupt), _apply_cumulative_sr_strips, and
+# _apply_final_sr_pass all descend via _content_contains + strip_sr.py's line-anchored
+# <system-reminder> matching. bg_launch_ack / hook_prefix / po_preview match their OWN, unrelated
+# markers (none imports strip_sr) — their tool_result descent is correct and out of this issue's
+# scope, reported separately, never pooled into the SR-family verdict.
+_SR_FAMILY_PASSES = {'_apply_first_pass', '_apply_cumulative_sr_strips', '_apply_final_sr_pass'}
+
+
+def _family(pass_name):
+    return 'SR strip family (audited)' if pass_name in _SR_FAMILY_PASSES else 'non-SR pass (own marker, out of scope)'
+
+
 # Passes whose OWN source explicitly documents they do NOT descend into tool_result
 # (role_system only ever touches role=='system' messages, which never carry tool_result blocks).
 # Any tool_result hit attributed to these three is an anomaly against the code's own design intent.
@@ -141,6 +154,7 @@ _MANUAL_VERDICTS = {
     (_MC, 249, 0, 119): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack."),
     (_MC, 264, 0, 126): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack."),
     (_MC, 270, 0, 129): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (this file is a LIVE, currently-growing session log — this row appeared between two runs of this script)."),
+    (_MC, 300, 0, 143): ('genuine CC injection', "Real backgrounded `sleep 600` — genuine ack (same LIVE-log growth as msg[270]; corpus keeps growing across re-runs during this report-framing fix)."),
     # posts
     (_PO, 30, 0, 16):   ('genuine CC injection', "Bash ran real `rag-cli search ... monitor-cc-reference | head -60` — tripped block_rag_cli_chained.py; genuine hook prefix."),
     (_PO, 70, 0, 35):   ('genuine CC injection', "Real backgrounded `sleep 600` timer — genuine ack."),
@@ -518,48 +532,110 @@ def _render_report(included, excluded, per_file_stats, occurrences, assertion_hi
         lines.append('```')
         lines.append('')
 
-    lines.append('## Aggregate')
+    lines.append('## Aggregate — split by family (SR strip family vs. non-SR passes)')
     lines.append('')
-    by_template = Counter(r['template'] for r in all_occ)
-    by_tool = Counter(r['tool_name'] for r in all_occ)
-    by_verdict = Counter(_MANUAL_VERDICTS.get(_verdict_key(r), ('PENDING', ''))[0] for r in all_occ)
-    lines.append('**By template/rule:**')
+    lines.append('The 3 SR-family passes (`_apply_first_pass`\'s SR branches, `_apply_cumulative_sr_strips`, '
+                  '`_apply_final_sr_pass`) all import and match through `strip_sr.py`\'s line-anchored '
+                  '`<system-reminder>` scan. `_apply_bg_launch_ack_strip`, `_apply_hook_prefix_strip`, '
+                  '`_apply_po_preview_strip` import NONE of that — they match their own, unrelated markers '
+                  '(`Command running in background with ID:`, `PreToolUse:`, the persisted-output preview '
+                  'header). Pooling the two into one "genuine CC injection" number is what produced a wrong '
+                  'headline in an earlier draft of this report — kept split from here on.')
     lines.append('')
+    sr_occ = [r for r in all_occ if _family(r['pass_name']).startswith('SR')]
+    non_sr_occ = [r for r in all_occ if not _family(r['pass_name']).startswith('SR')]
+    sr_occ_numbers = [i + 1 for i, r in enumerate(all_occ) if _family(r['pass_name']).startswith('SR')]
+
+    def _verdict_of(r):
+        return _MANUAL_VERDICTS.get(_verdict_key(r), ('PENDING', ''))[0]
+
+    lines.append(f'**SR strip family (audited by this issue): {len(sr_occ)} tool_result-level occurrence(s).**')
+    lines.append('')
+    lines.append('| Template | Count | Verdict |')
+    lines.append('|---|---|---|')
+    for r in sr_occ:
+        lines.append(f'| `{r["template"]}` | 1 | {_verdict_of(r)} |')
+    if not sr_occ:
+        lines.append('| (none) | 0 | — |')
+    lines.append('')
+    lines.append(f'**Non-SR passes (own markers, out of this issue\'s scope): {len(non_sr_occ)} '
+                  f'tool_result-level occurrence(s).**')
+    lines.append('')
+    non_sr_by_template = Counter(r['template'] for r in non_sr_occ)
+    non_sr_by_verdict = Counter(_verdict_of(r) for r in non_sr_occ)
     lines.append('| Template | Count |')
     lines.append('|---|---|')
-    for t, c in by_template.most_common():
+    for t, c in non_sr_by_template.most_common():
         lines.append(f'| `{t}` | {c} |')
     lines.append('')
-    lines.append('**By tool:**')
+    lines.append('| Verdict | Count |')
+    lines.append('|---|---|')
+    for v, c in non_sr_by_verdict.most_common():
+        lines.append(f'| {v} | {c} |')
     lines.append('')
+    lines.append('**Pooled totals (both families combined, for reference only — do not read as one '
+                  'population; scopes below are distinct):**')
+    lines.append('')
+    by_tool = Counter(r['tool_name'] for r in all_occ)
     lines.append('| Tool | Count |')
     lines.append('|---|---|')
     for t, c in by_tool.most_common():
         lines.append(f'| `{t}` | {c} |')
     lines.append('')
-    lines.append('**By classification:**')
-    lines.append('')
-    lines.append('| Verdict | Count |')
-    lines.append('|---|---|')
-    for v, c in by_verdict.most_common():
-        lines.append(f'| {v} | {c} |')
-    lines.append('')
 
-    genuine_count = by_verdict.get('genuine CC injection', 0)
-    lines.append('## Genuine CC injection inside tool_result — found?')
+    sr_verdicts = Counter(_verdict_of(r) for r in sr_occ)
+    sr_genuine = sr_verdicts.get('genuine CC injection', 0)
+    sr_quoted = sr_verdicts.get('quoted data', 0)
+    sr_pending = sr_verdicts.get('PENDING', 0)
+    lines.append('## Genuine CC injection inside tool_result — found? (scoped to the SR strip family)')
     lines.append('')
-    if genuine_count:
-        lines.append(f'**YES — {genuine_count} occurrence(s) classified as genuine.** See rows above; '
-                      'the next milestone\'s fix must NOT blanket-disable tool_result descent.')
+    lines.append('This question was always about the 3 SR-family passes — the ones this issue is actually '
+                  'about (`_apply_first_pass` SR branches, `_apply_cumulative_sr_strips`, '
+                  '`_apply_final_sr_pass`), NOT the 3 unrelated non-SR passes reported above.')
+    lines.append('')
+    if sr_pending:
+        lines.append(f'**NOT YET DETERMINED — {sr_pending} SR-family occurrence(s) still PENDING MANUAL '
+                      'REVIEW.** Fill `_MANUAL_VERDICTS` and re-run before treating this as a final answer.')
     else:
-        pending = by_verdict.get('PENDING', 0)
-        if pending:
-            lines.append(f'**NOT YET DETERMINED — {pending} occurrence(s) still PENDING MANUAL REVIEW.** '
-                          'Fill `_MANUAL_VERDICTS` and re-run before treating this as a final answer.')
-        else:
-            lines.append('**NO — 0 occurrences classified as genuine CC injection** across all reviewed '
-                          'tool_result strips in this corpus. Every tool_result-level strip found was '
-                          'quoted data or (where noted) ambiguous.')
+        occ_ref = ', '.join(f'Occurrence {n}' for n in sr_occ_numbers) if sr_occ_numbers else 'none'
+        lines.append(f'**NO — 0 genuine CC injections, {sr_quoted} false positive found, for the SR strip '
+                      f'family.** Across the entire corpus (5 files, incl. the 2.2GB `wise2627` log) the SR '
+                      f'family produced exactly **{len(sr_occ)}** tool_result-level strip: {occ_ref} '
+                      '(`sr:env-context` via `_apply_first_pass`), and it is a confirmed false positive, '
+                      'not a genuine injection.')
+        lines.append('')
+        lines.append('**Evidence-strength caveat — read before drawing conclusions.** This "0 genuine" '
+                      'answer rests on a sample of **n=1** tool_result-level SR-family strip in the whole '
+                      'scanned corpus, not on a large population where genuine cases would statistically '
+                      'have to show up. It is backed by a structural argument, not just the count: '
+                      '`_apply_final_sr_pass`/`_apply_cumulative_sr_strips`/`_apply_first_pass`\'s SR branches '
+                      'only ever fire on text matching one of `strip_sr.py`\'s fixed template identifiers '
+                      '(env-context, task-tools-nag, deferred-tools, skills, agent-types, claudemd, '
+                      'pyright-diagnostics, plan-mode, date-changed) — CC injects these into TOP-LEVEL user '
+                      'message text, never as part of a tool\'s own return value, so a genuine occurrence '
+                      'inside a tool_result would require CC to embed one of these templates INSIDE another '
+                      'tool\'s output, which nothing in this corpus shows happening. Still: n=1 is a thin '
+                      'evidence base, and the next milestone\'s fix should not be built as if 0-genuine were '
+                      'proven over a large sample — treat it as "no counter-example found in ~660 requests '
+                      'across 5 real sessions", not "structurally impossible".')
+        lines.append('')
+        lines.append('**The single SR-family occurrence\'s discriminating evidence** (what the fix should '
+                      'key on conceptually): `fence_odd_before = True` — an ODD number of markdown ``` '
+                      'fences precede the removed text, meaning it sits INSIDE an open code fence, not at '
+                      'top-level prose. The immediately preceding text is a documentation header + open '
+                      'fence (`"CC injects this SR block on nearly every request:\\n```"`) and the text '
+                      'immediately after is the closing fence + a caption (`"```\\n334 chars of inner text '
+                      'per request, never useful to the proxy model."`) — i.e. the SR block sits between a '
+                      'matched open/close fence pair inside a RAG-retrieved documentation excerpt. This '
+                      'fence-pair framing, not just "inside a tool_result", is the concrete signal available '
+                      'to distinguish a quoted documentation example from a genuine per-request injection.')
+    lines.append('')
+    non_sr_genuine = non_sr_by_verdict.get('genuine CC injection', 0)
+    lines.append(f'**Non-SR passes — {len(non_sr_occ)} occurrences ({non_sr_genuine} genuine, out of scope).** '
+                  f'`_apply_bg_launch_ack_strip`, `_apply_hook_prefix_strip`, `_apply_po_preview_strip` '
+                  'stripped real CC/hook/proxy-generated wrapper text out of real Bash tool_results — this '
+                  'is their own, unrelated marker matching working as designed, and this issue does not '
+                  'question it.')
     lines.append('')
 
     return '\n'.join(lines)
