@@ -28,6 +28,11 @@ from .rule_ops import _merge_ops
 
 _WORKTREE_PATH_PATTERN = re.compile(r'(/[^\s]+)/\.claude/worktrees/[^/\s]+')
 
+# Exact CC boilerplate text at system[1] — redundant once sys[2] (our injected rules) already
+# establishes the agent's role. Exact-match guarded: an unexpected value at index 1 (future CC
+# version changing this line) passes through untouched, never blindly nuked by index alone.
+_SYS1_BOILERPLATE_TEXT = "You are Claude Code, Anthropic's official CLI for Claude."
+
 # ORCHESTRATOR
 
 # Apply all proxy modification rules — returns (modified_payload, list_of_applied_rules, original_system2_text, stripped_msg_indices, stripped_msg_originals, stripped_msg_removed, injected_msg_added)
@@ -91,12 +96,20 @@ def apply_modification_rules(payload: dict, model_family: str = "opus", project_
 
 # FUNCTIONS
 
-# System-block passes — injects system2 rules and normalizes system3 session-guidance / worktree paths — returns (new_system, original_system2_text, mods, sys_changed)
+# System-block passes — strips system1 boilerplate, injects system2 rules, and normalizes
+# system3 session-guidance / worktree paths — returns (new_system, original_system2_text, mods, sys_changed)
 def _apply_system_passes(system, system_rules: str) -> tuple:
     new_system = list(system) if isinstance(system, list) else system
     original_system2_text = None
     mods = []
     sys_changed = False
+    if isinstance(new_system, list) and len(new_system) > 1:
+        block1 = new_system[1]
+        if (isinstance(block1, dict) and block1.get("type") == "text"
+                and block1.get("text", "") == _SYS1_BOILERPLATE_TEXT):
+            new_system[1] = {**block1, "text": "."}
+            mods.append("stripped_sys1_boilerplate")
+            sys_changed = True
     if isinstance(new_system, list) and len(new_system) >= 3:
         block = new_system[2]
         if isinstance(block, dict) and block.get("type") == "text":

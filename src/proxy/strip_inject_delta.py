@@ -8,7 +8,7 @@ from .strip_vocab import attribute_chunk as _attribute_chunk
 from .logging import _strip_cache_control, _normalize_msg_shape_for_hash, _delta_hash
 
 # fn attribution maps for fn_map field in _build_stripped_injected_deltas
-_SYS_FN: dict[int, str] = {2: '_apply_system_passes', 3: '_strip_sys3'}
+_SYS_FN: dict[int, str] = {1: '_apply_system_passes', 2: '_apply_system_passes', 3: '_strip_sys3'}
 _FIELD_STRIP_FN: dict[str, str] = {
     'model': '_inject_model_override', 'max_tokens': '_inject_model_override',
     'thinking': '_inject_model_override', 'output_config': '_inject_model_override',
