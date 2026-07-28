@@ -9,7 +9,7 @@ from _shell_strip import _strip_non_shell_active
 from _fire_log import log_fire
 
 # Anchor for the websearch scrape invocation. Only `scrape_url` is in scope —
-# `search_web`, `search_engine_drilldown`, `download_pdf` produce bounded output
+# `search_web`, `search_engine_drilldown` produce bounded output
 # (engine breakdown / URL list) and remain untouched.
 _SCRAPE_RE = re.compile(r'\bwebsearch\s+scrape_url\b')
 

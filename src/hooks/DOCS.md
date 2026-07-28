@@ -189,7 +189,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ### rewrite_websearch_scrape_noise.py (111 LOC)
 
-**Purpose:** PreToolUse hook (Bash) — **rewrites** `websearch scrape_url` invocations by stripping downstream noise inside the logical command segment: pipes (`| head`, `| tail`, `| sed`, `| grep`), redirects (`>`, `>>`, `&>`, `<`, `2>&1`, `2>`), and single backgrounding `&`. Direct clone of `rewrite_rag_cli_search_noise.py` with the anchor swapped to `\bwebsearch\s+scrape_url\b`. Rationale: `scrape_url` output is bounded (15k PruningContentFilter cap) and meant to land directly in context; a `> /tmp/file 2>&1` redirect followed by `| head` truncates the page and mixes crawl4ai browser logs into what looks like content (real incident — gave a "content stops after section 3" false impression and an apparent `=== LOG RECORD ===` leak that were both display artifacts of the truncating command, not the scraper). Scope is `scrape_url` only; `search_web`, `search_engine_drilldown`, `download_pdf` produce bounded output and pass through unchanged. Chains around the segment (`cd && scrape_url ...`, `scrape_url ... ; bd list`, `scrape_url ... || echo fail`) are preserved — only the scrape segment is cleaned. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing.
+**Purpose:** PreToolUse hook (Bash) — **rewrites** `websearch scrape_url` invocations by stripping downstream noise inside the logical command segment: pipes (`| head`, `| tail`, `| sed`, `| grep`), redirects (`>`, `>>`, `&>`, `<`, `2>&1`, `2>`), and single backgrounding `&`. Direct clone of `rewrite_rag_cli_search_noise.py` with the anchor swapped to `\bwebsearch\s+scrape_url\b`. Rationale: `scrape_url` output is bounded (15k PruningContentFilter cap) and meant to land directly in context; a `> /tmp/file 2>&1` redirect followed by `| head` truncates the page and mixes crawl4ai browser logs into what looks like content (real incident — gave a "content stops after section 3" false impression and an apparent `=== LOG RECORD ===` leak that were both display artifacts of the truncating command, not the scraper). Scope is `scrape_url` only; `search_web`, `search_engine_drilldown` produce bounded output and pass through unchanged. Chains around the segment (`cd && scrape_url ...`, `scrape_url ... ; bd list`, `scrape_url ... || echo fail`) are preserved — only the scrape segment is cleaned. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing.
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
 **Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when noise was stripped; nothing when no-op.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
@@ -199,10 +199,10 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 **Pass-through (no-op) conditions:**
 - `websearch scrape_url` invocation has no pipe/redirect inside its segment
-- subcommand is not `scrape_url` (search_web / search_engine_drilldown / download_pdf out of scope)
+- subcommand is not `scrape_url` (search_web / search_engine_drilldown out of scope)
 - `websearch scrape_url` token appears inside a quoted string (blanked by `_strip_non_shell_active`)
 
-**Smoke:** `dev/hook_smoke/test_rewrite_websearch_scrape_noise.py` (16 cases: 9 positive strip, 7 negative no-op).
+**Smoke:** `dev/hook_smoke/test_rewrite_websearch_scrape_noise.py` (15 cases: 9 positive strip, 6 negative no-op).
 
 ---
 

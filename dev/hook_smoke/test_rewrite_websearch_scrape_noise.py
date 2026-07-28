@@ -81,11 +81,6 @@ CASES = [
         None,
     ),
     (
-        "download_pdf > file — out of scope, no-op",
-        'websearch download_pdf "https://x.com/a.pdf" > /tmp/log.txt',
-        None,
-    ),
-    (
         "scrape_url inside quoted echo — no-op (token in string, not active)",
         'echo "websearch scrape_url foo | head"',
         None,
