@@ -39,6 +39,22 @@ Replaces the old `~/.claude/shared-rules/_staging/` date-file mechanism (deleted
 
 ---
 
+## 4. Future-tense action announcements in exchange prose strand the action
+
+**Trigger:** Recurring, user-raised 2026-07-28. Orchestrator closed an exchange with "Ich merge jetzt." and stopped; user had to answer "ok" before the merge ran. User: "ich weiß nicht warum du ständig aufhörst" — the pattern had repeated across the session (also "Ich schicke jetzt den Recap", "Ich lege das als Issue an" followed by a stop).
+
+**Mechanism (structural, not indecision):** `opus/chat-output.md` § Action frame ends with "Position is free; the exchange is terminal … once its prose begins, no action frame and no tool call follows", and lists `tool call → exchange → action frame` as Not allowed. A future-tense announcement placed in exchange prose therefore GUARANTEES the announced call cannot execute in that turn — the sentence structurally excludes exactly what it promises. It is also miscategorized content: the same section defines an exchange as prose that calls for a user reaction, and "I will now merge" calls for none. It is action-frame material, and the action frame must precede its tool call.
+
+**Second-order effect:** it reads as asking permission for work already approved, colliding with `opus/communication.md` § Proactivity ("never propose the session's end", no deferral offers in disguise).
+
+**Proposed rule** (target: `opus/chat-output.md`, § Action frame, appended to the "Position is free; the exchange is terminal" block):
+> **Never announce a next action in exchange prose.**
+> "Ich merge jetzt" / "Ich schicke X" in an exchange strands the action — the exchange is terminal, so the call cannot follow in that message. Either do it in THIS turn (tool call + action frame, exchange last), or write nothing about it. An action worth naming belongs in the action frame that precedes its call, in past or present tense, never in the future.
+
+**Status:** OBSERVE — recurrence already established within one session; promote on next occurrence in a fresh session.
+
+---
+
 ## Candidate observations (this session, not user-raised)
 
 ### C1. Worker cross-project without worktree (mechanical batch)
