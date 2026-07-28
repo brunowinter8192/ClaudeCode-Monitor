@@ -4,8 +4,10 @@ in raw Claude Code request payloads, as captured in the proxy dual-logs.
 
 INVENTORY, not a filter: every class found gets a row, however rare or small. Each class is
 labelled COVERED (existing strip rule handles it), KEEP (audited + deliberately preserved),
-OURS (our own content — bash/tool output, user prompts, assistant text), or UNCLASSIFIED
-(CC-authored framing/notices no rule touches and no prior audit judged).
+INJECTED (text the PROXY ITSELF adds — e.g. a background-task wake-up replacement, which then
+round-trips back into a LATER request's history since CC persists what was actually sent), OURS
+(our own content — bash/tool output, user prompts, assistant text), or UNCLASSIFIED (CC-authored
+framing/notices no rule touches and no prior audit judged).
 
 Usage (from project root):
     ./venv/bin/python dev/cc_injection_inventory/cc_injection_inventory.py
@@ -45,7 +47,7 @@ _PATH_RE = re.compile(r'(?:/[\w.\-]+){2,}')
 _NUM_RE = re.compile(r'\d+')
 _WS_RE = re.compile(r'\s+')
 
-_ORIGIN_ORDER = ("UNCLASSIFIED", "KEEP", "COVERED", "OURS")
+_ORIGIN_ORDER = ("UNCLASSIFIED", "KEEP", "COVERED", "INJECTED", "OURS")
 
 # A resolved classification hit for one segment occurrence.
 # kind: 'CLASS' (goes straight into the registry) | 'PENDING' (deferred two-phase user-text resolution)
@@ -354,9 +356,10 @@ _TOP_LEVEL_SHAPES = ("plain_string", "text")
 def _classify_user_segment(block_type, text, tool_name) -> list:
     content = _wrap_content(block_type, text)
     payload = {"system": [], "messages": [{"role": "user", "content": content}]}
-    modified, mods, _orig2, _idxs, _origs, removed, *_ = rules.apply_modification_rules(payload)
+    modified, mods, _orig2, _idxs, _origs, removed, injected, _ops = rules.apply_modification_rules(payload)
     residual = _unwrap_content(block_type, modified["messages"][0]["content"])
     removed_chunks = removed.get(0, []) if removed else []
+    injected_chunks = injected.get(0, []) if injected else []
 
     hits = []
     for chunk in removed_chunks:
@@ -366,6 +369,19 @@ def _classify_user_segment(block_type, text, tool_name) -> list:
         rule_name = strip_vocab.RULES.get(code, ("unattributed_strip", []))[0]
         hits.append(ResolvedHit("CLASS", f"COVERED:{code}", f"`{rule_name}` (rule {code})",
                                  "COVERED", len(chunk), chunk))
+
+    # Text the PROXY ITSELF added (e.g. TN/BGK wake-up replacement) — ground truth is the
+    # pipeline's own injected_msg_added output, same principle as removed_chunks for COVERED.
+    # It round-trips back into a LATER request's history (CC persists what was actually sent,
+    # not what CC intended) and would otherwise misread as a CC-authored recurring template.
+    # Subtracted from residual so it isn't ALSO counted as OURS/UNCLASSIFIED below.
+    for chunk in injected_chunks:
+        if not chunk or chunk not in residual:
+            continue
+        residual = residual.replace(chunk, "", 1)
+        sig = _normalize_template(chunk)[:100]
+        hits.append(ResolvedHit("CLASS", f"INJECTED:{sig}", f'Proxy-injected text ("{sig}")',
+                                 "INJECTED", len(chunk), chunk))
 
     if "stripped_po_preview" in mods:
         wrapper_text = residual.strip()
@@ -539,6 +555,30 @@ def _build_report(registry: dict, file_stats: list, counters: dict, log_files: l
         "class found is listed regardless of frequency or size — this is an inventory, not a",
         "top-N ranking.",
         "",
+    ]
+    unclassified_rows = sorted(
+        ((k, r) for k, r in registry.items() if r["origin"] == "UNCLASSIFIED"),
+        key=lambda kr: -kr[1]["chars"],
+    )
+    lines += [
+        "## Strip Candidates — CC-authored text no rule touches",
+        "",
+        'Direct answer to "what do we NOT strip today that should be stripped?" — every',
+        "`UNCLASSIFIED` class (CC-authored, no existing rule fires on it, not previously",
+        "audited/preserved), sorted by cumulative char cost. Same rows as the full `UNCLASSIFIED`",
+        "table further down (role/section/block type/sample there) — nothing here is filtered out",
+        "of the detailed tables below.",
+        "",
+        "| Class | Distinct occ. | Cum. chars |",
+        "|---|---|---|",
+    ]
+    if unclassified_rows:
+        for _key, r in unclassified_rows:
+            lines.append(f"| {_md_escape(r['label'])} | {r['count']:,} | {r['chars']:,} |")
+    else:
+        lines.append("| *(none — every CC-authored class is already ruled on)* | — | — |")
+    lines += [
+        "",
         "## Methodology",
         "",
         "**Dedup metric.** Payloads are cumulative snapshots (each request re-sends the full",
@@ -557,15 +597,21 @@ def _build_report(registry: dict, file_stats: list, counters: dict, log_files: l
         "blocks. `tool_result` segments are attributed to the originating tool by resolving",
         "`tool_use_id` against the preceding assistant `tool_use` block in the same payload.",
         "",
-        "**Origin classification.** For every `role=user` and `role=system` segment, a synthetic",
-        "single-block message is built matching the segment's real content shape and run through",
-        "the REAL production pipeline (`src/proxy/rules.py:apply_modification_rules`) — no",
-        "hardcoded marker lists. Chunks the pipeline actually removes are attributed to a rule",
-        "code via `strip_vocab.attribute_chunk` -> `COVERED`. The 3 known preserve-guarded cases",
-        "(Read-tool truncation notice, `<persisted-output>` wrapper, CLAUDE.md context SR) are",
-        "detected explicitly on the pipeline's residual output -> `KEEP`. `role=assistant` text is",
-        "never touched by any pass (verified: no `_apply_*` pass in `rules.py` gates on",
-        "`role=='assistant'`) -> `OURS` directly.",
+        "**Origin classification — 5 labels.** For every `role=user` and `role=system` segment, a",
+        "synthetic single-block message is built matching the segment's real content shape and run",
+        "through the REAL production pipeline (`src/proxy/rules.py:apply_modification_rules`) — no",
+        "hardcoded marker lists. Chunks the pipeline actually REMOVES are attributed to a rule code",
+        "via `strip_vocab.attribute_chunk` -> `COVERED`. Chunks the pipeline actually ADDS (the",
+        "`injected_msg_added` return value — same ground-truth principle as removed-chunks for",
+        "COVERED) -> `INJECTED`: text the PROXY ITSELF wrote, e.g. `strip_bg_completed.py`'s",
+        "`_WAKEUP_TEXT` replacing a `<task-notification>`/background-exit block. This text then",
+        "round-trips back into a LATER request's history — CC persists what was actually sent over",
+        "the wire, not what CC intended — so without this label it would misread as a CC-authored",
+        "recurring template. The 3 known preserve-guarded cases (Read-tool truncation notice,",
+        "`<persisted-output>` wrapper, CLAUDE.md context SR) are detected explicitly on the",
+        "pipeline's residual output -> `KEEP`. `role=assistant` text is never touched by any pass",
+        "(verified: no `_apply_*` pass in `rules.py` gates on `role=='assistant'`) -> `OURS`",
+        "directly.",
         "",
         "**tool_result vs top-level text — the enclosing shape decides, not the bytes.**",
         "`tool_result.content` is OUR tool's own return value (bash/git/file output, retrieved",
@@ -594,9 +640,9 @@ def _build_report(registry: dict, file_stats: list, counters: dict, log_files: l
         "",
         "**Grouping.** A class = one rule code (COVERED), one known wrapper (KEEP), one tool name",
         "or the single user/assistant-text bucket (OURS), or one normalized-template signature",
-        "(UNCLASSIFIED) — variable data (paths, IDs, counts, timestamps) normalized to placeholders",
-        "before signature comparison so e.g. 50 differently-IDed background-launch acks group into",
-        "one row.",
+        "(INJECTED / UNCLASSIFIED) — variable data (paths, IDs, counts, timestamps) normalized to",
+        "placeholders before signature comparison so e.g. 50 differently-IDed background-launch",
+        "acks group into one row.",
         "",
         "**Known simplification:** role=user segments are tested independently per block (not as",
         "part of the full multi-block message) — message-level gates that only look at a single",
@@ -662,7 +708,7 @@ def _build_report(registry: dict, file_stats: list, counters: dict, log_files: l
         rows.sort(key=lambda kr: -kr[1]["chars"])
         lines += [
             "",
-            f"## {origin} ({len(rows)} classes)",
+            f"## {origin} ({len(rows)} class{'es' if len(rows) != 1 else ''})",
             "",
             "| Class | Role | Section | Block type | Distinct occ. | Cum. chars | Sample |",
             "|---|---|---|---|---|---|---|",

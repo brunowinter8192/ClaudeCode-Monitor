@@ -12,18 +12,22 @@ does, by classification rather than log-diff).
 
 ## Modules
 
-### cc_injection_inventory.py (712 LOC)
+### cc_injection_inventory.py (758 LOC)
 
 **Purpose:** Streams `src/logs/dual_log/*_original.jsonl`, extracts every text segment
 (`system[0..3]`, message `content` — plain string / `text` blocks / `tool_result` content),
-dedups by exact segment text, and classifies each distinct segment into one of 4 origin labels:
-`COVERED` (an existing `src/proxy/strip_*.py` rule handles it — verified by actually running
+dedups by exact segment text, and classifies each distinct segment into one of 5 origin labels:
+`COVERED` (an existing `src/proxy/strip_*.py` rule REMOVES it — verified by actually running
 `src/proxy/rules.py:apply_modification_rules` against a synthetic single-block message, not by
-hardcoded markers), `KEEP` (audited + deliberately preserved: Read-tool truncation notice,
-`<persisted-output>` wrapper, CLAUDE.md context SR), `OURS` (our own content — bash/tool output
-bucketed by tool name via `tool_use_id` resolution, user prompts, assistant text), or
-`UNCLASSIFIED` (CC-authored framing no rule touches and no prior audit judged — the category the
-report leads with).
+hardcoded markers), `INJECTED` (the proxy itself ADDS it — same pipeline call's
+`injected_msg_added` return value, e.g. `strip_bg_completed.py`'s `_WAKEUP_TEXT`; this text
+round-trips back into a LATER request's history since CC persists what was actually sent, not
+what CC intended — without this label it misreads as a CC-authored recurring template), `KEEP`
+(audited + deliberately preserved: Read-tool truncation notice, `<persisted-output>` wrapper,
+CLAUDE.md context SR), `OURS` (our own content — bash/tool output bucketed by tool name via
+`tool_use_id` resolution, user prompts, assistant text), or `UNCLASSIFIED` (CC-authored framing
+no rule touches and no prior audit judged — the category the report leads with, both as a
+dedicated "Strip Candidates" summary near the top and its own full section).
 
 **Reads:** `src/logs/dual_log/api_requests_*_original.jsonl` (streamed line-by-line, never
 loaded whole — the corpus includes a multi-GB file). Imports `src/proxy/rules.py`,
@@ -51,10 +55,16 @@ override name with `--out-name`). Console gets a 3-line summary only.
 | `--out-name` | Override report filename (written under `md/`) |
 | `--max-entries` | Debug: cap entries processed per file |
 
-**Runtime:** ~11s for the full corpus (704 entries, ~4GB total, one file 3.9GB) on the reference
+**Runtime:** ~11s for the full corpus (~730 entries, ~4GB total, one file 3.9GB) on the reference
 run — dominated by JSON parsing; classification itself is cheap because exact-text dedup means
 the (expensive) real strip-pipeline call only runs once per distinct segment, never per raw
 occurrence.
+
+**Report shape:** opens with a "Strip Candidates" summary (the `UNCLASSIFIED` rows only —
+Class/Distinct occ./Cum. chars, sorted by cost — the direct answer to "what should we strip that
+we don't today") before Methodology/Corpus, then the full 5-section breakdown (one section per
+origin, every row from the summary repeated there with full role/section/block-type/sample
+context — the summary never drops or filters a row present in the full sections).
 
 ---
 
@@ -70,15 +80,23 @@ occurrence.
   `_extract_leftover_sr_blocks`) therefore only run on top-level shapes (`_TOP_LEVEL_SHAPES` =
   `plain_string`/`text`) — anything matching inside `tool_result` content stays part of that
   segment's `OURS` residual instead of being pulled out as `KEEP`/`UNCLASSIFIED`.
+- **INJECTED — ground truth is the pipeline's OWN output, not a heuristic.** `apply_modification_
+  rules` returns `injected_msg_added` alongside `stripped_msg_removed` — chunks it actually ADDS.
+  Every non-empty chunk found there (still present verbatim in the residual — subtracted out
+  before further OURS/UNCLASSIFIED classification) becomes an `INJECTED` hit, grouped by
+  normalized-template signature like the COVERED-ALL fallback. Currently the only message-level
+  source is `strip_bg_completed.py`'s wake-up replacement text (fired via `_apply_first_pass`'s
+  task-notification branch or `_apply_bg_exit_strip`).
 - **Grouping:** COVERED = one rule code; KEEP = one known wrapper; OURS = one tool name or the
-  single user/assistant-text bucket; UNCLASSIFIED = one normalized-template signature (paths/
-  IDs/numbers -> placeholders). Top-level user text uses a two-phase pass: a normalized signature
-  needs >=2 SUBSTANTIVELY DISTINCT variants at >=40 chars to count as a recurring CC template
-  (`UNCLASSIFIED`). Distinctness is containment-collapsed (`_distinct_variant_count`): whitespace-
-  only differences (a trailing-newline shape artifact observed mid-corpus) AND one variant being a
-  verbatim substring of another (prefix/suffix/mid-string extension — one human message edited/
-  resent as it grew, not a template recurring) both collapse to a single variant. Everything that
-  doesn't clear the bar (singletons, short acks, collapsed pairs) folds into one `OURS` aggregate.
+  single user/assistant-text bucket; INJECTED/UNCLASSIFIED = one normalized-template signature
+  (paths/IDs/numbers -> placeholders). Top-level user text uses a two-phase pass: a normalized
+  signature needs >=2 SUBSTANTIVELY DISTINCT variants at >=40 chars to count as a recurring CC
+  template (`UNCLASSIFIED`). Distinctness is containment-collapsed (`_distinct_variant_count`):
+  whitespace-only differences (a trailing-newline shape artifact observed mid-corpus) AND one
+  variant being a verbatim substring of another (prefix/suffix/mid-string extension — one human
+  message edited/resent as it grew, not a template recurring) both collapse to a single variant.
+  Everything that doesn't clear the bar (singletons, short acks, collapsed pairs) folds into one
+  `OURS` aggregate.
 - **Known simplification:** `role=user` segments are tested independently per block, not as part
   of the full multi-block message — every strip pass gates only on a single block's own content,
   so this does not change any COVERED/KEEP decision, but is a deliberate divergence from
