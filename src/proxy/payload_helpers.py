@@ -11,7 +11,9 @@ from constants import TOOL_BLOCKLIST
 
 # FUNCTIONS
 
-# Extract <system-reminder> blocks containing marker from str or list content (incl. tool_result)
+# Extract <system-reminder> blocks containing marker from str or top-level list[type=='text']
+# content — matches _strip_system_reminders' non-descent into tool_result (SR family no longer
+# strips there, so bookkeeping must not count tool_result blocks as removed either)
 def _find_system_reminder_blocks(content, marker: str) -> list:
     pat = re.compile(r'(?m)^<system-reminder>.*?' + re.escape(marker) + r'.*?</system-reminder>\n?', re.DOTALL)
     if isinstance(content, str):
@@ -23,19 +25,12 @@ def _find_system_reminder_blocks(content, marker: str) -> list:
                 continue
             if block.get("type") == "text":
                 result.extend(pat.findall(block.get("text", "")))
-            elif block.get("type") == "tool_result":
-                inner = block.get("content", "")
-                if isinstance(inner, str):
-                    result.extend(pat.findall(inner))
-                elif isinstance(inner, list):
-                    for sub in inner:
-                        if isinstance(sub, dict) and sub.get("type") == "text":
-                            result.extend(pat.findall(sub.get("text", "")))
         return result
     return []
 
 
-# Extract ALL <system-reminder>...</system-reminder> blocks from str or list content (incl. tool_result)
+# Extract ALL <system-reminder>...</system-reminder> blocks from str or top-level list[type=='text']
+# content — same non-descent rationale as _find_system_reminder_blocks above.
 def _find_all_system_reminder_blocks(content) -> list:
     pat = re.compile(r'(?m)^<system-reminder>.*?</system-reminder>\n?', re.DOTALL)
     if isinstance(content, str):
@@ -47,14 +42,6 @@ def _find_all_system_reminder_blocks(content) -> list:
                 continue
             if block.get("type") == "text":
                 result.extend(pat.findall(block.get("text", "")))
-            elif block.get("type") == "tool_result":
-                inner = block.get("content", "")
-                if isinstance(inner, str):
-                    result.extend(pat.findall(inner))
-                elif isinstance(inner, list):
-                    for sub in inner:
-                        if isinstance(sub, dict) and sub.get("type") == "text":
-                            result.extend(pat.findall(sub.get("text", "")))
         return result
     return []
 

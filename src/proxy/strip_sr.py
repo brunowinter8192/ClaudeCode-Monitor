@@ -67,7 +67,9 @@ _MARKER_TO_TEMPLATE = {
 
 # ORCHESTRATOR
 
-# Strip <system-reminder> blocks from all 4 content shapes using template-based exact matching
+# Strip <system-reminder> blocks from top-level content only (str / list[type=='text']) —
+# tool_result blocks pass through by identity, untouched (FP-nuke fix: quoted SR text/examples
+# inside tool_result, e.g. RAG/Read results, were being stripped as if genuinely CC-injected)
 def _strip_system_reminders(content, enabled_templates=None):
     if enabled_templates is None:
         enabled_templates = _ALL_TEMPLATES
@@ -83,22 +85,6 @@ def _strip_system_reminders(content, enabled_templates=None):
             if btype == 'text':
                 new_text = _apply_sr_strip(block.get('text', ''), enabled_templates)
                 result.append({**block, 'text': new_text or '.'})
-            elif btype == 'tool_result':
-                inner = block.get('content', '')
-                if isinstance(inner, str):
-                    new_inner = _apply_sr_strip(inner, enabled_templates)
-                    result.append({**block, 'content': new_inner} if new_inner != inner else block)
-                elif isinstance(inner, list):
-                    new_sub = []
-                    for sub in inner:
-                        if isinstance(sub, dict) and sub.get('type') == 'text':
-                            new_text = _apply_sr_strip(sub.get('text', ''), enabled_templates)
-                            new_sub.append({**sub, 'text': new_text or '.'})
-                        else:
-                            new_sub.append(sub)
-                    result.append({**block, 'content': new_sub})
-                else:
-                    result.append(block)
             else:
                 result.append(block)
         return result
