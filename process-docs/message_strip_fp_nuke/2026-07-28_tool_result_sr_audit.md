@@ -72,8 +72,21 @@ verbatim text, file+line, verdict+evidence; aggregate split by family).
 
 ## Implication for the next milestone
 
-A fix aimed at the SR-strip family's tool_result FP-nuke risk should key on the fence-pair /
-documentation-quoting signal demonstrated by the one confirmed occurrence, not on disabling
-`tool_result` descent wholesale — the non-SR passes' descent into `tool_result` is correct and
-necessary (their own genuine content legitimately lives there), and even within the SR family nothing
-in this measurement shows blanket disabling is warranted over a targeted anchor/context guard.
+What the data supports: for the SR strip family specifically, `tool_result` descent produced 0
+genuine strips and 1 false positive across ~660 requests — no measured case where descent
+delivered any value. Per-pass non-descent is already the established pattern in this codebase, not
+a novel proposal: `_apply_sn_notice_strip` and `_apply_bg_exit_strip` both deliberately skip
+`tool_result` entirely, with the rationale recorded in their own source comments. Dropping SR-family
+descent would extend an existing, precedented pattern to three more passes, not invent one.
+
+What remains open: whether to drop SR-family `tool_result` descent outright or gate it some other
+way. The n=1 sample means this is a judgment call for the next milestone, not a number-driven
+conclusion — the measurement rules out "descent is currently earning its keep" but does not by
+itself prove "descent can never matter". The fence-parity signal (odd `` ``` `` count before the
+removed text) was useful EVIDENCE for hand-classifying this one occurrence; it is not proposed as a
+runtime discriminator — counting fence markers breaks on tilde fences, nested/indented fences,
+unbalanced fences in retrieved documents, and prose that merely mentions a fence.
+
+Separate from all of this: the non-SR passes' (`bg_launch_ack`, `hook_prefix`, `po_preview`)
+`tool_result` descent is correct, necessary, and untouched by this question — none of the above
+implications apply to them.
