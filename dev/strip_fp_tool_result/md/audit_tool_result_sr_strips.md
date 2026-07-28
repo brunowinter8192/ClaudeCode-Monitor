@@ -8,7 +8,7 @@ Measurement only (per task scope) — no src/ changes. Method, scope, and offset
 
 | File | Size | Entries | Requests w/ tool_result hit | Unique occurrences | Scan time |
 |---|---|---|---|---|---|
-| `api_requests_opus_monitor_cc_1785259250_original.jsonl` | 74,309,273 B | 177 | 165 | 15 | 0.3s |
+| `api_requests_opus_monitor_cc_1785259250_original.jsonl` | 78,817,992 B | 183 | 171 | 15 | 0.3s |
 | `api_requests_opus_posts_1785266871_original.jsonl` | 42,717,720 B | 154 | 138 | 12 | 0.2s |
 | `api_requests_opus_wise2627_1785240377_original.jsonl` | 2,691,005,111 B | 393 | 386 | 4 | 3.4s |
 | `api_requests_worker_25c51a2e_pdf-refs_1785260492_original.jsonl` | 2,300,030 B | 13 | 0 | 0 | 0.0s |
@@ -24,13 +24,13 @@ Task-stated ground truth: a prior session found 2 stripped segments in this corp
 
 | File | Requests w/ marker in tool_result | Requests w/ literal full-block match |
 |---|---|---|
-| `api_requests_opus_monitor_cc_1785259250_original.jsonl` | 80 | 0 |
+| `api_requests_opus_monitor_cc_1785259250_original.jsonl` | 86 | 0 |
 | `api_requests_opus_posts_1785266871_original.jsonl` | 0 | 0 |
 | `api_requests_opus_wise2627_1785240377_original.jsonl` | 0 | 0 |
 | `api_requests_worker_25c51a2e_pdf-refs_1785260492_original.jsonl` | 0 | 0 |
 | `api_requests_worker_85d6f25b_capture-monitor-cc-ref_1785272207_original.jsonl` | 0 | 0 |
 
-**Result: 80 requests carry the marker substring inside a tool_result, 0 of them (0 literal matches) are the actual 5-line block with real newlines.** Manual inspection of the marker hits (all in `api_requests_opus_monitor_cc_1785259250_original.jsonl`) shows every one is a `rag-cli search` result or file Read quoting `strip_git_lock.py`'s OWN SOURCE CODE (the `_GIT_LOCK_ADVICE` python string literal, where `\n` is two literal characters baked into the .py file, not a newline byte) or a process-docs paragraph mentioning the marker string in prose — never the literal git-output block. The exact-substring match `_strip_git_lock_advice` uses never fires on either, by construction.
+**Result: 86 requests carry the marker substring inside a tool_result, 0 of them (0 literal matches) are the actual 5-line block with real newlines.** Manual inspection of the marker hits (all in `api_requests_opus_monitor_cc_1785259250_original.jsonl`) shows every one is a `rag-cli search` result or file Read quoting `strip_git_lock.py`'s OWN SOURCE CODE (the `_GIT_LOCK_ADVICE` python string literal, where `\n` is two literal characters baked into the .py file, not a newline byte) or a process-docs paragraph mentioning the marker string in prose — never the literal git-output block. The exact-substring match `_strip_git_lock_advice` uses never fires on either, by construction.
 
 **This ground truth does NOT reproduce as an actual strip in the current corpus snapshot.** The only place the literal 5-line block (real newlines) was found at all is this worker's OWN excluded self-session log — as an artifact of this very investigation's own `Read`/`Bash` calls on `strip_git_lock.py` and its design docs, not as production evidence. Two explanations, not mutually exclusive: (1) the dual-log directory is a rolling window — `replay_sn_notice_strip.py`'s own prior report already documented large count swings between runs on this same corpus — so the snapshot that produced the original 2-segment finding may have rotated out; (2) `stripped_task_tools_nag` / `stripped_all_sr_msg0`, the other half of that finding, also does not reproduce here: across all 33 tool_result-level occurrences found in this run, zero came from the plain `_apply_first_pass` "task tools haven" branch or `_apply_final_sr_pass`'s catch-all — despite the raw marker string `"task tools haven"` appearing in 8–338 raw lines per file (grep), every one of those is at top-level message content (a genuine nag in the live conversation), never inside a tool_result in this snapshot.
 
@@ -49,7 +49,7 @@ Task-stated ground truth: a prior session found 2 stripped segments in this corp
 ### Occurrence 1: `stripped_hook_error_prefix` via `_apply_hook_prefix_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 12 (0-indexed) — flow_id `93357dd6-ac81-4a38-ac6d-d0e2ab9ebccb`, timestamp `2026-07-28T17:23:45.547186+00:00Z`
-- **Raw occurrences (dedup collapsed):** 324
+- **Raw occurrences (dedup collapsed):** 336
 - **Location:** msg[22] block[0] (`tool_result_str`), offset 0
 - **Tool:** `Bash` (tool_use_id `toolu_01NhTESp2p8cVwHKTMEyuwC2`) — input: `{"command": "ls /Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/websearch 2>&1; echo \"=== grep download_pdf in websearch cli ===\"; grep -rn \"download_pdf\" /Users/brunowinter2000/Documents/`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -72,7 +72,7 @@ recursive grep needs scope: add --include='<glob>' OR target explicit files (gre
 ### Occurrence 2: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 27 (0-indexed) — flow_id `5078d7e1-2002-4830-8ea2-b73bef7bae04`, timestamp `2026-07-28T17:41:36.272923+00:00Z`
-- **Raw occurrences (dedup collapsed):** 150
+- **Raw occurrences (dedup collapsed):** 156
 - **Location:** msg[53] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_01CfcRyXQrFWCAeoNw8o33KU`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -94,7 +94,7 @@ Context after:
 ### Occurrence 3: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 33 (0-indexed) — flow_id `2582a054-a9b3-4198-a45e-e130853f30ce`, timestamp `2026-07-28T17:43:22.105236+00:00Z`
-- **Raw occurrences (dedup collapsed):** 144
+- **Raw occurrences (dedup collapsed):** 150
 - **Location:** msg[66] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_01Rq6DqTXiotUn7pb6su2fGu`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -116,7 +116,7 @@ Context after:
 ### Occurrence 4: `stripped_hook_error_prefix` via `_apply_hook_prefix_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 38 (0-indexed) — flow_id `3c25a93c-61d8-4f68-812e-664199b4f5e0`, timestamp `2026-07-28T17:44:46.388245+00:00Z`
-- **Raw occurrences (dedup collapsed):** 139
+- **Raw occurrences (dedup collapsed):** 145
 - **Location:** msg[77] block[0] (`tool_result_str`), offset 0
 - **Tool:** `Bash` (tool_use_id `toolu_01HJjAW84h9tv3tfqcRXtGaY`) — input: `{"command": "cd /Users/brunowinter2000/Documents/ai/monitor-cc/.claude/worktrees/pdf-refs && echo \"=== grep (leer erwartet) ===\" && grep -rn \"download_pdf\" --include=\"*.py\" --include=\"*.md\" sr`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -139,7 +139,7 @@ use `git -C <worktree> diff` instead of `cd <worktree>`
 ### Occurrence 5: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 41 (0-indexed) — flow_id `3475065f-2b41-4444-a912-cfa9b880a161`, timestamp `2026-07-28T17:45:09.383847+00:00Z`
-- **Raw occurrences (dedup collapsed):** 136
+- **Raw occurrences (dedup collapsed):** 142
 - **Location:** msg[83] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_016fx4bRqCRxVF2MC71G3tbS`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -161,7 +161,7 @@ Context after:
 ### Occurrence 6: `stripped_hook_error_prefix` via `_apply_hook_prefix_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 58 (0-indexed) — flow_id `e0a140b2-8819-4c49-bad8-1ade56d9e206`, timestamp `2026-07-28T19:22:37.307206+00:00Z`
-- **Raw occurrences (dedup collapsed):** 119
+- **Raw occurrences (dedup collapsed):** 125
 - **Location:** msg[120] block[0] (`tool_result_str`), offset 0
 - **Tool:** `Bash` (tool_use_id `toolu_015LpvpdwCCHxVZx2Eo9Dvvp`) — input: `{"command": "rag-cli search \"commit-msg hook author identity trailer guard hooksPath\" monitor-cc-docs --document 'process-docs/commit_hygiene/%' 2>&1 | head -60", "description": "Prozess-Historie zu`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -183,7 +183,7 @@ rag-cli calls must not be followed by non-rag-cli commands in the same Bash invo
 ### Occurrence 7: `stripped_hook_error_prefix` via `_apply_hook_prefix_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 62 (0-indexed) — flow_id `48251753-0835-496f-9bf7-883731f83685`, timestamp `2026-07-28T19:28:51.987015+00:00Z`
-- **Raw occurrences (dedup collapsed):** 115
+- **Raw occurrences (dedup collapsed):** 121
 - **Location:** msg[128] block[0] (`tool_result_str`), offset 0
 - **Tool:** `Bash` (tool_use_id `toolu_017WYJsjwiqtj4SCfLYJAXiT`) — input: `{"command": "echo \"=== global hooksPath ===\"; git config --global core.hooksPath; echo \"=== ~/.githooks ===\"; ls -la ~/.githooks/; echo \"=== monitor-cc lokal ===\"; git config --local core.hooksP`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -206,7 +206,7 @@ Context after:
 ### Occurrence 8: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 119 (0-indexed) — flow_id `61207f16-b5d7-48be-b016-c191f203598c`, timestamp `2026-07-28T22:05:01.098206+00:00Z`
-- **Raw occurrences (dedup collapsed):** 58
+- **Raw occurrences (dedup collapsed):** 64
 - **Location:** msg[249] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_014NTWCqdJhGfqk9U6wab16W`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -228,7 +228,7 @@ Context after:
 ### Occurrence 9: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 126 (0-indexed) — flow_id `54e59330-5233-467f-8f6e-36596ee82ba3`, timestamp `2026-07-28T22:12:03.045930+00:00Z`
-- **Raw occurrences (dedup collapsed):** 51
+- **Raw occurrences (dedup collapsed):** 57
 - **Location:** msg[264] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_01MVeQ3kRtw7GZega8PzrEmZ`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -250,7 +250,7 @@ Context after:
 ### Occurrence 10: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 129 (0-indexed) — flow_id `b8770f6d-7ff4-4af5-b2a3-2188cca30993`, timestamp `2026-07-28T22:22:10.442557+00:00Z`
-- **Raw occurrences (dedup collapsed):** 48
+- **Raw occurrences (dedup collapsed):** 54
 - **Location:** msg[270] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_019p73Fju14XjH2gjnZkDU4J`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -272,7 +272,7 @@ Context after:
 ### Occurrence 11: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 143 (0-indexed) — flow_id `e88440ae-ca79-4f43-8dc1-30d05a1f6550`, timestamp `2026-07-28T22:41:28.801142+00:00Z`
-- **Raw occurrences (dedup collapsed):** 34
+- **Raw occurrences (dedup collapsed):** 40
 - **Location:** msg[300] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_019PwiskNWAZAYb1wXnZWqbq`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -294,7 +294,7 @@ Context after:
 ### Occurrence 12: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 150 (0-indexed) — flow_id `5147aed7-148b-453e-aac2-be272376c0d4`, timestamp `2026-07-28T22:44:50.995225+00:00Z`
-- **Raw occurrences (dedup collapsed):** 27
+- **Raw occurrences (dedup collapsed):** 33
 - **Location:** msg[315] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_01Wwoh4JaTR1HkHhm3NgVJGS`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -316,7 +316,7 @@ Context after:
 ### Occurrence 13: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 157 (0-indexed) — flow_id `894f9798-eb96-4a5d-8a89-66b6a29df859`, timestamp `2026-07-28T22:48:20.036871+00:00Z`
-- **Raw occurrences (dedup collapsed):** 20
+- **Raw occurrences (dedup collapsed):** 26
 - **Location:** msg[329] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_01FAXNVL6CyPtFMXaxaKnkHL`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -338,7 +338,7 @@ Context after:
 ### Occurrence 14: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 167 (0-indexed) — flow_id `93f7445a-667a-4b70-9807-140c14fde41a`, timestamp `2026-07-28T23:01:39.237211+00:00Z`
-- **Raw occurrences (dedup collapsed):** 10
+- **Raw occurrences (dedup collapsed):** 16
 - **Location:** msg[351] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_01HyBGqxorLZDhQDB2dsqfPA`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
@@ -360,7 +360,7 @@ Context after:
 ### Occurrence 15: `stripped_bg_launch_ack` via `_apply_bg_launch_ack_strip`
 
 - **Source:** `api_requests_opus_monitor_cc_1785259250_original.jsonl` line 176 (0-indexed) — flow_id `721cdb7f-c539-407a-881f-35856ffc7bca`, timestamp `2026-07-28T23:06:13.714929+00:00Z`
-- **Raw occurrences (dedup collapsed):** 1
+- **Raw occurrences (dedup collapsed):** 7
 - **Location:** msg[370] block[0] (`tool_result_str`), offset 8
 - **Tool:** `Bash` (tool_use_id `toolu_01KSbtBCL7sqVE4xq6R9Ssng`) — input: `{"command": "sleep 600 && echo done", "description": "10min Timer", "run_in_background": true}`
 - **Fence-odd before removal:** False (odd `\`\`\`` count before offset = likely inside an open code fence)
