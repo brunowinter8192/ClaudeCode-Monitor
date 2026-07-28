@@ -352,6 +352,8 @@ def _build_worker_proxy_output(monitor) -> tuple:
             turns=_worker_proxy_cache_turns, item_positions_out=worker_item_positions,
             copy_feedback=_worker_copy_feedback_until, copy_rows_out=_worker_proxy_copy_rows,
         )
+        max_scroll = max(0, total_lines - content_height)
+        worker_proxy_scroll_offset = min(worker_proxy_scroll_offset, max_scroll)
         shifted = {r + header_lines: k for r, k in worker_proxy_line_map.items()}
         worker_proxy_line_map.clear()
         worker_proxy_line_map.update(shifted)
