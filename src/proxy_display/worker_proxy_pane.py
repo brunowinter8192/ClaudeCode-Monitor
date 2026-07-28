@@ -346,12 +346,19 @@ def _build_worker_proxy_output(monitor) -> tuple:
     else:
         worker_item_positions: dict = {}
         _worker_proxy_copy_rows.clear()
+        # format_proxy_block is called with content_height as its own pane_height argument and
+        # internally derives its real viewport as max(1, pane_height - 1) — mirror that exact
+        # value here (once) so both clamp sites below match what the renderer actually shows,
+        # never content_height itself.
+        viewport_lines_n = max(1, content_height - 1)
         body, total_lines = format_proxy_block(
             worker_proxy_entries, worker_proxy_expand_states, worker_proxy_line_map,
             body_hover, content_height, pane_width, worker_proxy_scroll_offset,
             turns=_worker_proxy_cache_turns, item_positions_out=worker_item_positions,
             copy_feedback=_worker_copy_feedback_until, copy_rows_out=_worker_proxy_copy_rows,
         )
+        max_scroll = max(0, total_lines - viewport_lines_n)
+        worker_proxy_scroll_offset = min(worker_proxy_scroll_offset, max_scroll)
         shifted = {r + header_lines: k for r, k in worker_proxy_line_map.items()}
         worker_proxy_line_map.clear()
         worker_proxy_line_map.update(shifted)
@@ -360,11 +367,11 @@ def _build_worker_proxy_output(monitor) -> tuple:
         _worker_proxy_copy_rows.update(shifted_copy)
         if _wp_just_expanded is not None and _wp_just_expanded in worker_item_positions:
             item_line = worker_item_positions[_wp_just_expanded]
-            max_scroll = max(0, total_lines - content_height)
+            max_scroll = max(0, total_lines - viewport_lines_n)
             clamped = min(worker_proxy_scroll_offset, max_scroll)
-            start = max(0, total_lines - content_height - clamped)
-            if item_line < start or item_line >= start + content_height:
-                worker_proxy_scroll_offset = max(0, total_lines - content_height - item_line)
+            start = max(0, total_lines - viewport_lines_n - clamped)
+            if item_line < start or item_line >= start + viewport_lines_n:
+                worker_proxy_scroll_offset = max(0, total_lines - viewport_lines_n - item_line)
                 _worker_proxy_copy_rows.clear()
                 body, total_lines = format_proxy_block(
                     worker_proxy_entries, worker_proxy_expand_states, worker_proxy_line_map,
