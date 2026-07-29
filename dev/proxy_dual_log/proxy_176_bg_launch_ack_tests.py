@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..', 'src'))
 
 from proxy.message_passes import _apply_bg_launch_ack_strip
 from proxy.strip_inject_delta import _process_messages_section, _MSG_CODE_TO_FN
-from proxy.diff_engine import _diff_messages
+from proxy.diff_engine import _diff_messages, compose_block
 from proxy.logging import _normalize_msg_shape_for_hash
 from proxy.rule_ops import _ops_from_content_change
 from proxy.strip_vocab import attribute_chunk
@@ -344,6 +344,44 @@ def test_wording1_and_wording2_same_msg_line():
     print()
 
 
+# ── FULL-REPLACEMENT SPAN SHAPE (2026-07-29 milestone-3) ──────────────────────
+# _apply_bg_launch_ack_strip is one of the 3 full_replace=True call sites in message_passes.py
+# (src/proxy/rule_ops.py::_extract_block_op). Before this milestone, the recorded op trimmed the
+# shared "Command " prefix between the ack and its replacement, so the pane rendered "Command "
+# unhighlighted on its own line, then the rest green below (live-observed 2026-07-29). This test
+# pins BOTH the op shape (one contiguous op, no trim) and the composed span shape (one contiguous
+# stripped span + one contiguous injected span — no interleaved "equal" fragment) against the real
+# launch-ack fixture, through the real production functions.
+def test_full_replace_span_is_one_contiguous_block():
+    print("Item 4q — full-replacement op is ONE contiguous op, composes to ONE contiguous green span")
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_span", "content": _LAUNCH_ACK},
+        ],
+    }]
+    _result, _mods, _removed, _changed, _injected, ops = _apply_bg_launch_ack_strip(messages)
+    block_ops = ops.get(0, {}).get(0, [])
+    check("exactly one op recorded", len(block_ops) == 1)
+    offset, removed, injected = block_ops[0]
+    check("op offset is 0 (no prefix trim)", offset == 0)
+    check("op removed is the FULL original ack (no trim)", removed == _LAUNCH_ACK)
+    check("op injected is the FULL replacement (no trim)", injected == _EXPECTED_REPLACEMENT)
+    check("shared 'Command ' prefix is NOT split off",
+          not (removed.startswith("Command ") and injected.startswith("Command ")
+               and offset > 0))
+
+    spans = compose_block(_LAUNCH_ACK, block_ops)
+    check("composed spans: exactly 2 spans (one stripped, one injected)", len(spans) == 2)
+    check("span 0 is one contiguous 'stripped' span covering the WHOLE original ack",
+          spans[0] == ("stripped", _LAUNCH_ACK))
+    check("span 1 is one contiguous 'injected' span covering the WHOLE replacement",
+          spans[1] == ("injected", _EXPECTED_REPLACEMENT))
+    check("no 'equal' span present (would indicate a leftover shared-prefix split)",
+          all(tag != "equal" for tag, _ in spans))
+    print()
+
+
 if __name__ == "__main__":
     test_tool_result_str_content()
     test_text_block_content()
@@ -361,4 +399,5 @@ if __name__ == "__main__":
     test_wording2_fp_mid_content_preserved()
     test_wording2_attribution_bl_code()
     test_wording1_and_wording2_same_msg_line()
+    test_full_replace_span_is_one_contiguous_block()
     print("Done.")

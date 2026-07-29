@@ -67,7 +67,9 @@ def _apply_role_system_strip(messages: list) -> tuple:
         changed_indices.append(idx)
         pass_mods.append("stripped_role_system_msg")
         pass_removed_by_idx[idx] = [old_content if isinstance(old_content, str) else str(old_content)]
-        pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, ".")
+        # full_replace=True: content unconditionally set to the literal "." regardless of shape
+        # (line 66) — unambiguous whole-content replacement, no caveat needed.
+        pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, ".", full_replace=True)
     return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
 
 
@@ -237,7 +239,16 @@ def _apply_first_pass(messages: list) -> tuple:
                 changed_indices.append(idx)
                 pass_mods.append("stripped_rejection_message")
                 pass_removed_by_idx[idx] = ["(rejection marker stripped by proxy)"]
-                pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_msg["content"])
+                # full_replace=True: _strip_rejection_message (content_strip.py) mutates PER-BLOCK
+                # for list content, not the whole message at once — but every block it actually
+                # changes is wholesale-set to the literal "." (content_strip.py:43,
+                # {**block, "content": "."}), never partially edited in place; every block it
+                # leaves alone is appended by identity (content_strip.py:45), so bt==at exactly
+                # for those and _extract_block_op's before==after check returns [] before
+                # full_replace is even consulted. The message-level flag is therefore safe here
+                # specifically because this pass has no per-block PARTIAL-edit path to protect —
+                # the str branch (content_strip.py:31) is unambiguously full-replace too.
+                pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_msg["content"], full_replace=True)
         else:
             result.append(msg)
     return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
@@ -463,7 +474,11 @@ def _apply_bg_launch_ack_strip(messages: list) -> tuple:
             pass_mods.append("stripped_bg_launch_ack")
             changed_indices.append(idx)
             pass_removed_by_idx[idx] = ack_removed
-            pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_content)
+            # full_replace=True: _strip_bg_launch_ack sets a matched block's whole text/content
+            # field to _build_launch_ack_replacement(text) wholesale (strip_bg_launch_ack.py) —
+            # every block it leaves alone is appended by identity, so bt==at for those (same
+            # early-return safety as the other two full_replace sites).
+            pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_content, full_replace=True)
         else:
             result.append(msg)
     return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
