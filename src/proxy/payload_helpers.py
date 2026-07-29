@@ -140,6 +140,16 @@ def _extract_task_notification_output_file(content) -> str:
     return ''
 
 
+# Extract <task-id> from the first <task-notification> block in content (str or list); returns '' if absent
+def _extract_task_notification_task_id(content) -> str:
+    _TASK_ID_PAT = re.compile(r'<task-id>(.*?)</task-id>', re.DOTALL)
+    for block_text in _find_task_notification_blocks(content):
+        m = _TASK_ID_PAT.search(block_text)
+        if m:
+            return m.group(1).strip()
+    return ''
+
+
 # Replace <task-notification>...</task-notification> blocks inline with replacement_text (no separate append)
 # Uses lambda form of re.sub to avoid backslash-sequence interpretation in replacement_text.
 def _replace_task_notification_tags(content, replacement_text: str):

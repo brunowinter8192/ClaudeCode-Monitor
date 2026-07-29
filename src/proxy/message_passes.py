@@ -17,6 +17,7 @@ from .payload_helpers import (
     _content_contains,
     _top_level_content_contains,
     _extract_task_notification_output_file,
+    _extract_task_notification_task_id,
     _replace_task_notification_tags,
 )
 from .rules_config import _load_config
@@ -167,12 +168,17 @@ def _apply_first_pass(messages: list) -> tuple:
             new_msg = dict(msg)
             is_failed_bg = _content_contains(old_content, "<status>failed</status>")
             also_stripped_nag = False
-            # Both failed and completed: single block = wakeup + optional Output line; summary dropped
+            # Both failed and completed: single block = wakeup + optional Output line + optional ID
+            # line; summary and status dropped. Each optional line is omitted (not emitted empty)
+            # when its <task-notification> tag is absent — never "ID: None" / a dangling label.
             output_path = _extract_task_notification_output_file(old_content)
-            injected_text = (
-                _WAKEUP_TEXT.rstrip('\n') + '\nOutput: ' + output_path + '\n'
-                if output_path else _WAKEUP_TEXT
-            )
+            task_id = _extract_task_notification_task_id(old_content)
+            _tn_lines = [_WAKEUP_TEXT.rstrip('\n')]
+            if output_path:
+                _tn_lines.append('Output: ' + output_path)
+            if task_id:
+                _tn_lines.append('ID: ' + task_id)
+            injected_text = '\n'.join(_tn_lines) + '\n'
             new_msg["content"] = _replace_task_notification_tags(old_content, injected_text)
             if _top_level_content_contains(new_msg["content"], "task tools haven"):
                 new_msg["content"] = _strip_system_reminder(new_msg["content"], "task tools haven")
