@@ -1,9 +1,14 @@
 """Smoke tests for background-completion task-notification single-block fix.
 
-Three cases:
-  B01 — completed TN + output-file → single block, wakeup + Output line, summary dropped
-  B02 — completed TN, no output-file → single block, wakeup only, summary dropped
-  B03 — failed TN → behavior unchanged (wakeup present, mod=replaced_task_notification)
+Four cases:
+  B01 — completed TN + output-file + task-id → single block, wakeup + Output + ID lines, summary dropped
+  B02 — completed TN, task-id only (no output-file) → single block, wakeup + ID line, summary dropped
+  B03 — failed TN, neither task-id nor output-file → single block, wakeup only (mirrors bare case)
+  B04 — failed TN + output-file + task-id → single block, wakeup + Output + ID lines (mirrors B01)
+
+2026-07-29: injected text gained a third optional line, 'ID: <task-id>', recovered from the same
+<task-notification> block as the Output line — fixed order: wakeup, then Output: (if any), then
+ID: (if any).
 
 Run from project root:
     ./venv/bin/python dev/proxy_bgcomplete_tests.py
@@ -37,13 +42,14 @@ def _all_text(content) -> str:
     return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
 
 
-# B01 — completed TN with output-file → single block, wakeup + Output line, summary dropped
+# B01 — completed TN with output-file + task-id → single block, wakeup + Output + ID lines, summary dropped
 def b01_completed_with_output_file():
-    print("B01 — completed TN + output-file → single block, wakeup + Output: path")
+    print("B01 — completed TN + output-file + task-id → single block, wakeup + Output: + ID:")
     output_path = "/private/tmp/abc123/bi3f93ph9.output"
+    task_id = "bfjvsrmpj"
     tn = (
         "<task-notification>\n"
-        "<task-id>bfjvsrmpj</task-id>\n"
+        f"<task-id>{task_id}</task-id>\n"
         "<tool-use-id>toolu_01EdfmMHBunn3edcTPSTjFnE</tool-use-id>\n"
         f"<output-file>{output_path}</output-file>\n"
         "<status>completed</status>\n"
@@ -55,11 +61,13 @@ def b01_completed_with_output_file():
     content = new_msgs[0]["content"]
     text = _all_text(content)
     wakeup_core = _WAKEUP_TEXT.rstrip('\n')
-    expected_injected = wakeup_core + "\nOutput: " + output_path + "\n"
+    expected_injected = wakeup_core + "\nOutput: " + output_path + "\nID: " + task_id + "\n"
 
     check("B01_single_block", _block_count(content) == 1, f"got {_block_count(content)} blocks")
     check("B01_wakeup_present", wakeup_core in text, repr(text[:80]))
     check("B01_output_line_present", f"Output: {output_path}" in text, repr(text[:120]))
+    check("B01_id_line_present", f"ID: {task_id}" in text, repr(text[:160]))
+    check("B01_line_order", text.index("Output:") < text.index("ID:"), repr(text[:160]))
     check("B01_summary_dropped", "exit code 0" not in text, repr(text[:120]))
     check("B01_mod_trimmed", "trimmed_task_notification" in mods, f"mods={mods}")
     check("B01_injected_correct", injected.get(0) == [expected_injected], f"injected={injected}")
@@ -68,12 +76,13 @@ def b01_completed_with_output_file():
     print()
 
 
-# B02 — completed TN, no output-file → single block, wakeup only, summary dropped
+# B02 — completed TN, task-id only (no output-file) → single block, wakeup + ID line, summary dropped
 def b02_completed_no_output_file():
-    print("B02 — completed TN, no output-file → single block, wakeup only")
+    print("B02 — completed TN, task-id only (no output-file) → single block, wakeup + ID: line")
+    task_id = "bphrsnzu7"
     tn = (
         "<task-notification>\n"
-        "<task-id>bphrsnzu7</task-id>\n"
+        f"<task-id>{task_id}</task-id>\n"
         "<tool-use-id>toolu_01AYXvGYYd9QArLZ7wbRLvXQ</tool-use-id>\n"
         "<status>completed</status>\n"
         '<summary>Background command "sleep 10" completed (exit code 0)</summary>\n'
@@ -84,19 +93,21 @@ def b02_completed_no_output_file():
     content = new_msgs[0]["content"]
     text = _all_text(content)
     wakeup_core = _WAKEUP_TEXT.rstrip('\n')
+    expected_injected = wakeup_core + "\nID: " + task_id + "\n"
 
     check("B02_single_block", _block_count(content) == 1, f"got {_block_count(content)} blocks")
     check("B02_wakeup_present", wakeup_core in text, repr(text[:80]))
     check("B02_no_output_line", "Output:" not in text, repr(text[:80]))
+    check("B02_id_line_present", f"ID: {task_id}" in text, repr(text[:120]))
     check("B02_summary_dropped", "exit code 0" not in text, repr(text[:80]))
     check("B02_mod_trimmed", "trimmed_task_notification" in mods, f"mods={mods}")
-    check("B02_injected_is_wakeup", injected.get(0) == [_WAKEUP_TEXT], f"injected={injected}")
+    check("B02_injected_correct", injected.get(0) == [expected_injected], f"injected={injected}")
     print()
 
 
-# B03 — failed TN, no output-file → single block, wakeup only, summary dropped (mirrors B02)
+# B03 — failed TN, neither task-id nor output-file → single block, wakeup only, summary dropped
 def b03_failed_tn_single_block():
-    print("B03 — failed TN, no output-file → single block, wakeup only, summary dropped")
+    print("B03 — failed TN, no task-id / no output-file → single block, wakeup only, summary dropped")
     tn = (
         "<task-notification>\n"
         "<status>failed</status>\n"
@@ -112,6 +123,7 @@ def b03_failed_tn_single_block():
     check("B03_single_block", _block_count(content) == 1, f"got {_block_count(content)} blocks")
     check("B03_wakeup_present", wakeup_core in text, repr(text[:80]))
     check("B03_no_output_line", "Output:" not in text, repr(text[:80]))
+    check("B03_no_id_line", "ID:" not in text, repr(text[:80]))
     check("B03_summary_dropped", "<summary>" not in text and "<status>" not in text, repr(text[:80]))
     check("B03_mod_replaced", "replaced_task_notification" in mods, f"mods={mods}")
     check("B03_injected_is_wakeup", injected.get(0) == [_WAKEUP_TEXT], f"injected={injected}")
@@ -120,13 +132,14 @@ def b03_failed_tn_single_block():
     print()
 
 
-# B04 — failed TN with output-file → single block, wakeup + Output line (mirrors B01)
+# B04 — failed TN with output-file + task-id → single block, wakeup + Output + ID lines (mirrors B01)
 def b04_failed_tn_with_output_file():
-    print("B04 — failed TN + output-file → single block, wakeup + Output: path")
+    print("B04 — failed TN + output-file + task-id → single block, wakeup + Output: + ID:")
     output_path = "/private/tmp/abc123/fail_output.output"
+    task_id = "xyzfail"
     tn = (
         "<task-notification>\n"
-        "<task-id>xyzfail</task-id>\n"
+        f"<task-id>{task_id}</task-id>\n"
         f"<output-file>{output_path}</output-file>\n"
         "<status>failed</status>\n"
         "<summary></summary>\n"
@@ -137,11 +150,13 @@ def b04_failed_tn_with_output_file():
     content = new_msgs[0]["content"]
     text = _all_text(content)
     wakeup_core = _WAKEUP_TEXT.rstrip('\n')
-    expected_injected = wakeup_core + "\nOutput: " + output_path + "\n"
+    expected_injected = wakeup_core + "\nOutput: " + output_path + "\nID: " + task_id + "\n"
 
     check("B04_single_block", _block_count(content) == 1, f"got {_block_count(content)} blocks")
     check("B04_wakeup_present", wakeup_core in text, repr(text[:80]))
     check("B04_output_line_present", f"Output: {output_path}" in text, repr(text[:120]))
+    check("B04_id_line_present", f"ID: {task_id}" in text, repr(text[:160]))
+    check("B04_line_order", text.index("Output:") < text.index("ID:"), repr(text[:160]))
     check("B04_summary_dropped", "<summary>" not in text and "<status>" not in text, repr(text[:120]))
     check("B04_mod_replaced", "replaced_task_notification" in mods, f"mods={mods}")
     check("B04_injected_correct", injected.get(0) == [expected_injected], f"injected={injected}")

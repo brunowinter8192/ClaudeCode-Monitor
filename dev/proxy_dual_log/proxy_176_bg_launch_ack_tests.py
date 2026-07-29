@@ -31,6 +31,15 @@ _LAUNCH_ACK = (
     "To check interim output, use Read on that file path."
 )
 
+# 2026-07-29: replacement is now 3 lines (msg + Output: <path> + ID: <id>, both recovered from
+# _LAUNCH_ACK above), not a single-sentence "." placeholder.
+_EXPECTED_REPLACEMENT = (
+    "Command is running in the background. Do NOT check, poll, or read its output — "
+    "just wait until it finishes (you will get a completion notice).\n"
+    "Output: /tmp/output_01ABC.txt\n"
+    "ID: bg_01ABC\n"
+)
+
 # Completion notification — must NOT be falsely triggered
 _COMPLETION_NOTIF = 'Background command "sleep 30" failed with exit code 143'
 
@@ -73,7 +82,7 @@ _FP_LIST_SUB_TEXT = (
 
 
 def test_tool_result_str_content():
-    print("Item 4a — tool_result string content replaced with '.'")
+    print("Item 4a — tool_result string content replaced with 3-line hold message")
     messages = [{
         "role": "user",
         "content": [
@@ -82,7 +91,7 @@ def test_tool_result_str_content():
     }]
     result, mods, removed, changed, _, _ = _apply_bg_launch_ack_strip(messages)
     tr = result[0]["content"][0]
-    check("tool_result content → '.'", tr["content"] == ".")
+    check("tool_result content → 3-line hold message", tr["content"] == _EXPECTED_REPLACEMENT)
     check("tool_use_id preserved", tr["tool_use_id"] == "toolu_01")
     check("mod-name recorded", "stripped_bg_launch_ack" in mods)
     check("index 0 in changed_indices", 0 in changed)
@@ -91,7 +100,7 @@ def test_tool_result_str_content():
 
 
 def test_text_block_content():
-    print("Item 4b — standalone text block replaced with '.'")
+    print("Item 4b — standalone text block replaced with 3-line hold message")
     messages = [{
         "role": "user",
         "content": [
@@ -103,23 +112,23 @@ def test_text_block_content():
     content = result[0]["content"]
     text_block = next(b for b in content if b.get("type") == "text")
     tool_block = next(b for b in content if b.get("type") == "tool_result")
-    check("text block → '.'", text_block["text"] == ".")
+    check("text block → 3-line hold message", text_block["text"] == _EXPECTED_REPLACEMENT)
     check("unrelated tool_result preserved", tool_block["content"] == "some output")
     check("mod-name recorded", "stripped_bg_launch_ack" in mods)
     print()
 
 
 def test_str_message_content():
-    print("Item 4c — string-content message replaced with '.'")
+    print("Item 4c — string-content message replaced with 3-line hold message")
     messages = [{"role": "user", "content": _LAUNCH_ACK}]
     result, mods, removed, changed, _, _ = _apply_bg_launch_ack_strip(messages)
-    check("string content → '.'", result[0]["content"] == ".")
+    check("string content → 3-line hold message", result[0]["content"] == _EXPECTED_REPLACEMENT)
     check("mod-name recorded", "stripped_bg_launch_ack" in mods)
     print()
 
 
 def test_tool_result_list_content():
-    print("Item 4d — tool_result with list content (sub-text block) replaced with '.'")
+    print("Item 4d — tool_result with list content (sub-text block) replaced with 3-line hold message")
     messages = [{
         "role": "user",
         "content": [{
@@ -131,7 +140,7 @@ def test_tool_result_list_content():
     result, mods, removed, changed, _, _ = _apply_bg_launch_ack_strip(messages)
     tr = result[0]["content"][0]
     sub = tr["content"][0]
-    check("sub-text block → '.'", sub["text"] == ".")
+    check("sub-text block → 3-line hold message", sub["text"] == _EXPECTED_REPLACEMENT)
     check("mod-name recorded", "stripped_bg_launch_ack" in mods)
     print()
 

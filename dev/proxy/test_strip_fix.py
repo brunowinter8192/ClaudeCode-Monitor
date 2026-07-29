@@ -419,7 +419,9 @@ _bgk_mod = _wakeup_il.import_module('src.proxy.strip_bg_completed')
 _WAKEUP_TEXT = _bgk_mod._WAKEUP_TEXT
 _sn_mod = _wakeup_il.import_module('src.proxy.strip_sn_notice')
 _SN_NOTICE_PARAGRAPH = _sn_mod._SN_NOTICE_PARAGRAPH
-del _wakeup_il, _rules_mod, _bgk_mod, _sn_mod
+_bg_ack_mod = _wakeup_il.import_module('src.proxy.strip_bg_launch_ack')
+_strip_bg_launch_ack = _bg_ack_mod._strip_bg_launch_ack
+del _wakeup_il, _rules_mod, _bgk_mod, _sn_mod, _bg_ack_mod
 
 
 def _has_wakeup(content) -> bool:
@@ -469,12 +471,17 @@ def w03_bgk_in_tool_result_str():
 
 
 # W04 — genuine plain-string completed TN → wakeup injected, mod=trimmed_task_notification
+# fixture has no <task-id> and no <output-file> — doubles as the "both missing" case: neither
+# 'Output:' nor 'ID:' line, content reduces to exactly _WAKEUP_TEXT.
 def w04_genuine_tn_completed_plain_string():
     tn = '<task-notification>\n<status>completed</status>\n<summary>Background command "sleep 10" completed (exit code 0)</summary>\n</task-notification>\n'
     msgs = [{'role': 'user', 'content': tn}]
     new_msgs, mods, _, _c, _, _ops = _apply_first_pass(msgs)
     check('W04_wakeup_injected', _has_wakeup(new_msgs[0]['content']), repr(new_msgs[0]['content'])[:80])
     check('W04_mod_trimmed', 'trimmed_task_notification' in mods, f'mods: {mods}')
+    check('W04_no_output_line', 'Output:' not in new_msgs[0]['content'], repr(new_msgs[0]['content']))
+    check('W04_no_id_line', 'ID:' not in new_msgs[0]['content'], repr(new_msgs[0]['content']))
+    check('W04_reduces_to_bare_wakeup', new_msgs[0]['content'] == _WAKEUP_TEXT, repr(new_msgs[0]['content']))
 
 
 # W05 — genuine plain-string failed TN → wakeup injected, mod=replaced_task_notification
@@ -484,6 +491,8 @@ def w05_genuine_tn_failed_plain_string():
     new_msgs, mods, _, _c, _, _ops = _apply_first_pass(msgs)
     check('W05_wakeup_injected', _has_wakeup(new_msgs[0]['content']), repr(new_msgs[0]['content'])[:80])
     check('W05_mod_replaced', 'replaced_task_notification' in mods, f'mods: {mods}')
+    check('W05_no_output_line', 'Output:' not in new_msgs[0]['content'], repr(new_msgs[0]['content']))
+    check('W05_no_id_line', 'ID:' not in new_msgs[0]['content'], repr(new_msgs[0]['content']))
 
 
 # W06 — genuine plain-string BGK kill notification → wakeup injected, mod=replaced_bg_completed_text
@@ -580,6 +589,8 @@ def w12_role_system_tn_completed_full_pipeline():
     check('W12_sn_notice_gone', _SN_NOTICE_PARAGRAPH not in result, repr(result))
     check('W12_role_preserved', messages[0]['role'] == 'system')
     check('W12_mod_trimmed', 'trimmed_task_notification' in mods3, f'mods3: {mods3}')
+    check('W12_id_line_present', 'ID: abc123' in result, repr(result))
+    check('W12_no_output_line', 'Output:' not in result, repr(result))
 
 
 def w13_role_system_tn_failed_with_output_file():
@@ -596,6 +607,8 @@ def w13_role_system_tn_failed_with_output_file():
     check('W13_wakeup_present', _has_wakeup(result), repr(result))
     check('W13_output_line_present', 'Output: /tmp/foo/task.output' in result, repr(result))
     check('W13_mod_replaced', 'replaced_task_notification' in mods3, f'mods3: {mods3}')
+    check('W13_id_line_present', 'ID: xyz789' in result, repr(result))
+    check('W13_line_order', result.index('Output:') < result.index('ID:'), repr(result))
 
 
 def w14_role_system_noise_still_nuked_through_full_chain():
@@ -605,6 +618,119 @@ def w14_role_system_noise_still_nuked_through_full_chain():
     messages, _m3, _, _, _, _ = _apply_first_pass(messages)
     check('W14_noise_nuked', messages[0]['content'] == '.', repr(messages[0]['content']))
     check('W14_mod_recorded', 'stripped_role_system_msg' in mods1, f'mods1: {mods1}')
+
+
+# ── LAUNCH-ACK ID + PATH RECOVERY, TN ID LINE (2026-07-29 milestone) ──────────
+# Both bg-launch-ack (strip_bg_launch_ack.py) and TN termination (_apply_first_pass) now emit a
+# 3-line message: <line1>, then 'Output: <path>' (if extracted), then 'ID: <id>' (if extracted) —
+# same fixed order in both places. Extraction verified against real recorded ack/TN bodies from
+# src/logs/dual_log/ (api_requests_opus_monitor_cc_1785336796_original.jsonl +
+# api_requests_opus_posts_1785338463_original.jsonl) — W18/W19 pin the exact real bodies.
+
+# W15 — genuine ack, id + path both present (the only shape seen in real data) → 3 lines, fixed order
+def w15_launch_ack_id_and_path_full():
+    ack = ('Command running in background with ID: bg_01ABC. '
+           'Output is being written to: /tmp/output_01ABC.txt. '
+           'You will be notified when it completes. '
+           'To check interim output, use Read on that file path.')
+    new_content, removed = _strip_bg_launch_ack(ack)
+    check('W15_msg_line', new_content.startswith('Command is running in the background.'), repr(new_content))
+    check('W15_output_line', 'Output: /tmp/output_01ABC.txt' in new_content, repr(new_content))
+    check('W15_id_line', 'ID: bg_01ABC' in new_content, repr(new_content))
+    check('W15_line_order', new_content.index('Output:') < new_content.index('ID:'), repr(new_content))
+    check('W15_removed_is_original_ack', removed == [ack])
+
+
+# W16 — synthetic: id token empty → ID line omitted, no 'ID: None', Output line unaffected
+def w16_launch_ack_missing_id_omits_id_line():
+    ack = ('Command running in background with ID: . '
+           'Output is being written to: /tmp/out.txt. '
+           'You will be notified when it completes. '
+           'To check interim output, use Read on that file path.')
+    new_content, _removed = _strip_bg_launch_ack(ack)
+    check('W16_no_id_line', 'ID:' not in new_content, repr(new_content))
+    check('W16_no_dangling_none', 'None' not in new_content, repr(new_content))
+    check('W16_output_line_present', 'Output: /tmp/out.txt' in new_content, repr(new_content))
+
+
+# W17 — synthetic: no "Output is being written to:" segment → Output line omitted, ID unaffected
+def w17_launch_ack_missing_path_omits_output_line():
+    ack = 'Command running in background with ID: bg_02DEF. You will be notified when it completes.'
+    new_content, _removed = _strip_bg_launch_ack(ack)
+    check('W17_no_output_line', 'Output:' not in new_content, repr(new_content))
+    check('W17_id_line_present', 'ID: bg_02DEF' in new_content, repr(new_content))
+
+
+# W18 — real recorded ack body (src/logs/dual_log/api_requests_opus_monitor_cc_1785336796_original.jsonl)
+def w18_launch_ack_real_corpus_body_exact():
+    ack = (
+        'Command running in background with ID: bg6wod7up. Output is being written to: '
+        '/private/tmp/claude-501/-Users-brunowinter2000-Documents-ai-monitor-cc/'
+        '80b146dd-9d9e-4cae-83c0-a1bbebb9e0cb/tasks/bg6wod7up.output. '
+        'You will be notified when it completes. To check interim output, use Read on that file path.'
+    )
+    expected = (
+        'Command is running in the background. Do NOT check, poll, or read its output — '
+        'just wait until it finishes (you will get a completion notice).\n'
+        'Output: /private/tmp/claude-501/-Users-brunowinter2000-Documents-ai-monitor-cc/'
+        '80b146dd-9d9e-4cae-83c0-a1bbebb9e0cb/tasks/bg6wod7up.output\n'
+        'ID: bg6wod7up\n'
+    )
+    new_content, _removed = _strip_bg_launch_ack(ack)
+    check('W18_real_corpus_launch_exact', new_content == expected, repr(new_content))
+
+
+# W19 — real recorded TN body (same corpus, failed status) → exact 3-line termination text
+def w19_tn_real_corpus_body_exact():
+    tn = (
+        '<task-notification>\n<task-id>biw31morg</task-id>\n'
+        '<tool-use-id>toolu_014Z5hrjf2UxcVLCKJqZyQ1U</tool-use-id>\n'
+        '<output-file>/private/tmp/claude-501/-Users-brunowinter2000-Documents-ai-monitor-cc/'
+        '80b146dd-9d9e-4cae-83c0-a1bbebb9e0cb/tasks/biw31morg.output</output-file>\n'
+        '<status>failed</status>\n'
+        '<summary>Background command "Rechenschleife bis Signal oder 30min-Timeout" failed with exit code 42</summary>\n'
+        '</task-notification>'
+    )
+    expected = (
+        'background done — check worker or other process\n'
+        'Output: /private/tmp/claude-501/-Users-brunowinter2000-Documents-ai-monitor-cc/'
+        '80b146dd-9d9e-4cae-83c0-a1bbebb9e0cb/tasks/biw31morg.output\n'
+        'ID: biw31morg\n'
+    )
+    msgs = [{'role': 'user', 'content': tn}]
+    new_msgs, mods, _, _c, _, _ops = _apply_first_pass(msgs)
+    check('W19_real_corpus_tn_exact', new_msgs[0]['content'] == expected, repr(new_msgs[0]['content']))
+    check('W19_mod_replaced', 'replaced_task_notification' in mods, f'mods: {mods}')
+
+
+# W20 — TN block with <output-file> but no <task-id> → ID line omitted, Output line present
+def w20_tn_missing_task_id_omits_id_line():
+    tn = '<task-notification>\n<output-file>/tmp/foo.output</output-file>\n<status>completed</status>\n<summary>x</summary>\n</task-notification>\n'
+    msgs = [{'role': 'user', 'content': tn}]
+    new_msgs, mods, _, _c, _, _ops = _apply_first_pass(msgs)
+    result = new_msgs[0]['content']
+    check('W20_no_id_line', 'ID:' not in result, repr(result))
+    check('W20_no_dangling_none', 'None' not in result, repr(result))
+    check('W20_output_line_present', 'Output: /tmp/foo.output' in result, repr(result))
+
+
+# W21 — TN block with <task-id> but no <output-file> → Output line omitted, ID line present
+def w21_tn_missing_output_file_omits_output_line():
+    tn = '<task-notification>\n<task-id>abc999</task-id>\n<status>completed</status>\n<summary>x</summary>\n</task-notification>\n'
+    msgs = [{'role': 'user', 'content': tn}]
+    new_msgs, mods, _, _c, _, _ops = _apply_first_pass(msgs)
+    result = new_msgs[0]['content']
+    check('W21_no_output_line', 'Output:' not in result, repr(result))
+    check('W21_id_line_present', 'ID: abc999' in result, repr(result))
+
+
+# W22 — neither <task-id> nor <output-file> → reduces to exactly _WAKEUP_TEXT (regression guard for
+# the lines-list refactor: unconditional join must collapse back to the original bare-wakeup shape)
+def w22_tn_no_id_no_output_reduces_to_bare_wakeup():
+    tn = '<task-notification>\n<status>completed</status>\n<summary>x</summary>\n</task-notification>\n'
+    msgs = [{'role': 'user', 'content': tn}]
+    new_msgs, mods, _, _c, _, _ops = _apply_first_pass(msgs)
+    check('W22_bare_wakeup_only', new_msgs[0]['content'] == _WAKEUP_TEXT, repr(new_msgs[0]['content']))
 
 
 if __name__ == '__main__':
@@ -632,6 +758,10 @@ if __name__ == '__main__':
         w11_sn_notice_role_system_untouched,
         w12_role_system_tn_completed_full_pipeline, w13_role_system_tn_failed_with_output_file,
         w14_role_system_noise_still_nuked_through_full_chain,
+        w15_launch_ack_id_and_path_full, w16_launch_ack_missing_id_omits_id_line,
+        w17_launch_ack_missing_path_omits_output_line, w18_launch_ack_real_corpus_body_exact,
+        w19_tn_real_corpus_body_exact, w20_tn_missing_task_id_omits_id_line,
+        w21_tn_missing_output_file_omits_output_line, w22_tn_no_id_no_output_reduces_to_bare_wakeup,
     ]
 
     print(f'Running {len(tests)} tests...\n')
