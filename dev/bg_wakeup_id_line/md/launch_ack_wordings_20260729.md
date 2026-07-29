@@ -15,6 +15,21 @@ Generated: 2026-07-29T21:27:41Z
 
 Total requests scanned (deduped pass): 511
 
+## Corpus was NOT static during measurement — counts are a lower bound, not a fixed total
+
+**Review addendum (2026-07-29, post-review):** this run's own request count (511) does not match
+the D2 measurement run's count on the nominally identical 4-file corpus (523, ~15 min later) — a
+divergence caused by `api_requests_opus_posts_1785338463_original.jsonl` also growing during/after
+these runs (105 lines at scan time here, 143 lines and an mtime AFTER both runs when independently
+re-checked in review). This means the `posts` session was ALSO live-growing at measurement time —
+not just `api_requests_opus_monitor_cc_1785347492` (which was excluded up front for exactly this
+reason). Consequence: the occurrence counts below (15 / 1) are a **lower bound on a moving
+snapshot**, not a static, final total — a rescan of the grown corpus could show more (deduped)
+occurrences of either wording, though not fewer. An independent reviewer re-scan on the grown
+corpus reproduced the same 15/1 split and the same 2 distinct wordings — the qualitative
+conclusion (exactly 2 wordings; wording B present, real, not fabricated) held up under corpus
+growth, even though the exact counts are not final numbers.
+
 ## Contamination trap (beyond the 2 named exclusions)
 
 `api_requests_opus_posts_1785338463` and `api_requests_worker_..._tn-role-system_1785344818` are themselves PRIOR investigative sessions on this exact defect area — raw substring grep for `"Output is being written to:"` hits source lines (`_ACK_PATH_RE = re.compile(...)`), templated dev-report printouts (`${O}`, `<pfad>`, `#3: '...'`), and Read-tool dumps of `strip_bg_launch_ack.py`, not just genuine acks. Blanket-excluding these files would also discard genuine acks those sessions produced by actually running background Bash calls. Fix applied: **structural filter, not file exclusion** — a candidate is only counted if the JSON-parsed block's FULL text starts with `Command` at position 0 (checked in `_looks_like_launch_ack_candidate`). Source dumps/reports never satisfy this (Read output starts with line numbers, docstrings start with other prose, report printouts start with `===`/`#N:`).

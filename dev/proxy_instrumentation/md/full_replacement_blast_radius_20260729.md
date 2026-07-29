@@ -13,8 +13,19 @@ Generated: 2026-07-29T21:32:05Z
 | `api_requests_opus_monitor_cc_1785347492_original.jsonl` | **excluded** | currently-live session (see D1 report for timestamps) |
 | `api_requests_worker_25c51a2e_bg-ack-shapes_1785359201_original.jsonl` | **excluded** | this worker's own worktree activity |
 
-Total requests scanned (deduped, new-messages-only pass): 523
+Total requests scanned (deduped, new-messages-only pass): 523 (varied 519-523 across script
+edits/reruns during the same measurement session — see moving-snapshot note below)
 Total ops captured across all 17 call sites: 140
+
+**Corpus was NOT static during measurement (review addendum, 2026-07-29):** this run's request
+count (523) does not match the D1 measurement's count on the nominally identical 4-file corpus
+(511) — `api_requests_opus_posts_1785338463_original.jsonl` grew during/after both measurement
+sessions (105 lines at D1's scan time, 143 lines with an mtime after both runs when independently
+re-checked in review). All op counts below are therefore a **lower bound on a moving snapshot**,
+not a static final total — a rescan of the grown corpus could show more ops (not fewer). The
+qualitative findings (bg_launch_ack always FULL+trimmed; role_system_strip dominant FULL site;
+the semantic FULL/PARTIAL split; the ratio-overlap) are not expected to change in kind, only in
+magnitude.
 
 ## Method — classification is SEMANTIC (per call site), not a len(removed)/len(bt) threshold
 
@@ -62,7 +73,7 @@ Each of the 17 `_ops_from_content_change` call sites was classified by reading i
 | `_apply_first_pass:user_interrupt` | PARTIAL | 0 | 0 |
 | `_apply_first_pass:rejection` | FULL | 0 | 0 |
 
-**Why so many PARTIAL sites show 0 ops in this corpus:** `_apply_role_system_strip` runs FIRST in the real pipeline and wholesale-replaces the ENTIRE content of every role='system' message with `.` (unless it carries a `<task-notification>` tag). Several markers designed to be excised by later, genuinely-PARTIAL passes (`deferred tools are now available`, `task tools haven't been used`, skills/agent-types/claudeMd SR blocks) arrive on role='system' messages in this corpus and are consumed wholesale by `_apply_role_system_strip` before `_apply_cumulative_sr_strips` / `_apply_first_pass`'s nag branches ever see them — by the time those later passes run, content is already `.` and `_top_level_content_contains` fails. This is a corpus characteristic (all measured occurrences of these markers happened to be role='system'), not evidence those passes are unreachable in general — see the "other FULL site" render example below, which shows exactly this content (deferred-tools + agent-types + skills text) arriving on a role='system' message and getting the wholesale-`.` treatment instead.
+**Hypothesis for why so many PARTIAL sites show 0 ops in this corpus (NOT a proven mechanism):** `_apply_role_system_strip` runs FIRST in the real pipeline and wholesale-replaces the ENTIRE content of every role='system' message with `.` (unless it carries a `<task-notification>` tag). One candidate explanation: markers designed to be excised by later, genuinely-PARTIAL passes (`deferred tools are now available`, `task tools haven't been used`, skills/agent-types/claudeMd SR blocks) arrive on role='system' messages in this corpus and are consumed wholesale by `_apply_role_system_strip` before `_apply_cumulative_sr_strips` / `_apply_first_pass`'s nag branches ever see them. The "other FULL site" render example below is ONE concrete instance consistent with this (deferred-tools + agent-types + skills text arriving on a role='system' message, wholesale-`.`-replaced) — it supports the hypothesis for that instance, it does NOT establish it as the general cause. An equally consistent alternative explanation is simply that this corpus never contains those markers on role='user' messages at all (plain absence), which would produce the identical 0-count without any upstream-consumption effect. Distinguishing the two would require checking role='user' messages for these markers directly — not done here (would be a re-measurement, out of scope for this recap).
 
 ## Blast radius — FULL replacements currently recorded as a trimmed (partial-looking) span
 
@@ -75,9 +86,11 @@ FULL-class ops: **97**. Of those, currently trimmed (offset>0 or suffix trimmed 
 
 ## Flagged edge case — empty-injected-span when the "." replacement is absorbed as a common suffix
 
-For FULL sites whose replacement is the literal `'.'` (`_apply_role_system_strip`, `_apply_first_pass:rejection`), if the ORIGINAL block text also happens to end in `.`, the single-char injected `.` gets absorbed entirely as the common SUFFIX by `_extract_block_op` — the recorded op then has an EMPTY `injected` string, so the pane shows the stripped (yellow) text with NO green replacement line at all, not even the collapsed marker.
+For FULL sites whose replacement is the literal `'.'` (`_apply_role_system_strip`, `_apply_first_pass:rejection`), if the ORIGINAL block text also happens to end in `.`, the single-char injected `.` gets absorbed entirely as the common SUFFIX by `_extract_block_op` — the recorded op then has an EMPTY `injected` string. Confirmed directly against `_extract_block_op` (review, 2026-07-29): `before='abc.', after='.'` → `offset=0, removed='abc', injected=''`, i.e. `s=1` and the trailing `.` is silently absorbed into neither `removed` nor `injected`.
 
 Ops with `at == "."`: **82**. Of those, with original text ending in `.` AND injected fully absorbed (empty): **2**.
+
+**Review addendum — the op-level finding is solid, the rendered before/after comparison below does NOT demonstrate it.** The absorbed `.` remains present in `compose_block`'s output as an unmodified **equal** span (it's literally the same character position in both before/after text) — it does not disappear from the rendered TEXT. What changes between "today" and "hypothetical" is only the SPAN TAG on that character: today it renders as `equal` (DIM, unmodified-looking), under a full-replacement-aware op it would render as `injected` (green, the actual replacement). Both are realized in the terminal as a `.` character with different background color/attribute — after `_ANSI_RE`-stripping for this markdown report, the two renders are textually near-identical, so the rendered comparison below cannot show this difference. The finding rests on the op data alone (`injected == ''` vs the hypothetical's `injected == '.'`), not on the rendered text.
 
 ## Corroborating evidence — len(removed)/len(bt) ratio distribution per class
 

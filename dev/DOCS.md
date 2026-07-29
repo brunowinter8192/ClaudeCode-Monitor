@@ -29,6 +29,8 @@ cd Monitor_CC/
 - [hook_smoke/DOCS.md](hook_smoke/DOCS.md) — Hook blocking/rewrite smoke tests — one test script per hook (block_dangerous_kill, block_read_worktree, rewrite_chained_sleep; block_chained_sleep preserved for reference; test_fire_log added 2026-05-24)
 - `bead_tracker/` — `smoke.py`: end-to-end smoke for `bead_tracker_hook` per-subcommand processing (4 cases: single, chained `;`, cross-project skip, pipe non-split); creates/deletes real test beads; no own DOCS.md
 - [strip_fp_tool_result/DOCS.md](strip_fp_tool_result/DOCS.md) — Audit: which strip passes remove content from inside `tool_result` blocks, split SR strip family vs. unrelated non-SR passes; measurement only
+- [proxy_instrumentation/DOCS.md](proxy_instrumentation/DOCS.md) — Reconstructs/measures the proxy's real strip/inject pipeline from recorded dual-log payloads through the real production code, no live proxy required
+- `bg_wakeup_id_line/` — `p1_scan_launch_ack_wordings.py`: inventories distinct CC background-launch-ack wordings in the recorded corpus, evaluates the 3 real recognition mechanisms per wording; `md/` holds the report; no own DOCS.md
 
 ## session_analysis/
 
