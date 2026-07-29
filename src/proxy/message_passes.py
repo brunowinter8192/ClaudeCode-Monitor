@@ -23,7 +23,7 @@ from .payload_helpers import (
 from .rules_config import _load_config
 from .strip_po import _strip_persisted_output_previews, _PO_OPEN_TAG
 from .strip_bg_completed import _strip_bg_exit_notifications, _BG_CMD_MARKER, _WAKEUP_TEXT
-from .strip_bg_launch_ack import _strip_bg_launch_ack, _BG_LAUNCH_ACK_MARKER
+from .strip_bg_launch_ack import _strip_bg_launch_ack, _BG_LAUNCH_ACK_MARKER, _BG_LAUNCH_ACK_MARKER_2
 from .strip_hook_prefix import _strip_hook_prefix, _HOOK_PREFIX_MARKER
 from .strip_git_lock import _strip_git_lock_advice, _GIT_LOCK_MARKER
 from .strip_bd_noise import _strip_bd_noise, _BD_NOISE_MARKERS
@@ -453,7 +453,8 @@ def _apply_bg_launch_ack_strip(messages: list) -> tuple:
             result.append(msg)
             continue
         old_content = msg.get("content", "")
-        if not _content_contains(old_content, _BG_LAUNCH_ACK_MARKER):
+        if not (_content_contains(old_content, _BG_LAUNCH_ACK_MARKER)
+                or _content_contains(old_content, _BG_LAUNCH_ACK_MARKER_2)):
             result.append(msg)
             continue
         new_content, ack_removed = _strip_bg_launch_ack(old_content)

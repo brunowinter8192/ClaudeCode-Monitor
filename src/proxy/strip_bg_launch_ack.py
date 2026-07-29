@@ -2,38 +2,68 @@ import re
 
 # INFRASTRUCTURE
 
-# Fast-path marker — cheap contains check before block walk
+# Fast-path markers — cheap contains check before block walk. Two CC wordings measured
+# (dev/bg_wakeup_id_line/md/launch_ack_wordings_20260729.md, 2026-07-29): wording 1 fires on
+# initial background launch, wording 2 fires when the USER manually backgrounds an already-
+# running Bash call. Each marker stays narrow/specific to its own wording (not widened to a
+# shared broad substring like "with ID:") to preserve the same low-false-positive precision as
+# before — a broad marker would reopen the FP-nuke class of bug these markers exist to avoid.
 _BG_LAUNCH_ACK_MARKER = 'running in background with ID'
-# Anchored ack prefix: a genuine CC bg-launch ack ALWAYS starts with this exact prefix. The strip
-# decision uses startswith() on the lstripped text (NOT substring-anywhere), so a large tool_result
-# or user message that merely CONTAINS the phrase as data is never destroyed (was the FP-nuke bug).
+_BG_LAUNCH_ACK_MARKER_2 = 'backgrounded by user with ID'
+# Anchored ack prefixes: a genuine CC bg-launch ack ALWAYS starts with one of these exact
+# prefixes. The strip decision uses startswith() on the lstripped text (NOT substring-anywhere),
+# so a large tool_result or user message that merely CONTAINS either phrase as data is never
+# destroyed (was the FP-nuke bug).
 _BG_LAUNCH_ACK_PREFIX = 'Command running in background with ID:'
+_BG_LAUNCH_ACK_PREFIX_2 = 'Command was manually backgrounded by user with ID:'
 
 _BG_LAUNCH_ACK_MSG = (
     'Command is running in the background. Do NOT check, poll, or read its output — '
     'just wait until it finishes (you will get a completion notice).'
 )
 
-# Recover id/path FROM the ack text being replaced — real recorded shape (verified against
-# src/logs/dual_log/): "Command running in background with ID: <id>. Output is being written to:
-# <path>. You will be notified when it completes. To check interim output, use Read on that file
-# path." Id group excludes '.' (ids are alnum tokens in every measured occurrence); path group is
-# non-greedy up to the literal ". You will be notified" so an internal dot in the path (e.g. the
-# ".output" extension) doesn't truncate it early.
-_ACK_ID_RE = re.compile(r'Command running in background with ID:\s*([^.]*)\.')
-_ACK_PATH_RE = re.compile(r'Output is being written to:\s*(.*?)\.\s*You will be notified', re.DOTALL)
+# Recover id/path FROM the ack text being replaced — shared by both wordings. Real recorded
+# shapes (dev/bg_wakeup_id_line/md/launch_ack_wordings_20260729.md, 2026-07-29):
+#   wording 1: "Command running in background with ID: <id>. Output is being written to: <path>.
+#              You will be notified when it completes. To check interim output, use Read on that
+#              file path."
+#   wording 2: "Command was manually backgrounded by user with ID: <id>. Output is being written
+#              to: <path>" — no trailing sentence; measured occurrences end right after the path.
+# ID: anchored on the "with ID:" fragment common to both wordings, not the wording-specific full
+# sentence — safe because this regex only ever runs on text _is_bg_launch_ack has ALREADY
+# confirmed is a genuine, block-initial-anchored ack (every call site gates on it first); the FP
+# guard lives in that anchor, not here. Id group excludes '.' (ids are alnum tokens in every
+# measured occurrence, both wordings).
+# PATH: non-greedy up to whichever comes first — the wording-1 terminator (". You will be
+# notified"), a literal newline, or end-of-string. The newline/end-of-string branches exist for
+# wording 2, whose ack can BE the complete block (nothing follows) but is not guaranteed to be —
+# without a newline bound, trailing content sharing the same block (measured: possible per the
+# blast-radius classification of this pass — "ANY trailing content after the ack in that block is
+# also discarded" by the replacement) would be swallowed into the path capture. DOTALL is kept
+# (needed by the wording-1 branch: an internal dot in the path, e.g. the ".output" extension,
+# doesn't truncate it early) — the explicit "|\n|" alternative bounds ONLY the no-sentence
+# fallback, it does not change wording-1 matching (that branch is tried first in the alternation
+# and always wins before any embedded newline is reached, since no measured wording-1 path
+# contains one).
+_ACK_ID_RE = re.compile(r'with ID:\s*([^.]*)\.')
+_ACK_PATH_RE = re.compile(
+    r'Output is being written to:\s*(.*?)(?:\.\s*You will be notified|\n|\s*$)', re.DOTALL
+)
 
 
-# True only for a genuine bg-launch ack: the marker phrase anchored at the start of the text.
+# True only for a genuine bg-launch ack: either known wording's prefix, anchored at the start of
+# the text.
 def _is_bg_launch_ack(text):
-    return text.lstrip().startswith(_BG_LAUNCH_ACK_PREFIX)
+    stripped = text.lstrip()
+    return stripped.startswith(_BG_LAUNCH_ACK_PREFIX) or stripped.startswith(_BG_LAUNCH_ACK_PREFIX_2)
 
 
 # ORCHESTRATOR
 
-# Replace entire content of any block whose text STARTS WITH the bg-launch-ack prefix with the
-# 3-line hold message (msg + optional Output: + optional ID:, recovered from the ack itself).
-# Anchored (not substring-anywhere): legitimate content that merely contains the phrase is kept.
+# Replace entire content of any block whose text STARTS WITH either bg-launch-ack prefix with the
+# same 3-line hold message (msg + optional Output: + optional ID:, recovered from the ack itself)
+# — both wordings produce identical output shape. Anchored (not substring-anywhere): legitimate
+# content that merely contains either phrase is kept.
 # Covers all 4 content shapes: str, list[text], list[tool_result+str], list[tool_result+list].
 # Returns (new_content, removed_chunks) — removed_chunks: original texts of replaced blocks.
 def _strip_bg_launch_ack(content):

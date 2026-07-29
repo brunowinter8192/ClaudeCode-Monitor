@@ -733,6 +733,56 @@ def w22_tn_no_id_no_output_reduces_to_bare_wakeup():
     check('W22_bare_wakeup_only', new_msgs[0]['content'] == _WAKEUP_TEXT, repr(new_msgs[0]['content']))
 
 
+# ── LAUNCH-ACK WORDING 2 RECOGNITION (2026-07-29 milestone-2) ─────────────────
+# Second CC wording ("Command was manually backgrounded by user with ID: ...") — fired when the
+# user manually backgrounds an already-running Bash call, distinct from the wording-1 initial-
+# launch ack. Measured in dev/bg_wakeup_id_line/md/launch_ack_wordings_20260729.md (2026-07-29):
+# no ". You will be notified..." trailing sentence, ack IS the complete block in the only measured
+# occurrence. W23 pins the exact 220-char live-observed text verbatim (not a paraphrase). W24 pins
+# the trailing-content-in-same-block shape the M1 blast-radius classification flagged as possible
+# but unobserved ("ANY trailing content after the ack in that block is also discarded").
+
+# W23 — real live-observed wording-2 body, verbatim (2026-07-29 live observation) — exact 3-line output
+def w23_launch_ack_wording2_real_body_exact():
+    ack = (
+        'Command was manually backgrounded by user with ID: bsxpatpam. Output is being written '
+        'to: /private/tmp/claude-501/-Users-brunowinter2000-Documents-ai-monitor-cc/'
+        '587284d6-c174-4432-a8d0-b5e2bcf10f0b/tasks/bsxpatpam.output'
+    )
+    check('W23_input_length_220', len(ack) == 220, f'len={len(ack)}')
+    expected = (
+        'Command is running in the background. Do NOT check, poll, or read its output — '
+        'just wait until it finishes (you will get a completion notice).\n'
+        'Output: /private/tmp/claude-501/-Users-brunowinter2000-Documents-ai-monitor-cc/'
+        '587284d6-c174-4432-a8d0-b5e2bcf10f0b/tasks/bsxpatpam.output\n'
+        'ID: bsxpatpam\n'
+    )
+    new_content, removed = _strip_bg_launch_ack(ack)
+    check('W23_wording2_real_body_exact', new_content == expected, repr(new_content))
+    check('W23_removed_is_original_ack', removed == [ack])
+    check('W23_same_msg_line_as_wording1', new_content.startswith(
+        'Command is running in the background. Do NOT check, poll, or read its output'
+    ))
+
+
+# W24 — wording-2 ack followed by trailing content in the SAME block (unobserved in the measured
+# corpus, but the pass's own replacement mechanism discards "ANY trailing content after the ack in
+# that block" per the M1 blast-radius classification — regression guard for the fix: without a
+# newline bound on _ACK_PATH_RE's no-sentence fallback, this trailing text was swallowed into the
+# Output line instead of being cleanly discarded with the rest of the block)
+def w24_launch_ack_wording2_trailing_content_not_swallowed_into_path():
+    ack = (
+        'Command was manually backgrounded by user with ID: bsxpatpam. Output is being written '
+        'to: /private/tmp/y/tasks/bsxpatpam.output'
+    )
+    ack_with_trailing = ack + '\nsome trailing note'
+    new_content, _removed = _strip_bg_launch_ack(ack_with_trailing)
+    check('W24_output_line_path_only',
+          'Output: /private/tmp/y/tasks/bsxpatpam.output\n' in new_content, repr(new_content))
+    check('W24_trailing_note_not_swallowed', 'some trailing note' not in new_content, repr(new_content))
+    check('W24_id_line_present', 'ID: bsxpatpam' in new_content, repr(new_content))
+
+
 if __name__ == '__main__':
     tests = [
         t01_task_tools_nag_real_text_block, t02_task_tools_nag_fp_code_literal, t03_task_tools_nag_tool_result_preserved,
@@ -762,6 +812,7 @@ if __name__ == '__main__':
         w17_launch_ack_missing_path_omits_output_line, w18_launch_ack_real_corpus_body_exact,
         w19_tn_real_corpus_body_exact, w20_tn_missing_task_id_omits_id_line,
         w21_tn_missing_output_file_omits_output_line, w22_tn_no_id_no_output_reduces_to_bare_wakeup,
+        w23_launch_ack_wording2_real_body_exact, w24_launch_ack_wording2_trailing_content_not_swallowed_into_path,
     ]
 
     print(f'Running {len(tests)} tests...\n')
