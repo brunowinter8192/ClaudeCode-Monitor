@@ -15,6 +15,7 @@ from proxy.strip_inject_delta import _process_messages_section, _MSG_CODE_TO_FN
 from proxy.diff_engine import _diff_messages
 from proxy.logging import _normalize_msg_shape_for_hash
 from proxy.rule_ops import _ops_from_content_change
+from proxy.strip_vocab import attribute_chunk
 
 _PASS = "\033[32mPASS\033[0m"
 _FAIL = "\033[31mFAIL\033[0m"
@@ -78,6 +79,33 @@ _FP_LIST_SUB_TEXT = (
     "Tool output (read file dev/proxy_176_bg_launch_ack_tests.py):\n"
     "Line 28: _LAUNCH_ACK = 'Command running in background with ID: bg_01ABC. '\n"
     "Line 33-35: fixture for completion notification.\n"
+)
+
+# Wording 2 (2026-07-29 milestone-2) — user manually backgrounds an already-running Bash call.
+# No trailing ". You will be notified..." sentence; ack IS the complete block in the only
+# measured corpus occurrence (dev/bg_wakeup_id_line/md/launch_ack_wordings_20260729.md).
+_LAUNCH_ACK_W2 = (
+    "Command was manually backgrounded by user with ID: bsxpatpam. "
+    "Output is being written to: /tmp/output_w2.txt"
+)
+
+_EXPECTED_REPLACEMENT_W2 = (
+    "Command is running in the background. Do NOT check, poll, or read its output — "
+    "just wait until it finishes (you will get a completion notice).\n"
+    "Output: /tmp/output_w2.txt\n"
+    "ID: bsxpatpam\n"
+)
+
+# FP fixture — CONTAINS the wording-2 marker phrase but does NOT start with the ack prefix.
+_FP_W2_MID_CONTENT = (
+    "RAG search results (hybrid, 3 hits):\n\n"
+    "[1] decisions/strip_bg_launch_ack.md (score 0.90)\n"
+    "    Wording 2 marker: 'backgrounded by user with ID'. Anchored prefix:\n"
+    "    'Command was manually backgrounded by user with ID:'. Fires only when\n"
+    "    text.lstrip().startswith(prefix), not substring-anywhere.\n\n"
+    "[2] Example quoted transcript:\n"
+    "    'Command was manually backgrounded by user with ID: bxab0pzvo. Output is being written to ...'\n"
+    "    — pasted here for documentation purposes, must not be replaced.\n"
 )
 
 
@@ -261,6 +289,61 @@ def test_fp_tool_result_list_mid_content():
     print()
 
 
+def test_wording2_tool_result_str_content():
+    print("Item 4m — wording 2: tool_result string content replaced with SAME 3-line hold message")
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_w2", "content": _LAUNCH_ACK_W2},
+        ],
+    }]
+    result, mods, removed, changed, _, _ = _apply_bg_launch_ack_strip(messages)
+    tr = result[0]["content"][0]
+    check("wording2 tool_result content → 3-line hold message", tr["content"] == _EXPECTED_REPLACEMENT_W2)
+    check("mod-name recorded", "stripped_bg_launch_ack" in mods)
+    check("index 0 in changed_indices", 0 in changed)
+    check("original captured in removed[0]", removed.get(0) == [_LAUNCH_ACK_W2])
+    print()
+
+
+def test_wording2_fp_mid_content_preserved():
+    print("Item 4n — FP: wording-2 marker phrase quoted mid-content (not block-initial) preserved")
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_fp_w2", "content": _FP_W2_MID_CONTENT},
+        ],
+    }]
+    result, mods, removed, changed, _, _ = _apply_bg_launch_ack_strip(messages)
+    tr = result[0]["content"][0]
+    check("content UNCHANGED", tr["content"] == _FP_W2_MID_CONTENT)
+    check("stripped_bg_launch_ack NOT in mods", "stripped_bg_launch_ack" not in mods)
+    check("index 0 NOT in changed_indices", 0 not in changed)
+    check("nothing removed at index 0", removed.get(0) is None)
+    print()
+
+
+def test_wording2_attribution_bl_code():
+    print("Item 4o — attribution: wording-2 ack chunk → code='BL' (same as wording 1)")
+    code = attribute_chunk(_LAUNCH_ACK_W2)
+    check(f"wording2 chunk attributes to BL (got {code!r})", code == "BL")
+    print()
+
+
+def test_wording1_and_wording2_same_msg_line():
+    print("Item 4p — both wordings produce the identical message-line prefix (canonical shape)")
+    msgs1 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t1", "content": _LAUNCH_ACK}]}]
+    msgs2 = [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "t2", "content": _LAUNCH_ACK_W2}]}]
+    result1, _, _, _, _, _ = _apply_bg_launch_ack_strip(msgs1)
+    result2, _, _, _, _, _ = _apply_bg_launch_ack_strip(msgs2)
+    r1 = result1[0]["content"][0]["content"]
+    r2 = result2[0]["content"][0]["content"]
+    msg_line = r1.split('\n')[0]
+    check("wording1 message line", msg_line == "Command is running in the background. Do NOT check, poll, or read its output — just wait until it finishes (you will get a completion notice).")
+    check("wording2 message line identical to wording1", r2.split('\n')[0] == msg_line)
+    print()
+
+
 if __name__ == "__main__":
     test_tool_result_str_content()
     test_text_block_content()
@@ -274,4 +357,8 @@ if __name__ == "__main__":
     test_fp_user_str_mid_content()
     test_fp_text_block_mid_content()
     test_fp_tool_result_list_mid_content()
+    test_wording2_tool_result_str_content()
+    test_wording2_fp_mid_content_preserved()
+    test_wording2_attribution_bl_code()
+    test_wording1_and_wording2_same_msg_line()
     print("Done.")
