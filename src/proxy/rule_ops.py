@@ -4,9 +4,22 @@ import json
 # FUNCTIONS
 
 # Minimal (offset, removed, injected) op from (before, after) text pair via common-prefix/suffix
-def _extract_block_op(before: str, after: str) -> list:
+# — UNLESS full_replace=True, in which case the pair is recorded as ONE contiguous op spanning
+# the entire before/after text, with NO prefix/suffix trimming. full_replace is an explicit
+# signal from the CALLER, never inferred here: this function only ever sees two strings, and a
+# ratio/size heuristic cannot discriminate "whole-content replacement that happens to share a
+# leading/trailing substring with the original" from "a genuine small edit inside much larger
+# surrounding text" (measured: their size-ratio ranges overlap — see
+# process-docs/proxy_instrumentation/2026-07-29_full_replacement_blast_radius_measurement.md).
+# The caller is the one place that actually knows which case it is — whether it constructs new
+# content independently of the old (full_replace=True) or excises a chunk from within text it
+# otherwise preserves (full_replace=False, the default, unchanged from before this parameter
+# existed).
+def _extract_block_op(before: str, after: str, full_replace: bool = False) -> list:
     if before == after:
         return []
+    if full_replace:
+        return [(0, before, after)]
     p = 0
     while p < len(before) and p < len(after) and before[p] == after[p]:
         p += 1
@@ -36,17 +49,19 @@ def _block_inner_text(block) -> str:
     return json.dumps(block, ensure_ascii=False)
 
 
-# Per-block ops {blk_idx: [(offset, removed, injected)]} from a content change — used by op-recording passes
-def _ops_from_content_change(old_content, new_content) -> dict:
+# Per-block ops {blk_idx: [(offset, removed, injected)]} from a content change — used by op-recording passes.
+# full_replace threads straight through to _extract_block_op for every block/string pair — see
+# that function's docstring for why this can only be a caller-supplied signal, never inferred.
+def _ops_from_content_change(old_content, new_content, full_replace: bool = False) -> dict:
     ops: dict = {}
     if isinstance(old_content, list) and isinstance(new_content, list):
         for bi in range(max(len(old_content), len(new_content))):
             bt = _block_inner_text(old_content[bi]) if bi < len(old_content) else ""
             at = _block_inner_text(new_content[bi]) if bi < len(new_content) else ""
-            for op in _extract_block_op(bt, at):
+            for op in _extract_block_op(bt, at, full_replace):
                 ops.setdefault(bi, []).append(op)
     elif isinstance(old_content, str) and isinstance(new_content, str):
-        for op in _extract_block_op(old_content, new_content):
+        for op in _extract_block_op(old_content, new_content, full_replace):
             ops.setdefault(0, []).append(op)
     return ops
 
