@@ -61,8 +61,72 @@ def _render_stripped_block(entry: dict, msg_idx: int, msg: dict, show_chars: boo
     keys.append(None)  # key for header line
     return lines, keys
 
+# Emit strip/inject-highlighted content lines for one block or block-less message body.
+# Dispatches new-format inline render (i_blk holds (tag, text) tuples) vs legacy stacked
+# render (full_text in DIM, then s_blk chunks in yellow, then i_blk chunks in green).
+# indent: leading whitespace — block path nests one level deeper than block-less messages.
+# highlight_suspect: apply _SUSPECT_TAG_RE to the plain (no-span) full_text render — True for
+# the block path (existing behavior, preserved exactly); False for block-less callers, whose
+# plain-content rendering never highlighted suspect tags before this fix and must not start now.
+def _render_span_content(full_text: str, i_blk: list, s_blk: list, indent: str, highlight_suspect: bool = True) -> tuple:
+    lines = []
+    keys = []
+    if i_blk and isinstance(i_blk[0], (list, tuple)):
+        # New format: inline render — equal=DIM, injected=DIM_GREEN_BG, no gray preview
+        for tag, span_text in i_blk:
+            bg = DIM_GREEN_BG if tag == "injected" else ""
+            for raw_line in span_text.split('\n'):
+                raw_line = raw_line.expandtabs(8)
+                if not raw_line:
+                    lines.append(f"{indent}{bg}{DIM}{SOFT_RESET}")
+                    keys.append(None)
+                    continue
+                highlighted = _SUSPECT_TAG_RE.sub(
+                    lambda m: f'{LIGHT_RED_BG}{m.group(0)}{RESET}{DIM}', raw_line
+                )
+                lines.append(f"{indent}{bg}{DIM}{highlighted}{SOFT_RESET}")
+                keys.append(None)
+        for span_text in s_blk:
+            for raw_line in span_text.split('\n'):
+                raw_line = raw_line.expandtabs(8)
+                lines.append(f"{indent}{DIM_YELLOW_BG}{DIM}{raw_line or ''}{SOFT_RESET}")
+                keys.append(None)
+    else:
+        if full_text:
+            for raw_line in full_text.split('\n'):
+                raw_line = raw_line.expandtabs(8)
+                if not raw_line:
+                    lines.append(f"{indent}{DIM}{SOFT_RESET}")
+                    keys.append(None)
+                    continue
+                line_out = (
+                    _SUSPECT_TAG_RE.sub(lambda m: f'{LIGHT_RED_BG}{m.group(0)}{RESET}{DIM}', raw_line)
+                    if highlight_suspect else raw_line
+                )
+                lines.append(f"{indent}{DIM}{line_out}{SOFT_RESET}")
+                keys.append(None)
+        for span_text in s_blk:
+            for raw_line in span_text.split('\n'):
+                raw_line = raw_line.expandtabs(8)
+                lines.append(f"{indent}{DIM_YELLOW_BG}{DIM}{raw_line or ''}{SOFT_RESET}")
+                keys.append(None)
+        for span_text in i_blk:
+            for raw_line in span_text.split('\n'):
+                raw_line = raw_line.expandtabs(8)
+                lines.append(f"{indent}{DIM_GREEN_BG}{DIM}{raw_line or ''}{SOFT_RESET}")
+                keys.append(None)
+    return lines, keys
+
+# Look up the (injected, stripped) span lists recorded for one message/block coordinate.
+# Returns ([], []) when use_dual is False (legacy log — no dual-log spans available).
+def _lookup_spans(entry: dict, msg_idx: int, bidx, use_dual: bool) -> tuple:
+    if not use_dual:
+        return [], []
+    i_blk = entry['_injected_spans']['messages'].get(str(msg_idx), {}).get(str(bidx)) or []
+    s_blk = entry['_stripped_spans']['messages'].get(str(msg_idx), {}).get(str(bidx)) or []
+    return i_blk, s_blk
+
 # Render block-header + span content for one block, returning (lines, keys)
-# Dispatches new-format inline render (i_blk tuples) vs legacy+dual-stacked
 def _render_block_spans(msg_idx: int, bidx: int, blk: dict, entry: dict, use_dual: bool) -> tuple:
     lines = []
     keys = []
@@ -76,52 +140,10 @@ def _render_block_spans(msg_idx: int, bidx: int, blk: dict, entry: dict, use_dua
     else:
         lines.append(f"      {DIM}[{bidx}] {btype:<12} {bchars:>6,}c{bcc}{SOFT_RESET}")
     keys.append(None)
-    i_blk = (entry['_injected_spans']['messages'].get(str(msg_idx), {}).get(str(bidx)) or []) if use_dual else []
-    s_blk = (entry['_stripped_spans']['messages'].get(str(msg_idx), {}).get(str(bidx)) or []) if use_dual else []
-    if i_blk and isinstance(i_blk[0], (list, tuple)):
-        # New format: inline render — equal=DIM, injected=DIM_GREEN_BG, no gray preview
-        for tag, span_text in i_blk:
-            bg = DIM_GREEN_BG if tag == "injected" else ""
-            for raw_line in span_text.split('\n'):
-                raw_line = raw_line.expandtabs(8)
-                if not raw_line:
-                    lines.append(f"        {bg}{DIM}{SOFT_RESET}")
-                    keys.append(None)
-                    continue
-                highlighted = _SUSPECT_TAG_RE.sub(
-                    lambda m: f'{LIGHT_RED_BG}{m.group(0)}{RESET}{DIM}', raw_line
-                )
-                lines.append(f"        {bg}{DIM}{highlighted}{SOFT_RESET}")
-                keys.append(None)
-        for span_text in s_blk:
-            for raw_line in span_text.split('\n'):
-                raw_line = raw_line.expandtabs(8)
-                lines.append(f"        {DIM_YELLOW_BG}{DIM}{raw_line or ''}{SOFT_RESET}")
-                keys.append(None)
-    else:
-        if full_text:
-            for raw_line in full_text.split('\n'):
-                raw_line = raw_line.expandtabs(8)
-                if not raw_line:
-                    lines.append(f"        {DIM}{SOFT_RESET}")
-                    keys.append(None)
-                    continue
-                highlighted = _SUSPECT_TAG_RE.sub(
-                    lambda m: f'{LIGHT_RED_BG}{m.group(0)}{RESET}{DIM}', raw_line
-                )
-                lines.append(f"        {DIM}{highlighted}{SOFT_RESET}")
-                keys.append(None)
-        if use_dual:
-            for span_text in s_blk:
-                for raw_line in span_text.split('\n'):
-                    raw_line = raw_line.expandtabs(8)
-                    lines.append(f"        {DIM_YELLOW_BG}{DIM}{raw_line or ''}{SOFT_RESET}")
-                    keys.append(None)
-            for span_text in i_blk:
-                for raw_line in span_text.split('\n'):
-                    raw_line = raw_line.expandtabs(8)
-                    lines.append(f"        {DIM_GREEN_BG}{DIM}{raw_line or ''}{SOFT_RESET}")
-                    keys.append(None)
+    i_blk, s_blk = _lookup_spans(entry, msg_idx, bidx, use_dual)
+    content_lines, content_keys = _render_span_content(full_text, i_blk, s_blk, "        ")
+    lines.extend(content_lines)
+    keys.extend(content_keys)
     return lines, keys
 
 # Branch-1 body: new messages in range [prev_msg_count, len(messages)), returning (lines, keys)
@@ -156,15 +178,10 @@ def _render_new_messages(entry: dict, messages: list, prev_msg_count: int, fdi: 
                 keys.extend(b_keys)
         else:
             preview = msg.get('content_preview', '')
-            if preview:
-                for raw_line in preview.split('\n'):
-                    raw_line = raw_line.expandtabs(8)
-                    if not raw_line:
-                        lines.append(f"      {DIM}{SOFT_RESET}")
-                        keys.append(None)
-                        continue
-                    lines.append(f"      {DIM}{raw_line}{SOFT_RESET}")
-                    keys.append(None)
+            i_blk, s_blk = _lookup_spans(entry, msg_idx, 0, use_dual)
+            content_lines, content_keys = _render_span_content(preview, i_blk, s_blk, "      ", highlight_suspect=False)
+            lines.extend(content_lines)
+            keys.extend(content_keys)
     return lines, keys
 
 # Branch-2 body: modified messages in range [diff_start, len(messages)) + removed tail, returning (lines, keys)
@@ -207,15 +224,10 @@ def _render_modified_messages(entry: dict, messages: list, prev_entry_for_delta,
                 keys.extend(b_keys)
         else:
             tail = msg.get('content_tail', '')
-            if tail:
-                for raw_line in tail.split('\n'):
-                    raw_line = raw_line.expandtabs(8)
-                    if not raw_line:
-                        lines.append(f"      {DIM}{SOFT_RESET}")
-                        keys.append(None)
-                        continue
-                    lines.append(f"      {DIM}{raw_line}{SOFT_RESET}")
-                    keys.append(None)
+            i_blk, s_blk = _lookup_spans(entry, msg_idx, 0, use_dual)
+            content_lines, content_keys = _render_span_content(tail, i_blk, s_blk, "      ", highlight_suspect=False)
+            lines.extend(content_lines)
+            keys.extend(content_keys)
     removed_from_prev = prev_messages[len(messages):]
     for m_offset, msg in enumerate(removed_from_prev):
         m_idx = len(messages) + m_offset
