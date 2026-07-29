@@ -36,8 +36,9 @@ class FocusController:
     # Auto-focus + auto-abort: called once per _tick after bg_by_project is computed.
     # self._last_statuses holds the OLD snapshot — update_statuses() is called at tick-end.
     # Per-project auto-abort fires when all workers of a project are idle for >=5s while a
-    # bg timer is running. A worker is 'working' when hook status is working OR worker-cli
-    # wrote an orchestrator signal within ORCHESTRATOR_SIGNAL_BUFFER_SECS.
+    # bg timer is running, OR when the project has no worker sessions at all (vacuously all-idle
+    # — a timer with nothing to wait for is dead weight). A worker is 'working' when hook status
+    # is working OR worker-cli wrote an orchestrator signal within ORCHESTRATOR_SIGNAL_BUFFER_SECS.
     # See process-docs/menubar_signal_grace/initial_design.md.
     def tick(self, sessions, bg_by_project: dict, now: float) -> None:
         # Auto-focus: debounce idle main sessions (working→idle transition + 3s hold-off)
@@ -65,7 +66,7 @@ class FocusController:
             if proj == 'unknown':
                 continue
             workers = workers_by_project.get(proj, [])
-            all_idle = bool(workers) and all(
+            all_idle = all(
                 w.status == 'idle' and not _has_recent_send_signal(w, signals, now)
                 for w in workers
             )
