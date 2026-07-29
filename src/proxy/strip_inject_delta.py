@@ -6,6 +6,7 @@ from typing import Optional
 from .diff_engine import _diff_system, _diff_tools, _diff_messages, _diff_top_level_fields, _get_inner_text, compose_block
 from .strip_vocab import attribute_chunk as _attribute_chunk
 from .logging import _strip_cache_control, _normalize_msg_shape_for_hash, _delta_hash
+from .payload_helpers import _top_level_content_contains
 
 # fn attribution maps for fn_map field in _build_stripped_injected_deltas
 _SYS_FN: dict[int, str] = {1: '_apply_system_passes', 2: '_apply_system_passes', 3: '_strip_sys3'}
@@ -160,7 +161,11 @@ def _process_messages_section(msg_diffs, orig_msgs_norm, is_first, prev_stripped
                 s_hashes[lk] = h
                 if is_first or (prev_stripped or {}).get(lk) != h:
                     s_blks[bidx] = s_texts
-                    if om_norm.get("role") == "system":
+                    # role='system' is 'RS' (blanket nuke) EXCEPT the TN-carrying subset that
+                    # _apply_role_system_strip now leaves untouched for _apply_first_pass's TN
+                    # branch to handle — same boundary check as that pass's own TN guard, so
+                    # attribution follows whichever function actually touched the content.
+                    if om_norm.get("role") == "system" and not _top_level_content_contains(o_content_raw, "<task-notification>"):
                         code = 'RS'
                     else:
                         code = _attribute_chunk("\n".join(s_texts))

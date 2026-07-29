@@ -35,7 +35,12 @@ _TRUNCATION_NOTICE_MARKER = "[Truncated:"
 
 # FUNCTIONS
 
-# Role=system pass — strips entire content of every role='system' message by replacing with '.' — returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
+# Role=system pass — strips entire content of every role='system' message by replacing with '.',
+# EXCEPT role=system messages carrying a <task-notification> tag (CC delivers bg-task wake-ups as
+# a plain-str role='system' message on some paths, alongside the known role='user' path) — those
+# are left untouched here and fall through to `_apply_sn_notice_strip` + `_apply_first_pass`'s TN
+# branch (both widened to accept role='system'), which own TN wake-up construction exclusively —
+# returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
 def _apply_role_system_strip(messages: list) -> tuple:
     result = []
     pass_mods = []
@@ -52,6 +57,9 @@ def _apply_role_system_strip(messages: list) -> tuple:
             result.append(msg)
             continue
         if isinstance(old_content, str) and old_content.startswith(_TRUNCATION_NOTICE_MARKER):
+            result.append(msg)
+            continue
+        if _top_level_content_contains(old_content, "<task-notification>"):
             result.append(msg)
             continue
         result.append({**msg, "content": "."})
@@ -105,7 +113,11 @@ def _dedup_wakeup_blocks(messages: list) -> tuple:
 # injects ahead of <task-notification> tags in background-task wake-ups, from top-level str/text-block
 # content only. Runs BEFORE _apply_first_pass so the TN branch's top-level tag-contains guard and
 # tag-replacement operate on an already-cleaned prefix — the two concerns (paragraph noise vs. TN-tag
-# consumption) stay decoupled. Returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
+# consumption) stay decoupled. role='system' is in scope ONLY when the message also carries a
+# <task-notification> tag (the TN wake-ups _apply_role_system_strip's TN guard leaves untouched) —
+# a role='system' message without a TN tag stays out of scope here, same as before, even if called
+# in isolation ahead of _apply_role_system_strip (defensive boundary, not just a pipeline-order fact).
+# Returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
 def _apply_sn_notice_strip(messages: list) -> tuple:
     result = []
     pass_mods = []
@@ -114,10 +126,14 @@ def _apply_sn_notice_strip(messages: list) -> tuple:
     pass_ops_by_msg_blk: dict = {}
     changed_indices = []
     for idx, msg in enumerate(messages):
-        if msg.get("role") != "user":
+        role = msg.get("role")
+        if role not in ("user", "system"):
             result.append(msg)
             continue
         old_content = msg.get("content", "")
+        if role == "system" and not _top_level_content_contains(old_content, "<task-notification>"):
+            result.append(msg)
+            continue
         if not _top_level_content_contains(old_content, _SN_NOTICE_MARKER):
             result.append(msg)
             continue
@@ -142,7 +158,11 @@ def _apply_first_pass(messages: list) -> tuple:
     pass_ops_by_msg_blk: dict = {}
     changed_indices = []
     for idx, msg in enumerate(messages):
-        if msg.get("role") == "user" and _top_level_content_contains(msg.get("content", ""), "<task-notification>"):
+        # TN branch accepts role='system' too — CC delivers bg-task wake-ups as a plain-str
+        # role='system' message on some paths; _apply_role_system_strip's TN guard leaves those
+        # untouched so they reach here. All other branches below stay role='user'-only (no
+        # role='system' occurrence measured for nag/deferred/user-interrupt/rejection).
+        if msg.get("role") in ("user", "system") and _top_level_content_contains(msg.get("content", ""), "<task-notification>"):
             old_content = msg.get("content", "")
             new_msg = dict(msg)
             is_failed_bg = _content_contains(old_content, "<status>failed</status>")

@@ -414,6 +414,7 @@ _apply_first_pass = _rules_mod._apply_first_pass
 _apply_bg_exit_strip = _rules_mod._apply_bg_exit_strip
 _apply_sn_notice_strip = _rules_mod._apply_sn_notice_strip
 _apply_final_sr_pass = _rules_mod._apply_final_sr_pass
+_apply_role_system_strip = _rules_mod._apply_role_system_strip
 _bgk_mod = _wakeup_il.import_module('src.proxy.strip_bg_completed')
 _WAKEUP_TEXT = _bgk_mod._WAKEUP_TEXT
 _sn_mod = _wakeup_il.import_module('src.proxy.strip_sn_notice')
@@ -553,6 +554,59 @@ def w11_sn_notice_role_system_untouched():
     check('W11_mod_not_fired', 'stripped_sn_notice_paragraph' not in mods, f'mods: {mods}')
 
 
+# ── ROLE=SYSTEM TASK-NOTIFICATION TESTS (2026-07-29 fix) ─────────────────────
+# _apply_role_system_strip previously nuked EVERY role='system' message to '.' before any TN
+# handling could see it — CC delivers bg-task wake-ups as a plain-str role='system' message
+# (measured: 173/280 real TN occurrences in one session log, role='system'/str; the other 107
+# were role='user'/list-text, already handled). Fix: _apply_role_system_strip leaves TN-carrying
+# role='system' messages untouched; _apply_sn_notice_strip + _apply_first_pass's TN branch (both
+# widened to accept role='system', narrowly gated on the TN tag itself) do the actual wake-up
+# construction — single source of truth, no duplicated TN-building logic. These tests run the
+# real 3-pass sequence (role_system_strip -> sn_notice_strip -> first_pass) matching rules.py's
+# `_passes` order.
+
+def w12_role_system_tn_completed_full_pipeline():
+    tn = ('<task-notification>\n<task-id>abc123</task-id>\n<status>completed</status>\n'
+          '<summary>Background command "sleep 10" completed (exit code 0)</summary>\n'
+          '</task-notification>')
+    content = _SN_NOTICE_PARAGRAPH + '\n\n' + tn
+    messages = [{'role': 'system', 'content': content}]
+    messages, _m1, _, _, _, _ = _apply_role_system_strip(messages)
+    messages, _m2, _, _, _, _ = _apply_sn_notice_strip(messages)
+    messages, mods3, _, _, _, _ = _apply_first_pass(messages)
+    result = messages[0]['content']
+    check('W12_not_nuked_to_dot', result != '.', repr(result))
+    check('W12_wakeup_present', _has_wakeup(result), repr(result))
+    check('W12_sn_notice_gone', _SN_NOTICE_PARAGRAPH not in result, repr(result))
+    check('W12_role_preserved', messages[0]['role'] == 'system')
+    check('W12_mod_trimmed', 'trimmed_task_notification' in mods3, f'mods3: {mods3}')
+
+
+def w13_role_system_tn_failed_with_output_file():
+    tn = ('<task-notification>\n<task-id>xyz789</task-id>\n'
+          '<output-file>/tmp/foo/task.output</output-file>\n<status>failed</status>\n'
+          '<summary>Background command "x" failed with exit code 42</summary>\n'
+          '</task-notification>')
+    content = _SN_NOTICE_PARAGRAPH + '\n\n' + tn
+    messages = [{'role': 'system', 'content': content}]
+    messages, _m1, _, _, _, _ = _apply_role_system_strip(messages)
+    messages, _m2, _, _, _, _ = _apply_sn_notice_strip(messages)
+    messages, mods3, _, _, _, _ = _apply_first_pass(messages)
+    result = messages[0]['content']
+    check('W13_wakeup_present', _has_wakeup(result), repr(result))
+    check('W13_output_line_present', 'Output: /tmp/foo/task.output' in result, repr(result))
+    check('W13_mod_replaced', 'replaced_task_notification' in mods3, f'mods3: {mods3}')
+
+
+def w14_role_system_noise_still_nuked_through_full_chain():
+    messages = [{'role': 'system', 'content': "The date has changed. Today's date is now 2026-04-22."}]
+    messages, mods1, _, _, _, _ = _apply_role_system_strip(messages)
+    messages, _m2, _, _, _, _ = _apply_sn_notice_strip(messages)
+    messages, _m3, _, _, _, _ = _apply_first_pass(messages)
+    check('W14_noise_nuked', messages[0]['content'] == '.', repr(messages[0]['content']))
+    check('W14_mod_recorded', 'stripped_role_system_msg' in mods1, f'mods1: {mods1}')
+
+
 if __name__ == '__main__':
     tests = [
         t01_task_tools_nag_real_text_block, t02_task_tools_nag_fp_code_literal, t03_task_tools_nag_tool_result_preserved,
@@ -576,6 +630,8 @@ if __name__ == '__main__':
         w07_sn_notice_genuine_plain_string, w08_sn_notice_text_block_index_one,
         w09_sn_notice_tool_result_untouched, w10_sn_notice_mid_content_untouched,
         w11_sn_notice_role_system_untouched,
+        w12_role_system_tn_completed_full_pipeline, w13_role_system_tn_failed_with_output_file,
+        w14_role_system_noise_still_nuked_through_full_chain,
     ]
 
     print(f'Running {len(tests)} tests...\n')
