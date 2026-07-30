@@ -32,6 +32,7 @@ cd Monitor_CC/
 - [proxy_instrumentation/DOCS.md](proxy_instrumentation/DOCS.md) — Reconstructs/measures the proxy's real strip/inject pipeline from recorded dual-log payloads through the real production code, no live proxy required
 - [bg_wakeup_id_line/DOCS.md](bg_wakeup_id_line/DOCS.md) — CC background-launch-ack wording inventory (`p1_`) + tmux-Escape-on-launch-ack mechanism verification (`p2_`, `src/proxy/bg_escape.py`); `md/` holds both scripts' reports
 - [pane_error_log/DOCS.md](pane_error_log/DOCS.md) — Regression coverage for the shared exception-safe pane-error sink (`src/pane_error_log.py`) and the exception guard on all 9 pane event loops — catch+log+continue, `KeyboardInterrupt`/`SystemExit` passthrough, failing-log-write safety, sink size-capping
+- [click_ui/DOCS.md](click_ui/DOCS.md) — Click-UI milestone series (every pane control mouse-clickable) — Milestone 1: worker-selection click-region parity vs. digit keys, worker-proxy header + workers pane
 
 ## session_analysis/
 

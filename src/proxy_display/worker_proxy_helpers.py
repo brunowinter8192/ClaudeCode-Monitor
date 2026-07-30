@@ -1,24 +1,45 @@
 # INFRASTRUCTURE
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from ..constants import RESET, YELLOW, DIM, WHITE, PROXY_MESSAGES_KEEP_LAST
 from .format import _is_standalone_entry
+# From utils.py: strip ANSI codes to measure visible column offsets
+from ..utils import _ANSI_ESCAPE_RE
 
 # FUNCTIONS
 
-# Build header line for worker-proxy pane listing workers with current selection marked
-def _format_worker_proxy_header(workers: list, current_worker: Optional[str]) -> str:
+# Register one click-region segment per physical row a marker spans (wrap-straddling markers get
+# 2+ segments — both are legitimate hit areas for the same worker, none is skipped)
+def _register_marker_regions(regions_out: Dict[Tuple[int, int, int], str], name: str,
+                              start: int, end: int, pane_width: int) -> None:
+    pos = start
+    while pos <= end:
+        row, col = divmod(pos, pane_width)
+        row_end = row * pane_width + pane_width - 1
+        seg_end = min(end, row_end)
+        regions_out[(col + 1, seg_end - row * pane_width + 1, row + 1)] = name
+        pos = seg_end + 1
+
+# Build header line listing workers; populates regions_out with (start_col,end_col,phys_row)->name click targets
+def _format_worker_proxy_header(workers: list, current_worker: Optional[str],
+                                 pane_width: int = 80,
+                                 regions_out: Optional[Dict[Tuple[int, int, int], str]] = None) -> str:
     label = f"{YELLOW}WORKER-PROXY{RESET}  "
+    if regions_out is not None:
+        regions_out.clear()
     if not workers:
         return label + f"{DIM}no workers{RESET}"
     parts = []
+    visible_col = len(_ANSI_ESCAPE_RE.sub('', label))
     for i, w in enumerate(workers, 1):
         name = w['name']
         star = '*' if name == current_worker else ''
-        if name == current_worker:
-            parts.append(f"{WHITE}[{i}{star}]{name}{RESET}")
-        else:
-            parts.append(f"{DIM}[{i}]{name}{RESET}")
+        marker = f"[{i}{star}]{name}" if name == current_worker else f"[{i}]{name}"
+        color = WHITE if name == current_worker else DIM
+        parts.append(f"{color}{marker}{RESET}")
+        if regions_out is not None:
+            _register_marker_regions(regions_out, name, visible_col, visible_col + len(marker) - 1, pane_width)
+        visible_col += len(marker) + 2
     return label + '  '.join(parts)
 
 # Extract entry_idx from any proxy line_map key variant (shared with pane.py pattern)

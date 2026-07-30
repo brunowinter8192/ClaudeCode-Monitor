@@ -57,7 +57,7 @@ def run_workers_loop() -> None:
                     if char == '\033':
                         event = read_mouse_event(char)
                         if event is not None:
-                            if _handle_workers_mouse(*event):
+                            if _handle_workers_mouse(*event, _monitor.active_project_filter):
                                 input_changed = True
                     else:
                         changed, frozen = _handle_workers_key(
@@ -160,8 +160,8 @@ def _workers_ram_state() -> list:
     ]
 
 # Process one mouse event; returns True if display should refresh
-def _handle_workers_mouse(button: int, col: int, row: int) -> bool:
-    global worker_hover_row
+def _handle_workers_mouse(button: int, col: int, row: int, project_filter: Optional[str]) -> bool:
+    global worker_hover_row, worker_selected_name
     if button == 0:
         cache_key = worker_cache_line_map.get(row)
         if cache_key:
@@ -175,6 +175,8 @@ def _handle_workers_mouse(button: int, col: int, row: int) -> bool:
             worker_expand_states[name] = is_now_expanded
             if is_now_expanded:
                 worker_scroll_offsets[name] = 0
+            worker_selected_name = name
+            _write_selection(project_filter, name)
             return True
         return False
     if button in (64, 65):
