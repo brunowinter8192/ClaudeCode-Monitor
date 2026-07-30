@@ -19,6 +19,8 @@ from . import monitor_display as _md
 from .monitor_session import get_file_end_position, get_initial_position, process_session_file, load_historical_main
 # From ram_audit: register tracemalloc + SIGUSR1 dump handler for this pane
 from ..ram_audit import register_ram_dump
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 # From click_handler: keyboard/mouse I/O for main loop
 from ..input.click_handler import (
     read_keypress, setup_keyboard_input, restore_terminal,
@@ -145,41 +147,45 @@ def run_main_loop() -> None:
     enable_mouse()
     try:
         while True:
-            input_changed = False
-            while True:
-                char = read_keypress()
-                if char is None:
-                    break
-                if char == '\033':
-                    event = read_mouse_event(char)
-                    if event is not None and event[0] != -1:
-                        if _handle_main_mouse(*event):
+            try:
+                input_changed = False
+                while True:
+                    char = read_keypress()
+                    if char is None:
+                        break
+                    if char == '\033':
+                        event = read_mouse_event(char)
+                        if event is not None and event[0] != -1:
+                            if _handle_main_mouse(*event):
+                                input_changed = True
+                        elif event is not None:  # (-1,-1,-1) sentinel → release, ignore
+                            pass
+                        elif _md._search_focused:  # bare ESC → cancel search
+                            if _handle_main_search_cancel():
+                                input_changed = True
+                    elif _md._search_focused:
+                        if _handle_main_search_input(char):
                             input_changed = True
-                    elif event is not None:  # (-1,-1,-1) sentinel → release, ignore
-                        pass
-                    elif _md._search_focused:  # bare ESC → cancel search
-                        if _handle_main_search_cancel():
-                            input_changed = True
-                elif _md._search_focused:
-                    if _handle_main_search_input(char):
-                        input_changed = True
-                elif char == 'y':
-                    key = resolve_parent_key(_md.main_line_map, _md.main_hover_row)
-                    if key is not None:
-                        copy_to_clipboard(_md.serialize_main_event(key))
-            now = time.time()
-            _md._main_copy_feedback_until = {
-                k: v for k, v in _md._main_copy_feedback_until.items() if v > now
-            }
-            if _md._main_copy_feedback_until:
-                input_changed = True
-            changed, last_data_refresh, last_janitor_ts, current_main_session = (
-                _refresh_main_data(now, last_data_refresh, last_janitor_ts, current_main_session)
-            )
-            input_changed = input_changed or changed
-            if input_changed:
-                last_output = _build_main_output(last_output)
-            time.sleep(INPUT_POLL_INTERVAL)
+                    elif char == 'y':
+                        key = resolve_parent_key(_md.main_line_map, _md.main_hover_row)
+                        if key is not None:
+                            copy_to_clipboard(_md.serialize_main_event(key))
+                now = time.time()
+                _md._main_copy_feedback_until = {
+                    k: v for k, v in _md._main_copy_feedback_until.items() if v > now
+                }
+                if _md._main_copy_feedback_until:
+                    input_changed = True
+                changed, last_data_refresh, last_janitor_ts, current_main_session = (
+                    _refresh_main_data(now, last_data_refresh, last_janitor_ts, current_main_session)
+                )
+                input_changed = input_changed or changed
+                if input_changed:
+                    last_output = _build_main_output(last_output)
+                time.sleep(INPUT_POLL_INTERVAL)
+            except Exception:
+                log_pane_error('main')
+                time.sleep(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()
         restore_terminal()

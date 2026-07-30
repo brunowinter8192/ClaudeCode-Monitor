@@ -44,6 +44,9 @@ PROXY_REPARSE_INTERVAL_SECONDS = 3600  # periodic re-init of proxy panes to rele
 WORKER_COL_WIDTH = 20  # name-field width; full column = W: + name + space = 23 chars
 WARNINGS_INITIAL_TAIL_BYTES = 50_000_000  # max bytes to back-seek on initial log parse to bound pymalloc peak
 MAIN_EVENT_BUFFER_CAP = 1000
+PANE_ERROR_LOG_PATH = '/tmp/monitor_cc_error.log'
+PANE_ERROR_LOG_MAX_BYTES = 2_000_000   # size that triggers truncation on next write
+PANE_ERROR_LOG_KEEP_BYTES = 500_000    # tail bytes kept after truncation
 
 # Tool names
 TOOL_TASK = 'Task'

@@ -31,6 +31,7 @@ cd Monitor_CC/
 - [strip_fp_tool_result/DOCS.md](strip_fp_tool_result/DOCS.md) — Audit: which strip passes remove content from inside `tool_result` blocks, split SR strip family vs. unrelated non-SR passes; measurement only
 - [proxy_instrumentation/DOCS.md](proxy_instrumentation/DOCS.md) — Reconstructs/measures the proxy's real strip/inject pipeline from recorded dual-log payloads through the real production code, no live proxy required
 - [bg_wakeup_id_line/DOCS.md](bg_wakeup_id_line/DOCS.md) — CC background-launch-ack wording inventory (`p1_`) + tmux-Escape-on-launch-ack mechanism verification (`p2_`, `src/proxy/bg_escape.py`); `md/` holds both scripts' reports
+- [pane_error_log/DOCS.md](pane_error_log/DOCS.md) — Regression coverage for the shared exception-safe pane-error sink (`src/pane_error_log.py`) and the `try/except Exception:` guard on all 8 pane event loops — catch+log+continue, `KeyboardInterrupt`/`SystemExit` passthrough, failing-log-write safety, sink size-capping
 
 ## session_analysis/
 

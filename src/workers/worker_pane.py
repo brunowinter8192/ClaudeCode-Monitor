@@ -1,11 +1,9 @@
 # INFRASTRUCTURE
 from typing import Dict, List, Optional
 from pathlib import Path
-import datetime
 import hashlib
 import os
 import time
-import traceback
 
 from ..constants import POLL_INTERVAL, INPUT_POLL_INTERVAL, RESET, ZEBRA_BG_A, ZEBRA_BG_B, HOVER_BG, LIGHT_RED_BG
 from ..jsonl import read_new_lines, parse_jsonl_lines, extract_cache_turns
@@ -20,6 +18,8 @@ from .worker_format import extract_worker_tokens, extract_worker_context_pct, fo
 # From worker_tmux.py: tmux session discovery and status detection
 from .worker_tmux import list_workers, find_worker_jsonl
 from ..ram_audit import register_ram_dump
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 
 worker_expand_states: Dict[str, bool] = {}
 worker_scroll_offsets: Dict[str, int] = {}
@@ -81,9 +81,7 @@ def run_workers_loop() -> None:
 
                 wait_for_input(INPUT_POLL_INTERVAL)
             except Exception:
-                with open('/tmp/monitor_cc_error.log', 'a') as _f:
-                    _f.write(f"\n[{datetime.datetime.now().isoformat()}] workers_pane error:\n")
-                    traceback.print_exc(file=_f)
+                log_pane_error('workers')
                 wait_for_input(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()

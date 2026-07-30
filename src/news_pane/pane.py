@@ -17,6 +17,8 @@ from .log_parser import (
     TARGET_COLLECTION, WEBSEARCH_ROOT, read_last_run_ts,
     find_log_file, RUN_START_MARKER, RUN_END_MARKER,
 )
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 
 NEWS_POLL_INTERVAL      = 2.0
 LOG_RUNNING_RECENT_SECS = 60
@@ -39,50 +41,54 @@ def run_news_loop() -> None:
     enable_mouse()
     try:
         while True:
-            input_changed = False
+            try:
+                input_changed = False
 
-            while True:
-                char = read_keypress()
-                if char is None:
-                    break
-                if char in ('r', 'R'):
-                    force_refresh = True
+                while True:
+                    char = read_keypress()
+                    if char is None:
+                        break
+                    if char in ('r', 'R'):
+                        force_refresh = True
+                        input_changed = True
+                    elif char == '\033':
+                        event = read_mouse_event(char)
+                        if event is not None:
+                            button, col, row = event
+                            if button == 0:
+                                for (sc, ec, er), (action, target) in list(_button_regions.items()):
+                                    if row == er and sc <= col <= ec:
+                                        if not _is_running():
+                                            _fire_pipeline()
+                                            input_changed = True
+                                        break
+
+                now = time.time()
+                if force_refresh or now - last_data_refresh >= NEWS_POLL_INTERVAL:
+                    status = _fetch_news_status()
+                    last_data_refresh = now
                     input_changed = True
-                elif char == '\033':
-                    event = read_mouse_event(char)
-                    if event is not None:
-                        button, col, row = event
-                        if button == 0:
-                            for (sc, ec, er), (action, target) in list(_button_regions.items()):
-                                if row == er and sc <= col <= ec:
-                                    if not _is_running():
-                                        _fire_pipeline()
-                                        input_changed = True
-                                    break
 
-            now = time.time()
-            if force_refresh or now - last_data_refresh >= NEWS_POLL_INTERVAL:
-                status = _fetch_news_status()
-                last_data_refresh = now
-                input_changed = True
+                force_refresh = False
 
-            force_refresh = False
+                if input_changed:
+                    try:
+                        term = os.get_terminal_size()
+                        pane_width  = term.columns
+                        pane_height = term.lines - 1
+                    except OSError:
+                        pane_width, pane_height = 80, 24
+                    running = _is_running()
+                    output  = _render_pane(pane_width, pane_height, status, running)
+                    if output != last_output:
+                        print('\033[2J\033[3J\033[H', end='', flush=True)
+                        print(output, end='', flush=True)
+                        last_output = output
 
-            if input_changed:
-                try:
-                    term = os.get_terminal_size()
-                    pane_width  = term.columns
-                    pane_height = term.lines - 1
-                except OSError:
-                    pane_width, pane_height = 80, 24
-                running = _is_running()
-                output  = _render_pane(pane_width, pane_height, status, running)
-                if output != last_output:
-                    print('\033[2J\033[3J\033[H', end='', flush=True)
-                    print(output, end='', flush=True)
-                    last_output = output
-
-            wait_for_input(INPUT_POLL_INTERVAL)
+                wait_for_input(INPUT_POLL_INTERVAL)
+            except Exception:
+                log_pane_error('news')
+                wait_for_input(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()
         restore_terminal()

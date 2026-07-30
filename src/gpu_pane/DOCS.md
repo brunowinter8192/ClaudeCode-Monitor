@@ -23,13 +23,13 @@ Standalone tmux Window 4 pane that monitors RAG GPU servers and indexed collecti
 
 ## Modules
 
-### pane.py (318 LOC)
+### pane.py (324 LOC)
 
-**Purpose:** Event loop, keyboard + mouse handling, three-block render (GPU Servers + RAG Collections + Errors), idle-countdown computation, context-dependent button rendering. `COLLECTIONS_POLL_INTERVAL = 30.0` s controls the slower collection-count cadence; `last_collections_refresh` tracks last fetch. Digit-key handler accepts `'1'`-`'9'` capped to `len(PRESET_NAMES)`. Preset row format width 16 (fits longest variant name e.g. `embedding-0.6b`).
+**Purpose:** Event loop, keyboard + mouse handling, three-block render (GPU Servers + RAG Collections + Errors), idle-countdown computation, context-dependent button rendering. `COLLECTIONS_POLL_INTERVAL = 30.0` s controls the slower collection-count cadence; `last_collections_refresh` tracks last fetch. Digit-key handler accepts `'1'`-`'9'` capped to `len(PRESET_NAMES)`. Preset row format width 16 (fits longest variant name e.g. `embedding-0.6b`). **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — an uncaught exception (this pane previously had none, and could die silently) is caught, logged via `pane_error_log.log_pane_error('gpu')`, and the loop continues after `wait_for_input(INPUT_POLL_INTERVAL)`; `KeyboardInterrupt`/`SystemExit` still propagate, `finally: disable_mouse(); restore_terminal()` still runs.
 **Reads:** `all_statuses()`, `get_anomalies()`, `errors_today()`, `errors_today_by_server()` on each 2s tick; `_fetch_collections()` on each 30s tick (+ force-refresh); `RAG_SERVER_IDLE_TIMEOUT` env (default 3600); `PRESET_NAMES` from `status` module (set at import).
-**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`).
+**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`).
 **Called by:** `workflow.py` (`--mode gpu` route).
-**Calls out:** `click_handler` (keyboard via `read_keypress`, mouse via `enable_mouse`/`disable_mouse`/`read_mouse_event`), `status`, `errors`, `subprocess.Popen` (rag-cli toggle).
+**Calls out:** `click_handler` (keyboard via `read_keypress`, mouse via `enable_mouse`/`disable_mouse`/`read_mouse_event`), `status`, `errors`, `pane_error_log` (`log_pane_error`), `subprocess.Popen` (rag-cli toggle).
 
 ---
 

@@ -22,6 +22,8 @@ from ..input.click_handler import (
     resolve_parent_key, copy_to_clipboard, wait_for_input,
 )
 from ..ram_audit import register_ram_dump
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 
 proxy_entries: List[dict] = []
 proxy_expand_states: Dict[int, bool] = {}
@@ -66,38 +68,42 @@ def run_proxy_loop() -> None:
     enable_mouse()
     try:
         while True:
-            input_changed = False
-            while True:
-                char = read_keypress()
-                if char is None:
-                    break
-                if char == '\033':
-                    event = read_mouse_event(char)
-                    if event is not None:
-                        if _handle_proxy_mouse(*event):
+            try:
+                input_changed = False
+                while True:
+                    char = read_keypress()
+                    if char is None:
+                        break
+                    if char == '\033':
+                        event = read_mouse_event(char)
+                        if event is not None:
+                            if _handle_proxy_mouse(*event):
+                                input_changed = True
+                    elif char == 'u':
+                        if _undo_proxy_expand():
                             input_changed = True
-                elif char == 'u':
-                    if _undo_proxy_expand():
-                        input_changed = True
 
-            now = time.time()
-            input_changed, last_data_refresh = _refresh_proxy_data(
-                now, input_changed, last_data_refresh, _monitor
-            )
+                now = time.time()
+                input_changed, last_data_refresh = _refresh_proxy_data(
+                    now, input_changed, last_data_refresh, _monitor
+                )
 
-            _copy_feedback_until = {k: v for k, v in _copy_feedback_until.items() if v > now}
-            if _copy_feedback_until:
-                input_changed = True
+                _copy_feedback_until = {k: v for k, v in _copy_feedback_until.items() if v > now}
+                if _copy_feedback_until:
+                    input_changed = True
 
-            if input_changed:
-                output = _build_proxy_output()
-                if output != last_output:
-                    print("\033[2J\033[3J\033[H", end='', flush=True)
-                    if output:
-                        print(output)
-                    last_output = output
+                if input_changed:
+                    output = _build_proxy_output()
+                    if output != last_output:
+                        print("\033[2J\033[3J\033[H", end='', flush=True)
+                        if output:
+                            print(output)
+                        last_output = output
 
-            wait_for_input(INPUT_POLL_INTERVAL)
+                wait_for_input(INPUT_POLL_INTERVAL)
+            except Exception:
+                log_pane_error('proxy')
+                wait_for_input(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()
         restore_terminal()

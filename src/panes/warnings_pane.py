@@ -8,6 +8,8 @@ import time
 from ..constants import INPUT_POLL_INTERVAL, WARNINGS_POLL_INTERVAL
 from ..utils import format_timestamp
 from ..ram_audit import register_ram_dump
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 from ..input.click_handler import (
     read_keypress, setup_keyboard_input, restore_terminal,
     enable_mouse, disable_mouse, read_mouse_event,
@@ -46,35 +48,39 @@ def run_warnings_loop() -> None:
     enable_mouse()
     try:
         while True:
-            input_changed = False
-            while True:
-                char = read_keypress()
-                if char is None:
-                    break
-                if char == '\033':
-                    event = read_mouse_event(char)
-                    if event is not None:
-                        if _handle_warnings_mouse(*event):
+            try:
+                input_changed = False
+                while True:
+                    char = read_keypress()
+                    if char is None:
+                        break
+                    if char == '\033':
+                        event = read_mouse_event(char)
+                        if event is not None:
+                            if _handle_warnings_mouse(*event):
+                                input_changed = True
+                    else:
+                        if _handle_warnings_key(char):
                             input_changed = True
-                else:
-                    if _handle_warnings_key(char):
-                        input_changed = True
 
-            now = time.time()
-            input_changed, last_data_refresh = _refresh_warnings_data(
-                now, input_changed, last_data_refresh
-            )
+                now = time.time()
+                input_changed, last_data_refresh = _refresh_warnings_data(
+                    now, input_changed, last_data_refresh
+                )
 
-            if input_changed:
-                output = _build_warnings_output()
-                if output != last_output:
-                    print("\033[2J\033[3J\033[H", end='', flush=True)
-                    if output:
-                        print(output, end='', flush=True)
-                        print(f"\033[H{_format_warnings_header(_last_refresh_ts)}\033[K", end='', flush=True)
-                    last_output = output
+                if input_changed:
+                    output = _build_warnings_output()
+                    if output != last_output:
+                        print("\033[2J\033[3J\033[H", end='', flush=True)
+                        if output:
+                            print(output, end='', flush=True)
+                            print(f"\033[H{_format_warnings_header(_last_refresh_ts)}\033[K", end='', flush=True)
+                        last_output = output
 
-            wait_for_input(INPUT_POLL_INTERVAL)
+                wait_for_input(INPUT_POLL_INTERVAL)
+            except Exception:
+                log_pane_error('warnings')
+                wait_for_input(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()
         restore_terminal()

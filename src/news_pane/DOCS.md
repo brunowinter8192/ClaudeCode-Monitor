@@ -21,13 +21,13 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 ## Modules
 
-### pane.py (202 LOC)
+### pane.py (208 LOC)
 
-**Purpose:** Left control pane event loop. Collection stats display, SGR mouse button click dispatch, subprocess launch, running-state indicator. `NEWS_POLL_INTERVAL = 2.0` s; `LOG_RUNNING_RECENT_SECS = 60`.
+**Purpose:** Left control pane event loop. Collection stats display, SGR mouse button click dispatch, subprocess launch, running-state indicator. `NEWS_POLL_INTERVAL = 2.0` s; `LOG_RUNNING_RECENT_SECS = 60`. **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — an uncaught exception (this pane previously had none) is caught, logged via `pane_error_log.log_pane_error('news')`, and the loop continues after `wait_for_input(INPUT_POLL_INTERVAL)`; `KeyboardInterrupt`/`SystemExit` still propagate, `finally: disable_mouse(); restore_terminal()` still runs.
 **Reads:** `rag-cli list_documents searxng_crypto` + `rag-cli list_collections --json` (every 2s); `LAST_RUN_FILE` (every 2s); `_pipeline_proc.poll()` (every render); log file via `_is_running_via_log()`.
-**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`).
+**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`).
 **Called by:** `workflow.py` (`--mode news` route).
-**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`), `log_parser` (constants + file helpers), `subprocess.Popen` (pipeline launch).
+**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`), `log_parser` (constants + file helpers), `pane_error_log` (`log_pane_error`), `subprocess.Popen` (pipeline launch).
 
 ---
 

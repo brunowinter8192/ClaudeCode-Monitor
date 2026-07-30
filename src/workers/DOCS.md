@@ -42,13 +42,13 @@ tmux session list → `worker_tmux` (discover workers, detect status, find JSONL
 
 ---
 
-### worker_pane.py (309 LOC)
+### worker_pane.py (307 LOC)
 
-**Purpose:** Workers pane event loop — keyboard/mouse input, periodic data refresh, viewport-clipped screen rendering, and IPC selection file write for cross-pane coordination. Structured as drain-refresh-render: `run_workers_loop` (ORCHESTRATOR, 55 LOC) delegates to four private helpers: `_handle_workers_mouse` (drain mouse events, resolves cache/worker-name line maps, updates scroll offsets ±3 per worker), `_handle_workers_key` (drain keyboard: y-copy, f-freeze, digit-select), `_refresh_workers_data` (tick-boundary `list_workers` + `worker_turns` build; partial-expand branch on input_changed), `_build_workers_output` (format + viewport clip + zebra/hover render loop, updates `worker_line_map`/`worker_cache_line_map`). `_workers_ram_state` is a module-level function (was a closure) registered with `register_ram_dump`.
+**Purpose:** Workers pane event loop — keyboard/mouse input, periodic data refresh, viewport-clipped screen rendering, and IPC selection file write for cross-pane coordination. Structured as drain-refresh-render: `run_workers_loop` (ORCHESTRATOR, 55 LOC) delegates to four private helpers: `_handle_workers_mouse` (drain mouse events, resolves cache/worker-name line maps, updates scroll offsets ±3 per worker), `_handle_workers_key` (drain keyboard: y-copy, f-freeze, digit-select), `_refresh_workers_data` (tick-boundary `list_workers` + `worker_turns` build; partial-expand branch on input_changed), `_build_workers_output` (format + viewport clip + zebra/hover render loop, updates `worker_line_map`/`worker_cache_line_map`). `_workers_ram_state` is a module-level function (was a closure) registered with `register_ram_dump`. **The `while True:` body has always been wrapped in its own `try/except Exception:`** — the reference pattern the other 7 pane loops were retrofitted to match (2026-07-31). **(2026-07-31 fix)** the except clause previously wrote the traceback with an inline `open('/tmp/monitor_cc_error.log', 'a')` — a failing write (disk full, permissions) would have propagated out of the except block itself and killed the loop, since nothing wrapped it; now delegates to `pane_error_log.log_pane_error('workers')`, which is exception-safe end to end and shared by all 8 pane loops.
 **Reads:** `_monitor.active_project_filter` (shared global state); stdin (keyboard/mouse); worker JSONL files via `worker_format`.
-**Writes:** ANSI output to stdout; selected worker name to `/tmp/monitor_cc_selected_worker_<hash>.txt`.
+**Writes:** ANSI output to stdout; selected worker name to `/tmp/monitor_cc_selected_worker_<hash>.txt`; `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`).
 **Called by:** `src/core/monitor.py` (via `..workers.run_workers_loop`); `src/proxy_display/worker_proxy_pane.py` (imports `get_selection_file_path`, `write_selection`)
-**Calls out:** `jsonl`, `input` (click_handler)
+**Calls out:** `jsonl`, `input` (click_handler), `pane_error_log` (`log_pane_error`)
 
 ---
 

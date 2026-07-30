@@ -15,6 +15,8 @@ from ..input.click_handler import (
 )
 from .status import all_statuses, get_anomalies, PRESET_NAMES, _fetch_collections
 from .errors import errors_today, errors_today_by_server
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 
 GPU_POLL_INTERVAL         = 2.0   # seconds between server data refreshes
 COLLECTIONS_POLL_INTERVAL = 30.0  # seconds between RAG collection count refreshes
@@ -44,68 +46,72 @@ def run_gpu_loop() -> None:
     enable_mouse()
     try:
         while True:
-            input_changed = False
+            try:
+                input_changed = False
 
-            while True:
-                char = read_keypress()
-                if char is None:
-                    break
-                if char.isdigit() and char != '0':
-                    idx = int(char) - 1
-                    if idx < len(PRESET_NAMES):
-                        name = PRESET_NAMES[idx]
-                        if name not in _toggle_state:
-                            _toggle_server(idx, presets)
-                            input_changed = True
-                elif char in ('r', 'R'):
-                    force_refresh = True
+                while True:
+                    char = read_keypress()
+                    if char is None:
+                        break
+                    if char.isdigit() and char != '0':
+                        idx = int(char) - 1
+                        if idx < len(PRESET_NAMES):
+                            name = PRESET_NAMES[idx]
+                            if name not in _toggle_state:
+                                _toggle_server(idx, presets)
+                                input_changed = True
+                    elif char in ('r', 'R'):
+                        force_refresh = True
+                        input_changed = True
+                    elif char == '\033':
+                        event = read_mouse_event(char)
+                        if event is not None:
+                            button, col, row = event
+                            if button == 0:
+                                for (sc, ec, er), (action, target) in list(_button_regions.items()):
+                                    if row == er and sc <= col <= ec:
+                                        if target not in _toggle_state:
+                                            _fire_button(action, target)
+                                            input_changed = True
+                                        break
+
+                now = time.time()
+                if force_refresh or now - last_data_refresh >= GPU_POLL_INTERVAL:
+                    presets, arbitrary = all_statuses()
+                    anomalies = get_anomalies()
+                    today_errors = errors_today()
+                    error_counts = errors_today_by_server()
+                    last_data_refresh = now
                     input_changed = True
-                elif char == '\033':
-                    event = read_mouse_event(char)
-                    if event is not None:
-                        button, col, row = event
-                        if button == 0:
-                            for (sc, ec, er), (action, target) in list(_button_regions.items()):
-                                if row == er and sc <= col <= ec:
-                                    if target not in _toggle_state:
-                                        _fire_button(action, target)
-                                        input_changed = True
-                                    break
+                    _expire_toggle_states(presets, arbitrary)
 
-            now = time.time()
-            if force_refresh or now - last_data_refresh >= GPU_POLL_INTERVAL:
-                presets, arbitrary = all_statuses()
-                anomalies = get_anomalies()
-                today_errors = errors_today()
-                error_counts = errors_today_by_server()
-                last_data_refresh = now
-                input_changed = True
-                _expire_toggle_states(presets, arbitrary)
+                if force_refresh or now - last_collections_refresh >= COLLECTIONS_POLL_INTERVAL:
+                    collections = _fetch_collections()
+                    last_collections_refresh = now
+                    input_changed = True
 
-            if force_refresh or now - last_collections_refresh >= COLLECTIONS_POLL_INTERVAL:
-                collections = _fetch_collections()
-                last_collections_refresh = now
-                input_changed = True
+                force_refresh = False
 
-            force_refresh = False
+                if input_changed:
+                    try:
+                        term = os.get_terminal_size()
+                        pane_width = term.columns
+                        pane_height = term.lines - 1
+                    except OSError:
+                        pane_width = 100
+                        pane_height = 30
+                    output = _render_pane(pane_width, pane_height,
+                                          presets, arbitrary, anomalies,
+                                          today_errors, error_counts, collections)
+                    if output != last_output:
+                        print("\033[2J\033[3J\033[H", end='', flush=True)
+                        print(output, end='', flush=True)
+                        last_output = output
 
-            if input_changed:
-                try:
-                    term = os.get_terminal_size()
-                    pane_width = term.columns
-                    pane_height = term.lines - 1
-                except OSError:
-                    pane_width = 100
-                    pane_height = 30
-                output = _render_pane(pane_width, pane_height,
-                                      presets, arbitrary, anomalies,
-                                      today_errors, error_counts, collections)
-                if output != last_output:
-                    print("\033[2J\033[3J\033[H", end='', flush=True)
-                    print(output, end='', flush=True)
-                    last_output = output
-
-            wait_for_input(INPUT_POLL_INTERVAL)
+                wait_for_input(INPUT_POLL_INTERVAL)
+            except Exception:
+                log_pane_error('gpu')
+                wait_for_input(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()
         restore_terminal()
