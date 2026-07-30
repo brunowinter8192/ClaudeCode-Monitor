@@ -6,6 +6,8 @@ from ..constants import RESET, DIM, YELLOW, RED
 from .log_parser import (
     find_log_file, find_current_run_lines, filter_events, parse_line,
 )
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 
 LOG_POLL_INTERVAL = 0.5
 MAX_LOG_LINES     = 40
@@ -17,24 +19,28 @@ def run_news_log_loop() -> None:
     last_output = None
     while True:
         try:
-            term = os.get_terminal_size()
-            pane_width  = term.columns
-            pane_height = term.lines - 1
-        except OSError:
-            pane_width, pane_height = 80, 24
+            try:
+                term = os.get_terminal_size()
+                pane_width  = term.columns
+                pane_height = term.lines - 1
+            except OSError:
+                pane_width, pane_height = 80, 24
 
-        log_path = find_log_file()
-        events: list[str] = []
-        if log_path is not None:
-            events = filter_events(find_current_run_lines(log_path))
+            log_path = find_log_file()
+            events: list[str] = []
+            if log_path is not None:
+                events = filter_events(find_current_run_lines(log_path))
 
-        output = _render_log_pane(pane_width, pane_height, log_path, events)
-        if output != last_output:
-            print('\033[2J\033[3J\033[H', end='', flush=True)
-            print(output, end='', flush=True)
-            last_output = output
+            output = _render_log_pane(pane_width, pane_height, log_path, events)
+            if output != last_output:
+                print('\033[2J\033[3J\033[H', end='', flush=True)
+                print(output, end='', flush=True)
+                last_output = output
 
-        time.sleep(LOG_POLL_INTERVAL)
+            time.sleep(LOG_POLL_INTERVAL)
+        except Exception:
+            log_pane_error('news_log')
+            time.sleep(LOG_POLL_INTERVAL)
 
 # FUNCTIONS
 

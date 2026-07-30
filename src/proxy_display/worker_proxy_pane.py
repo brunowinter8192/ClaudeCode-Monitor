@@ -25,6 +25,8 @@ from ..input.click_handler import (
 )
 from ..utils import visual_line_count
 from ..ram_audit import register_ram_dump
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 from .worker_proxy_helpers import (
     _format_worker_proxy_header, _wp_entry_idx_from_key,
     _resolve_prev_same_wp, _strip_inactive_wp_messages,
@@ -69,39 +71,43 @@ def run_worker_proxy_loop() -> None:
     enable_mouse()
     try:
         while True:
-            input_changed = False
-            while True:
-                char = read_keypress()
-                if char is None:
-                    break
-                if char == '\033':
-                    event = read_mouse_event(char)
-                    if event is not None:
-                        if _handle_worker_proxy_mouse(*event):
+            try:
+                input_changed = False
+                while True:
+                    char = read_keypress()
+                    if char is None:
+                        break
+                    if char == '\033':
+                        event = read_mouse_event(char)
+                        if event is not None:
+                            if _handle_worker_proxy_mouse(*event):
+                                input_changed = True
+                    else:
+                        if _handle_worker_proxy_key(char, _monitor):
                             input_changed = True
-                else:
-                    if _handle_worker_proxy_key(char, _monitor):
-                        input_changed = True
 
-            now = time.time()
-            input_changed, last_data_refresh = _refresh_worker_proxy_data(
-                now, input_changed, last_data_refresh, _monitor
-            )
+                now = time.time()
+                input_changed, last_data_refresh = _refresh_worker_proxy_data(
+                    now, input_changed, last_data_refresh, _monitor
+                )
 
-            _worker_copy_feedback_until = {k: v for k, v in _worker_copy_feedback_until.items() if v > now}
-            if _worker_copy_feedback_until:
-                input_changed = True
+                _worker_copy_feedback_until = {k: v for k, v in _worker_copy_feedback_until.items() if v > now}
+                if _worker_copy_feedback_until:
+                    input_changed = True
 
-            if input_changed:
-                output, header = _build_worker_proxy_output(_monitor)
-                if output != last_output:
-                    print("\033[2J\033[3J\033[H", end='', flush=True)
-                    if output:
-                        print(output, end='', flush=True)
-                        print(f"\033[H{header}\033[K", end='', flush=True)
-                    last_output = output
+                if input_changed:
+                    output, header = _build_worker_proxy_output(_monitor)
+                    if output != last_output:
+                        print("\033[2J\033[3J\033[H", end='', flush=True)
+                        if output:
+                            print(output, end='', flush=True)
+                            print(f"\033[H{header}\033[K", end='', flush=True)
+                        last_output = output
 
-            wait_for_input(INPUT_POLL_INTERVAL)
+                wait_for_input(INPUT_POLL_INTERVAL)
+            except Exception:
+                log_pane_error('worker_proxy')
+                wait_for_input(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()
         restore_terminal()

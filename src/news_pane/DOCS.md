@@ -21,23 +21,23 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 ## Modules
 
-### pane.py (202 LOC)
+### pane.py (208 LOC)
 
-**Purpose:** Left control pane event loop. Collection stats display, SGR mouse button click dispatch, subprocess launch, running-state indicator. `NEWS_POLL_INTERVAL = 2.0` s; `LOG_RUNNING_RECENT_SECS = 60`.
+**Purpose:** Left control pane event loop. Collection stats display, SGR mouse button click dispatch, subprocess launch, running-state indicator. `NEWS_POLL_INTERVAL = 2.0` s; `LOG_RUNNING_RECENT_SECS = 60`. **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — an uncaught exception (this pane previously had none) is caught, logged via `pane_error_log.log_pane_error('news')`, and the loop continues after `wait_for_input(INPUT_POLL_INTERVAL)`; `KeyboardInterrupt`/`SystemExit` still propagate, `finally: disable_mouse(); restore_terminal()` still runs.
 **Reads:** `rag-cli list_documents searxng_crypto` + `rag-cli list_collections --json` (every 2s); `LAST_RUN_FILE` (every 2s); `_pipeline_proc.poll()` (every render); log file via `_is_running_via_log()`.
-**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`).
+**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`).
 **Called by:** `workflow.py` (`--mode news` route).
-**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`), `log_parser` (constants + file helpers), `subprocess.Popen` (pipeline launch).
+**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`), `log_parser` (constants + file helpers), `pane_error_log` (`log_pane_error`), `subprocess.Popen` (pipeline launch).
 
 ---
 
-### log_pane.py (77 LOC)
+### log_pane.py (83 LOC)
 
-**Purpose:** Right log-tail pane. Polls newest log file every 0.5s; extracts current-run lines; filters to whitelist events; renders top-anchored (events grow top-down from the header, newest visible on overflow). No mouse (tmux native scroll active). `LOG_POLL_INTERVAL = 0.5` s; `MAX_LOG_LINES = 40`.
+**Purpose:** Right log-tail pane. Polls newest log file every 0.5s; extracts current-run lines; filters to whitelist events; renders top-anchored (events grow top-down from the header, newest visible on overflow). No mouse (tmux native scroll active). `LOG_POLL_INTERVAL = 0.5` s; `MAX_LOG_LINES = 40`. **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — the 8th pane loop missed in the initial 2026-07-31 sweep (window 5 has two panes, so this one dying silently leaves pane 5.1 blank rather than killing the whole tmux window, which is why it wasn't caught by the tmux-status-bar symptom that motivated the sweep). An uncaught exception is caught, logged via `pane_error_log.log_pane_error('news_log')`, and the loop continues after `time.sleep(LOG_POLL_INTERVAL)` (this loop has no `wait_for_input`, no keyboard/mouse setup, and — unlike the other 8 — no `finally:` block; none was added, since it never had one and none of its resources need pane-loop-style cleanup).
 **Reads:** log file via `find_log_file()` + `find_current_run_lines()` + `filter_events()` (every 0.5s).
-**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`).
+**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`).
 **Called by:** `workflow.py` (`--mode news-log` route).
-**Calls out:** `log_parser` (find_log_file, find_current_run_lines, filter_events, parse_line).
+**Calls out:** `log_parser` (find_log_file, find_current_run_lines, filter_events, parse_line), `pane_error_log` (`log_pane_error`).
 
 ---
 

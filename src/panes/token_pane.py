@@ -13,6 +13,8 @@ from ..input.click_handler import (
 from ..format.token_format import format_cache_tracker
 from ..utils import truncate_visible
 from ..ram_audit import register_ram_dump
+# From pane_error_log.py: shared exception-safe pane-error sink
+from ..pane_error_log import log_pane_error
 
 cache_expand_states: Dict[tuple, bool] = {}
 cache_line_map: Dict[int, tuple] = {}
@@ -39,34 +41,38 @@ def run_tokens_loop() -> None:
     enable_mouse()
     try:
         while True:
-            input_changed = False
-            while True:
-                char = read_keypress()
-                if char is None:
-                    break
-                if char == '\033':
-                    event = read_mouse_event(char)
-                    if event is not None:
-                        if _handle_tokens_mouse(*event):
+            try:
+                input_changed = False
+                while True:
+                    char = read_keypress()
+                    if char is None:
+                        break
+                    if char == '\033':
+                        event = read_mouse_event(char)
+                        if event is not None:
+                            if _handle_tokens_mouse(*event):
+                                input_changed = True
+                    else:
+                        if _handle_tokens_key(char):
                             input_changed = True
-                else:
-                    if _handle_tokens_key(char):
-                        input_changed = True
 
-            now = time.time()
-            input_changed, last_data_refresh = _refresh_tokens_data(
-                now, input_changed, last_data_refresh
-            )
+                now = time.time()
+                input_changed, last_data_refresh = _refresh_tokens_data(
+                    now, input_changed, last_data_refresh
+                )
 
-            if input_changed:
-                output = _build_tokens_output()
-                if output != last_output:
-                    print("\033[2J\033[3J\033[H", end='', flush=True)
-                    if output:
-                        print(output)
-                    last_output = output
+                if input_changed:
+                    output = _build_tokens_output()
+                    if output != last_output:
+                        print("\033[2J\033[3J\033[H", end='', flush=True)
+                        if output:
+                            print(output)
+                        last_output = output
 
-            wait_for_input(INPUT_POLL_INTERVAL)
+                wait_for_input(INPUT_POLL_INTERVAL)
+            except Exception:
+                log_pane_error('tokens')
+                wait_for_input(INPUT_POLL_INTERVAL)
     finally:
         disable_mouse()
         restore_terminal()
