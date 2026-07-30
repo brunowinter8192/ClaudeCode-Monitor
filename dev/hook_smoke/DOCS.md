@@ -181,9 +181,9 @@ python3 dev/hook_smoke/test_rewrite_websearch_scrape_noise.py
 
 **Purpose:** 11-case smoke for `rewrite_background_sleep.py`. Verifies 5 positive-rewrite cases
 (`sleep 300`, `sleep 5`, `sleep 1200` with `run_in_background=true`; bare `sleep 300` alone;
-`sleep 45 && echo "bg-ack-probe done"` custom echo; `sleep 600 && echo "custom text"` N=600 non-canonical
-→ all rewritten to `sleep 600 && echo done`) and 6 negative no-op cases (foreground flag; exact target
-`sleep 600 && echo done`; non-canonical non-sleep command; wrong chain target `&& rag-cli`).
+`sleep 45 && echo "bg-ack-probe done"` custom echo; `sleep 3300 && echo "custom text"` N=3300 non-canonical
+→ all rewritten to `sleep 3300 && echo done`) and 6 negative no-op cases (foreground flag; exact target
+`sleep 3300 && echo done`; non-canonical non-sleep command; wrong chain target `&& rag-cli`).
 
 **Usage (from project root):**
 ```bash
@@ -196,7 +196,7 @@ python3 dev/hook_smoke/test_rewrite_background_sleep.py
 
 ### test_block_unauthorized_background.py (84 LOC)
 
-**Purpose:** 9-case smoke for `block_unauthorized_background.py`. Verifies 4 ALLOW cases (no foreground-force): original `sleep N && echo done`, bare `sleep N`, custom echo `sleep 45 && echo "bg-ack-probe done"` (fire-log actual), normalized `sleep 600 && echo done`. Verifies 4 FORCE cases (foreground-forced): `reddit-cli index_subreddits`, `workflow.py index-dir` (former whitelisted, now forced), `./venv/bin/python script.py`, `rag-cli update_docs .` (original triggering incident). Verifies 1 PASS case (already foreground → no output): `./venv/bin/python script.py` with `run_in_background=false`.
+**Purpose:** 9-case smoke for `block_unauthorized_background.py`. Verifies 4 ALLOW cases (no foreground-force): original `sleep N && echo done`, bare `sleep N`, custom echo `sleep 45 && echo "bg-ack-probe done"` (fire-log actual), normalized `sleep 3300 && echo done`. Verifies 4 FORCE cases (foreground-forced): `reddit-cli index_subreddits`, `workflow.py index-dir` (former whitelisted, now forced), `./venv/bin/python script.py`, `rag-cli update_docs .` (original triggering incident). Verifies 1 PASS case (already foreground → no output): `./venv/bin/python script.py` with `run_in_background=false`.
 
 **Usage (from project root):**
 ```bash

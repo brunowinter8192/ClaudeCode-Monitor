@@ -10,12 +10,12 @@ from _fire_log import log_fire
 # Matches any sleep-only background command: bare "sleep N" or "sleep N && echo <anything>".
 # [^;&|\n]* stops at shell separators — prevents matching "sleep N && echo x && other_cmd".
 _SLEEP_ONLY_BG = re.compile(r'^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$')
-_TARGET = "sleep 600 && echo done"
+_TARGET = "sleep 3300 && echo done"
 
 
 # ORCHESTRATOR
 
-# Read Bash tool_input from stdin; rewrite any sleep-only background command → canonical "sleep 600 && echo done"
+# Read Bash tool_input from stdin; rewrite any sleep-only background command → canonical "sleep 3300 && echo done"
 def rewrite_background_sleep_workflow() -> None:
     command, run_in_background, session_id = _parse_input()
     if not run_in_background:
@@ -47,7 +47,7 @@ def _parse_input():
     except Exception:
         return None, False, None
 
-# Build allow+updatedInput dict rewriting command to canonical 600s timer; return it (caller handles print)
+# Build allow+updatedInput dict rewriting command to canonical 3300s timer; return it (caller handles print)
 def _emit_rewrite() -> dict:
     return {
         "hookSpecificOutput": {
