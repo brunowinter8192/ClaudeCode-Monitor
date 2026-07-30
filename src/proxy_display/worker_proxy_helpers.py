@@ -1,24 +1,36 @@
 # INFRASTRUCTURE
-from typing import Optional
+from typing import Dict, Optional, Tuple
 
 from ..constants import RESET, YELLOW, DIM, WHITE, PROXY_MESSAGES_KEEP_LAST
 from .format import _is_standalone_entry
+# From utils.py: strip ANSI codes to measure visible column offsets
+from ..utils import _ANSI_ESCAPE_RE
 
 # FUNCTIONS
 
-# Build header line for worker-proxy pane listing workers with current selection marked
-def _format_worker_proxy_header(workers: list, current_worker: Optional[str]) -> str:
+# Build header line listing workers; populates regions_out with (start_col,end_col,phys_row)->name click targets
+def _format_worker_proxy_header(workers: list, current_worker: Optional[str],
+                                 pane_width: int = 80,
+                                 regions_out: Optional[Dict[Tuple[int, int, int], str]] = None) -> str:
     label = f"{YELLOW}WORKER-PROXY{RESET}  "
+    if regions_out is not None:
+        regions_out.clear()
     if not workers:
         return label + f"{DIM}no workers{RESET}"
     parts = []
+    visible_col = len(_ANSI_ESCAPE_RE.sub('', label))
     for i, w in enumerate(workers, 1):
         name = w['name']
         star = '*' if name == current_worker else ''
-        if name == current_worker:
-            parts.append(f"{WHITE}[{i}{star}]{name}{RESET}")
-        else:
-            parts.append(f"{DIM}[{i}]{name}{RESET}")
+        marker = f"[{i}{star}]{name}" if name == current_worker else f"[{i}]{name}"
+        color = WHITE if name == current_worker else DIM
+        parts.append(f"{color}{marker}{RESET}")
+        if regions_out is not None:
+            start_row, start_col = divmod(visible_col, pane_width)
+            end_row, end_col = divmod(visible_col + len(marker) - 1, pane_width)
+            if start_row == end_row:
+                regions_out[(start_col + 1, end_col + 1, start_row + 1)] = name
+        visible_col += len(marker) + 2
     return label + '  '.join(parts)
 
 # Extract entry_idx from any proxy line_map key variant (shared with pane.py pattern)

@@ -1,6 +1,6 @@
 # INFRASTRUCTURE
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 import os
 import time
 
@@ -56,6 +56,7 @@ _worker_proxy_stripped_pos: int = 0    # dual-log read position for _stripped.js
 _worker_proxy_injected_pos: int = 0    # dual-log read position for _injected.jsonl
 _worker_proxy_acc_stripped: dict = {}  # family → {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}}
 _worker_proxy_acc_injected: dict = {}  # same; entries hold Python refs so in-place updates propagate
+_worker_proxy_header_regions: Dict[Tuple[int, int, int], str] = {}  # (start_col,end_col,phys_row) → worker name; header marker click targets
 
 # ORCHESTRATOR
 
@@ -80,7 +81,7 @@ def run_worker_proxy_loop() -> None:
                     if char == '\033':
                         event = read_mouse_event(char)
                         if event is not None:
-                            if _handle_worker_proxy_mouse(*event):
+                            if _handle_worker_proxy_mouse(*event, _monitor):
                                 input_changed = True
                     else:
                         if _handle_worker_proxy_key(char, _monitor):
@@ -165,10 +166,16 @@ def _worker_proxy_ram_state() -> list:
     ]
 
 # Process one mouse event; returns True if display should refresh
-def _handle_worker_proxy_mouse(button: int, col: int, row: int) -> bool:
+def _handle_worker_proxy_mouse(button: int, col: int, row: int, monitor) -> bool:
     global worker_proxy_expand_states, worker_proxy_scroll_offset, worker_proxy_hover_row
-    global _wp_just_expanded, _worker_copy_feedback_until
+    global _wp_just_expanded, _worker_copy_feedback_until, _worker_proxy_force_reload
     if button == 0:
+        for (sc, ec, er), name in _worker_proxy_header_regions.items():
+            if row == er and sc <= col <= ec:
+                if any(w['name'] == name for w in _worker_proxy_workers):
+                    write_selection(monitor.active_project_filter, name)
+                    _worker_proxy_force_reload = True
+                return True
         key = worker_proxy_line_map.get(row)
         if key is None:
             return False
@@ -337,7 +344,9 @@ def _build_worker_proxy_output(monitor) -> tuple:
         pane_height = 50
         pane_width = 80
     _worker_proxy_pane_width = pane_width
-    header = _format_worker_proxy_header(_worker_proxy_workers, current_worker)
+    header = _format_worker_proxy_header(
+        _worker_proxy_workers, current_worker, pane_width, _worker_proxy_header_regions
+    )
     header_lines = visual_line_count(header, pane_width)
     content_height = max(1, pane_height - header_lines)
     body_hover = (
