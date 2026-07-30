@@ -421,7 +421,11 @@ _sn_mod = _wakeup_il.import_module('src.proxy.strip_sn_notice')
 _SN_NOTICE_PARAGRAPH = _sn_mod._SN_NOTICE_PARAGRAPH
 _bg_ack_mod = _wakeup_il.import_module('src.proxy.strip_bg_launch_ack')
 _strip_bg_launch_ack = _bg_ack_mod._strip_bg_launch_ack
-del _wakeup_il, _rules_mod, _bgk_mod, _sn_mod, _bg_ack_mod
+_im_mod = _wakeup_il.import_module('src.proxy.strip_interrupt_marker')
+_strip_interrupt_marker = _im_mod._strip_interrupt_marker
+_INTERRUPT_MARKER = _im_mod._INTERRUPT_MARKER
+_apply_interrupt_marker_strip = _rules_mod._apply_interrupt_marker_strip
+del _wakeup_il, _rules_mod, _bgk_mod, _sn_mod, _bg_ack_mod, _im_mod
 
 
 def _has_wakeup(content) -> bool:
@@ -783,6 +787,67 @@ def w24_launch_ack_wording2_trailing_content_not_swallowed_into_path():
     check('W24_id_line_present', 'ID: bsxpatpam' in new_content, repr(new_content))
 
 
+# ── INTERRUPT-MARKER TESTS (strip_interrupt_marker.py, 2026-07-30) ───────────────────────────
+# CC records the proxy's bg_escape.py tmux-Escape into a worker's pane as
+# "[Request interrupted by user]" — never a genuine user interrupt. Exact-match anchored (not
+# substring-anywhere), same FP-nuke class as bg_launch_ack / sn_notice / plan_mode.
+
+# W25 — real measured shape: tool_result / marker / injected wake-up (3 blocks). Marker emptied
+# to '.'; neighbors byte-identical.
+def w25_interrupt_marker_real_shape_neighbors_intact():
+    tool_result_block = {'type': 'tool_result', 'tool_use_id': 'toolu_01', 'content': 'prior output'}
+    marker_block = {'type': 'text', 'text': _INTERRUPT_MARKER}
+    wakeup_block = {'type': 'text', 'text': _WAKEUP_TEXT}
+    content = [tool_result_block, marker_block, wakeup_block]
+    new_content, removed = _strip_interrupt_marker(content)
+    check('W25_removed_is_marker', removed == [_INTERRUPT_MARKER])
+    check('W25_block_count_unchanged', len(new_content) == 3)
+    check('W25_marker_block_emptied', new_content[1] == {'type': 'text', 'text': '.'})
+    check('W25_preceding_block_identical', new_content[0] == tool_result_block)
+    check('W25_following_block_identical', new_content[2] == wakeup_block)
+
+
+# W26 — 4 content shapes
+def w26_interrupt_marker_four_shapes():
+    s, r = _strip_interrupt_marker(_INTERRUPT_MARKER)
+    check('W26_str_shape', s == '.' and r == [_INTERRUPT_MARKER])
+    lt, r = _strip_interrupt_marker(text_block(_INTERRUPT_MARKER))
+    check('W26_list_text_shape', lt[0]['text'] == '.' and r == [_INTERRUPT_MARKER])
+    trs, r = _strip_interrupt_marker(tool_result_str(_INTERRUPT_MARKER))
+    check('W26_tool_result_str_shape', trs[0]['content'] == '.' and r == [_INTERRUPT_MARKER])
+    trl, r = _strip_interrupt_marker(tool_result_list(_INTERRUPT_MARKER))
+    check('W26_tool_result_list_shape', trl[0]['content'][0]['text'] == '.' and r == [_INTERRUPT_MARKER])
+
+
+# W27 — false-positive class: marker embedded inside longer text must survive untouched.
+def w27_interrupt_marker_embedded_in_longer_text_untouched():
+    longer = f'Note earlier: {_INTERRUPT_MARKER} was quoted from a transcript.'
+    new_tb, r1 = _strip_interrupt_marker(text_block(longer))
+    check('W27_top_level_text_untouched', new_tb[0]['text'] == longer and r1 == [])
+    new_tr, r2 = _strip_interrupt_marker(tool_result_str(longer))
+    check('W27_tool_result_untouched', new_tr[0]['content'] == longer and r2 == [])
+    new_str, r3 = _strip_interrupt_marker(longer)
+    check('W27_top_level_str_untouched', new_str == longer and r3 == [])
+
+
+# W28 — message-pass wiring: role='user' only, mod name, removed-chunk attribution.
+def w28_interrupt_marker_pass_role_gate_and_mod():
+    msgs = [
+        {'role': 'assistant', 'content': text_block(_INTERRUPT_MARKER)},
+        {'role': 'user', 'content': [
+            {'type': 'tool_result', 'tool_use_id': 'toolu_02', 'content': 'output'},
+            {'type': 'text', 'text': _INTERRUPT_MARKER},
+            {'type': 'text', 'text': _WAKEUP_TEXT},
+        ]},
+    ]
+    new_msgs, mods, removed_by_idx, changed, _inj, ops = _apply_interrupt_marker_strip(msgs)
+    check('W28_assistant_role_untouched', new_msgs[0] == msgs[0])
+    check('W28_user_msg_changed', changed == [1])
+    check('W28_mod_name', mods == ['stripped_interrupt_marker'])
+    check('W28_removed_chunk', removed_by_idx[1] == [_INTERRUPT_MARKER])
+    check('W28_ops_recorded_block1', 1 in ops.get(1, {}))
+
+
 if __name__ == '__main__':
     tests = [
         t01_task_tools_nag_real_text_block, t02_task_tools_nag_fp_code_literal, t03_task_tools_nag_tool_result_preserved,
@@ -813,6 +878,8 @@ if __name__ == '__main__':
         w19_tn_real_corpus_body_exact, w20_tn_missing_task_id_omits_id_line,
         w21_tn_missing_output_file_omits_output_line, w22_tn_no_id_no_output_reduces_to_bare_wakeup,
         w23_launch_ack_wording2_real_body_exact, w24_launch_ack_wording2_trailing_content_not_swallowed_into_path,
+        w25_interrupt_marker_real_shape_neighbors_intact, w26_interrupt_marker_four_shapes,
+        w27_interrupt_marker_embedded_in_longer_text_untouched, w28_interrupt_marker_pass_role_gate_and_mod,
     ]
 
     print(f'Running {len(tests)} tests...\n')

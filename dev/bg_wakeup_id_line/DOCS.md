@@ -3,8 +3,10 @@
 ## Role
 
 Measurement + verification scripts for the CC background-launch-ack family: what the raw ack
-text looks like across real wordings (`p1_`), and the tmux-Escape mechanism the proxy fires off
-that detection (`p2_`, `src/proxy/bg_escape.py`). `md/` holds every script's report.
+text looks like across real wordings (`p1_`), the tmux-Escape mechanism the proxy fires off that
+detection (`p2_`, `src/proxy/bg_escape.py`), and the marker CC itself records in the conversation
+when that Escape lands mid-tool-call — `"[Request interrupted by user]"`, stripped by
+`src/proxy/strip_interrupt_marker.py` (`p3_`). `md/` holds every script's report.
 
 ## Modules
 
@@ -38,6 +40,29 @@ session for the round-trip test; the log-line test scopes `MONITOR_CC_ROOT` to a
 **Called by:** run manually — regression guard for `bg_escape.py`; re-run after any change to
 `strip_bg_launch_ack.py`'s detection or `addon.py`'s worker-context derivation.
 **Calls out:** `src/proxy/bg_escape.py`, `src/proxy/addon.py` (`ProxyAddon`, `_derive_worker_context`), `tmux` binary (Test 6 only).
+
+---
+
+### p3_strip_interrupt_marker_probe.py (214 LOC)
+
+**Purpose:** Verifies `src/proxy/strip_interrupt_marker.py` and its full wiring through
+`message_passes.py` / `rules.py` / `strip_vocab.py` / `strip_inject_delta.py`. 6 test groups: the
+real measured 3-block shape (`tool_result` / marker / injected wake-up) with byte-identical
+neighbors after strip, all 4 content shapes, the false-positive class (marker embedded inside
+longer text left untouched), message-pass role-gating + mod naming, `strip_vocab`/`_MSG_CODE_TO_FN`
+attribution (`IM` code), and a full-pipeline check: real `apply_modification_rules` →
+real `_build_stripped_injected_deltas`, asserting `fn_map['msg.0.1'] == '_apply_interrupt_marker_strip'`
+(not `'unknown'`).
+**Reads:** Nothing persistent — builds all fixtures in-process (no real dual-log corpus in this
+worktree; the measured 1791-occurrence/4-log-file shape from the 2026-07-30 corpus scan is
+reproduced as a synthetic fixture, not re-scanned here).
+**Writes:** `md/p3_strip_interrupt_marker_probe_<timestamp>.md`.
+**Called by:** run manually — regression guard for `strip_interrupt_marker.py`; re-run after any
+change to that module or its wiring.
+**Calls out:** `src/proxy/strip_interrupt_marker.py`, `src/proxy/message_passes.py`
+(`_apply_interrupt_marker_strip`), `src/proxy/rules.py` (`apply_modification_rules`),
+`src/proxy/strip_vocab.py` (`attribute_chunk`, `RULES`), `src/proxy/strip_inject_delta.py`
+(`_MSG_CODE_TO_FN`, `_build_stripped_injected_deltas`).
 
 ---
 

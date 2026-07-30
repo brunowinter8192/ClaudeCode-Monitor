@@ -22,6 +22,7 @@ from .message_passes import (
     _apply_hook_prefix_strip,
     _apply_git_lock_strip,
     _apply_bd_noise_strip,
+    _apply_interrupt_marker_strip,
     _dedup_wakeup_blocks,
 )
 from .rule_ops import _merge_ops
@@ -60,6 +61,7 @@ def apply_modification_rules(payload: dict, model_family: str = "opus", project_
         _apply_hook_prefix_strip,
         _apply_git_lock_strip,
         _apply_bd_noise_strip,
+        _apply_interrupt_marker_strip,
     ]
 
     new_messages = messages_to_process

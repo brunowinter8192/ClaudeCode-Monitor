@@ -31,6 +31,7 @@ _MSG_CODE_TO_FN: dict[str, str] = {
     'BL':  '_apply_bg_launch_ack_strip',
     'GL':  '_apply_git_lock_strip',   'BD':  '_apply_bd_noise_strip',
     'HP':  '_apply_hook_prefix_strip',
+    'IM':  '_apply_interrupt_marker_strip',
 }
 
 # FUNCTIONS
