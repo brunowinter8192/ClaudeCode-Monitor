@@ -13,6 +13,8 @@ from ..input.click_handler import (
     setup_keyboard_input, restore_terminal, read_keypress, wait_for_input,
     enable_mouse, disable_mouse, read_mouse_event,
 )
+# From utils.py: shrinking-rule header layout (decoration yields to the [refresh] button first)
+from ..utils import compute_header_rule_len
 from .log_parser import (
     TARGET_COLLECTION, WEBSEARCH_ROOT, read_last_run_ts,
     find_log_file, RUN_START_MARKER, RUN_END_MARKER,
@@ -182,11 +184,13 @@ def _render_pane(pane_width: int, pane_height: int, status: dict, running: bool)
     _button_regions.clear()
     lines: list[str] = []
 
-    header_text = f"{DIM}{'═' * min(pane_width, 52)}{RESET}  CoinDesk News Pipeline"
+    header_prefix = '  CoinDesk News Pipeline'
     refresh_btn = '[refresh]'
-    header_vis_len = len(_strip_ansi(header_text))
-    header_pad = pane_width - header_vis_len - len(refresh_btn)
-    if header_pad >= 1:
+    rule_len, show_refresh = compute_header_rule_len(header_prefix, refresh_btn, 52, pane_width)
+    header_text = f"{DIM}{'═' * rule_len}{RESET}{header_prefix}"
+    if show_refresh:
+        header_vis_len = len(_strip_ansi(header_text))
+        header_pad = pane_width - header_vis_len - len(refresh_btn)
         _button_regions[(header_vis_len + header_pad + 1, header_vis_len + header_pad + len(refresh_btn), 1)] = ('refresh', 'refresh')
         lines.append(header_text + ' ' * header_pad + refresh_btn)
     else:

@@ -20,6 +20,12 @@ Proves:
      on for the narrow case.
   4. news pane's existing [run pipeline] click dispatch is unchanged by the new action=='refresh'
      branch (regression check).
+  5. (2026-07-30 review fix) the decorative '═' rule yields to the button, not the other way
+     round: a width sweep in both panes proves the [refresh] region survives down to widths well
+     below today's live pane widths (gpu 215, news 107) -- the rule shrinks (asserted: fewer '═'
+     chars than its cap) before the button is dropped -- and that the no-room case (even the rule
+     minimum can't fit alongside the button) still registers nothing while the title text itself
+     stays fully visible at every swept width, including the narrowest.
 
 No live tmux/terminal, no real rag-cli or news pipeline subprocess: subprocess.Popen is
 monkeypatched per module to a capturing stub (mirrors milestone 2/3's copy_to_clipboard pattern).
@@ -190,6 +196,37 @@ def test_gpu_refresh_button():
         mod_gpu.PRESET_NAMES = orig_names
 
 
+# gpu pane: decoration must yield to the button, not the other way round -- width sweep proving
+# the '═' rule shrinks (down to its minimum) BEFORE [refresh] is dropped, all the way down to a
+# width range well below today's live pane width (215), and that title text survives even where
+# the button itself no longer fits
+def test_gpu_refresh_button_width_sweep():
+    orig_names = mod_gpu.PRESET_NAMES
+    mod_gpu.PRESET_NAMES = []
+    try:
+        # crossover for '  GPU Servers' + '[refresh]' at rule_min=4, gap=1 is pane_width=27
+        no_button_widths = [5, 20, 26]
+        button_widths = [27, 30, 50, 90, 130, 215]
+        for w in no_button_widths:
+            output = mod_gpu._render_pane(w, 30, [], [], [], [], {}, [])
+            first_line = output.split('\n')[0]
+            check(f"gpu width={w}: no [refresh] region (too narrow even at the rule minimum)",
+                  ('refresh', 'refresh') not in mod_gpu._button_regions.values())
+            check(f"gpu width={w}: title text 'GPU Servers' still fully visible",
+                  'GPU Servers' in first_line)
+        for w in button_widths:
+            output = mod_gpu._render_pane(w, 30, [], [], [], [], {}, [])
+            first_line = output.split('\n')[0]
+            rule_chars = first_line.count('═')
+            check(f"gpu width={w}: [refresh] region registered (decoration yielded, not the button)",
+                  ('refresh', 'refresh') in mod_gpu._button_regions.values())
+            if w < 90:
+                check(f"gpu width={w}: rule shrank below its 64-char cap to make room",
+                      0 < rule_chars < 64)
+    finally:
+        mod_gpu.PRESET_NAMES = orig_names
+
+
 # news pane: new [refresh] header button -- region, dispatch, width guard, no collision with
 # [run pipeline]
 def test_news_refresh_button():
@@ -225,6 +262,31 @@ def test_news_refresh_button():
           '[refresh]' not in narrow_output.split('\n')[0])
 
 
+# news pane: decoration must yield to the button, not the other way round -- width sweep, same
+# shape as the gpu sweep, down to a range well below today's live pane width (107)
+def test_news_refresh_button_width_sweep():
+    status = {'doc_count': 5, 'chunk_count': 50, 'last_run_ts': '2026-01-01 00:00:00'}
+    # crossover for '  CoinDesk News Pipeline' + '[refresh]' at rule_min=4, gap=1 is pane_width=38
+    no_button_widths = [5, 20, 37]
+    button_widths = [38, 40, 60, 86, 107]
+    for w in no_button_widths:
+        output = mod_news._render_pane(w, 30, status, running=False)
+        first_line = output.split('\n')[0]
+        check(f"news width={w}: no [refresh] region (too narrow even at the rule minimum)",
+              ('refresh', 'refresh') not in mod_news._button_regions.values())
+        check(f"news width={w}: title text 'CoinDesk News Pipeline' still fully visible",
+              'CoinDesk News Pipeline' in first_line)
+    for w in button_widths:
+        output = mod_news._render_pane(w, 30, status, running=False)
+        first_line = output.split('\n')[0]
+        rule_chars = first_line.count('═')
+        check(f"news width={w}: [refresh] region registered (decoration yielded, not the button)",
+              ('refresh', 'refresh') in mod_news._button_regions.values())
+        if w < 86:
+            check(f"news width={w}: rule shrank below its 52-char cap to make room",
+                  0 < rule_chars < 52)
+
+
 # ORCHESTRATOR
 
 def run_probe_workflow():
@@ -233,7 +295,9 @@ def run_probe_workflow():
     print("=" * 70)
     test_gpu_digit_key_covered_by_existing_button()
     test_gpu_refresh_button()
+    test_gpu_refresh_button_width_sweep()
     test_news_refresh_button()
+    test_news_refresh_button_width_sweep()
 
     total = len(_RESULTS)
     passed = sum(1 for _, ok in _RESULTS if ok)

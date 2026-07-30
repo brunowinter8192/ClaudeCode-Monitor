@@ -8,7 +8,7 @@ from ..constants import (
     RESET, GREEN, YELLOW, RED, DIM, ORANGE,
     INPUT_POLL_INTERVAL,
 )
-from ..utils import format_timestamp
+from ..utils import format_timestamp, compute_header_rule_len
 from ..input.click_handler import (
     setup_keyboard_input, restore_terminal, read_keypress, wait_for_input,
     enable_mouse, disable_mouse, read_mouse_event,
@@ -240,11 +240,13 @@ def _render_pane(pane_width: int, pane_height: int,
     _button_regions.clear()
     lines: list[str] = []
 
-    header_text = f"{DIM}{'═' * min(pane_width, 64)}{RESET}  GPU Servers"
+    header_prefix = '  GPU Servers'
     refresh_btn = '[refresh]'
-    header_vis_len = len(_strip_ansi(header_text))
-    header_pad = pane_width - header_vis_len - len(refresh_btn)
-    if header_pad >= 1:
+    rule_len, show_refresh = compute_header_rule_len(header_prefix, refresh_btn, 64, pane_width)
+    header_text = f"{DIM}{'═' * rule_len}{RESET}{header_prefix}"
+    if show_refresh:
+        header_vis_len = len(_strip_ansi(header_text))
+        header_pad = pane_width - header_vis_len - len(refresh_btn)
         _button_regions[(header_vis_len + header_pad + 1, header_vis_len + header_pad + len(refresh_btn), 1)] = ('refresh', 'refresh')
         lines.append(header_text + ' ' * header_pad + refresh_btn)
     else:

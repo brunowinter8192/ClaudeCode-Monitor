@@ -104,7 +104,7 @@ returns `(output, header)`), or `_handle_proxy_mouse`/`_undo_proxy_expand`.
 
 ---
 
-### p4_gpu_news_button_probe.py (269 LOC)
+### p4_gpu_news_button_probe.py (333 LOC)
 
 **Purpose:** Proves gpu's digit keys 1-9 need NO new button — the pre-existing per-server button
 already registered in `_button_regions` computes the IDENTICAL action and fires the IDENTICAL
@@ -121,7 +121,13 @@ the local `force_refresh` variable inside each blocking loop is therefore NOT in
 exercised, only the dispatch-loop's OWN region-matching and branching, mirrored line-for-line);
 narrow-pane gets no `[refresh]` text and no region in either pane; news's pre-existing
 `[run pipeline]` click still fires the pipeline (regression check) after the new branch was added
-ahead of it.
+ahead of it. **(2026-07-30 review fix)** `test_gpu_refresh_button_width_sweep` /
+`test_news_refresh_button_width_sweep`: sweep pane widths on both sides of each pane's
+button-visibility crossover (gpu 27, news 38 — both far below the panes' live widths of 215/107)
+proving the `'═'` decoration shrinks (fewer chars than its cap, asserted directly) before
+`[refresh]` is dropped, that the button is registered at every swept width at/above the
+crossover, and that the title text stays fully visible even below it, closing the priority
+inversion where the fixed-length decorative rule ate the space `[refresh]` needed first.
 **Reads:** nothing external — seeds synthetic gpu preset dicts and news status dicts directly;
 `gpu_pane.status.PRESET_NAMES` (resolved once at import time via a REAL `rag-cli server presets`
 subprocess call) is monkeypatched to a fixed list so the probe is deterministic regardless of
@@ -129,6 +135,6 @@ what's actually running on the machine; `subprocess.Popen` is monkeypatched per 
 capturing stub (no real rag-cli or news-pipeline process ever launched).
 **Writes:** `md/p4_gpu_news_button_probe_<timestamp>.md`.
 **Called by:** run manually — regression guard for the gpu/news buttons; re-run after any change
-to `_render_pane` (either pane), `_toggle_server`, `_fire_button`, `_fire_pipeline`, or either
-loop's inline mouse-dispatch snippet.
+to `_render_pane` (either pane), `_toggle_server`, `_fire_button`, `_fire_pipeline`,
+`utils.compute_header_rule_len`, or either loop's inline mouse-dispatch snippet.
 **Calls out:** `src.gpu_pane.pane`, `src.news_pane.pane` — loaded via `importlib.import_module`.
