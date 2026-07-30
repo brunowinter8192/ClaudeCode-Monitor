@@ -7,7 +7,7 @@ from typing import List, NamedTuple, Optional
 from ..session_finder import get_project_directories, encode_project_path
 # From proc_cache.py: Process/tmux/proxy/hook caches
 from .proc_cache import (
-    _refresh_cc_proc_cache, _refresh_tmux_state,
+    _refresh_cc_proc_cache, _refresh_tmux_state, _refresh_bg_task_cache,
     _tmux_session_exists, _tmux_window_activity, _read_hook_state, _proxy_log_newest_mtime,
     _has_active_bg, _cc_proc_cache,
 )
@@ -41,6 +41,7 @@ def list_alive_sessions() -> List[SessionInfo]:
     _refresh_cc_proc_cache(now)
     _refresh_ghostty_tty_to_id(now)
     _refresh_tmux_state(now)
+    _refresh_bg_task_cache(now)   # one global lsof scan/tick-window for _has_active_bg (all sessions)
     _read_hook_state(now)   # warm cache once per tick; _process_project_dir reads from cache
     _write_cwd_uuid_map()   # refresh {cwd: uuid} file for hook_writer.py delivery (change-detected)
     results = []

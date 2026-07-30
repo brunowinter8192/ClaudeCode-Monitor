@@ -13,12 +13,21 @@ _HOOK_REFRESH_INTERVAL = 1.0    # seconds between hooks.json reads (cheap: 1KB J
 _TMUX_REFRESH_INTERVAL = 3.0    # seconds between tmux list-sessions polls
 ORCHESTRATOR_SIGNAL_BUFFER_SECS = 60.0  # 60s = empirical floor for worker producing first JSONL write after signal (covers spawn-initial-thinking and long send-thinking phases). Prevents stale-JSONL demote from killing Opus bg timers during legitimate working state. Tradeoff: dead-worker wakeup delayed ~55s — acceptable vs orchestration poll cadence.
 _TASKS_BASE = Path(f"/tmp/claude-{os.getuid()}")
+# Real (symlink-resolved) form of _TASKS_BASE — lsof reports NAME as /private/tmp/... on macOS
+# (/tmp is a symlink to /private/tmp); comparing against unresolved paths would never match.
+_TASKS_BASE_REAL = str(_TASKS_BASE.resolve())
 # central log dir — proxy lives in monitor-cc and intercepts all CC sessions via ANTHROPIC_BASE_URL
 _PROXY_LOG_DIR = Path('/Users/brunowinter2000/Documents/ai/monitor-cc/src/logs')
 
 # pid→(tty, cwd) cache for CC processes; incremental: lsof only on new PIDs
 _cc_proc_cache: Dict[str, Tuple[str, str]] = {}
 _cc_proc_last_refresh: float = 0.0
+
+# Absolute paths (real, resolved) of *.output files currently held open by any process,
+# across ALL sessions' tasks dirs at once — one global lsof scan per _PROC_REFRESH_INTERVAL,
+# not one per session. TTL = _PROC_REFRESH_INTERVAL (same "expensive lsof" budget as proc cache).
+_bg_task_open_paths: set = set()
+_bg_task_last_refresh: float = 0.0
 
 # session_name set (alive check only); one list-sessions call per 3s
 _tmux_state_cache: set = set()
@@ -43,15 +52,36 @@ _orchestrator_signal_last_read: float = 0.0
 
 # FUNCTIONS
 
-# True if any *.output file in the session tasks dir has 0 bytes (= in-progress task)
+# True if any process currently holds an open handle on a *.output file in the session tasks dir.
+# Reads the global _bg_task_open_paths snapshot (see _refresh_bg_task_cache) — caller MUST have
+# called _refresh_bg_task_cache(now) earlier in the tick for this to reflect a fresh scan.
 def _has_active_bg(encoded_dir: str, session_id: str) -> bool:
-    tasks_dir = _TASKS_BASE / encoded_dir / session_id / 'tasks'
-    if not tasks_dir.exists():
-        return False
     try:
-        return any(f.stat().st_size == 0 for f in tasks_dir.glob('*.output') if f.is_file())
+        tasks_dir_real = f'{_TASKS_BASE_REAL}/{encoded_dir}/{session_id}/tasks/'
+        return any(p.startswith(tasks_dir_real) for p in _bg_task_open_paths)
     except OSError:
         return False
+
+# Update _bg_task_open_paths via ONE global lsof scan of _TASKS_BASE (covers every session's
+# tasks dir in a single ~100ms call, vs. ~100ms PER session for a per-dir call). Fail-open: any
+# lsof error leaves the previous snapshot in place (never escalates a stale True; mirrors
+# _refresh_cc_proc_cache's swallow-and-keep-prior-cache shape).
+def _refresh_bg_task_cache(now: float) -> None:
+    global _bg_task_open_paths, _bg_task_last_refresh
+    if now - _bg_task_last_refresh < _PROC_REFRESH_INTERVAL:
+        return
+    _bg_task_last_refresh = now
+    if not _TASKS_BASE.exists():
+        _bg_task_open_paths = set()
+        return
+    try:
+        r = subprocess.run(['lsof', '+D', str(_TASKS_BASE), '-Fn'],
+                            capture_output=True, text=True,
+                            encoding='utf-8', errors='replace', timeout=3)
+    except Exception:
+        return
+    _bg_task_open_paths = {line[1:] for line in r.stdout.split('\n')
+                            if line.startswith('n') and line.endswith('.output')}
 
 # Update pid→(tty,cwd) cache incrementally: drop gone PIDs, lsof only for new ones
 def _refresh_cc_proc_cache(now: float) -> None:

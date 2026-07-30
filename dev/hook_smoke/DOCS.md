@@ -253,6 +253,35 @@ normalization. Does NOT require a live mitmproxy process — uses minimal mock h
 
 ---
 
+### test_bg_task_detection.py (145 LOC)
+
+**Purpose:** 6-case smoke for `src/menubar/proc_cache.py::_has_active_bg` (open-file-handle predicate, replacing the old 0-byte-file check). 3 unit cases via a monkeypatched `_bg_task_open_paths` snapshot (match, no-match, session-id prefix-collision boundary), 1 integration case (real subprocess holds a real file open under a scratch tasks dir, real `lsof` scan detects it while open and its absence after the writer is killed), 1 fail-open case (`lsof` raising leaves the prior snapshot in place, does not crash), 1 TTL-gate case (second refresh call inside `_PROC_REFRESH_INTERVAL` does not re-invoke `lsof`).
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_bg_task_detection.py
+```
+
+**Expected output:** `All 6 tests passed.` (exit 0). Creates/removes a scratch dir under the real `_TASKS_BASE` (`/tmp/claude-<uid>/__test_bg_probe__/`) for the integration case only; cleaned up in a `finally` block.
+
+---
+
+### probe_bg_task_live.py (n/a — live measurement tool, not a smoke test)
+
+**Purpose:** Live probe comparing the old 0-byte predicate against the new handle-based predicate against a REAL running background task (e.g. a `rag-cli index` run), a synthetic writer loop, and a no-background-task control session; also benchmarks the per-tick cost of the batched `lsof` cache (refresh-tick cost vs. N-session cache-hit-tick cost). `--snapshot` mode prints one JSON measurement and exits. `probe_bg_task_detection_workflow` (no `--snapshot`) runs the full poll-loop + synthetic-writer + cost-bench + report-write in one process. Not CI-safe (depends on a live external task being supplied) — kept for future re-verification if the predicate regresses. **Gotcha:** any Bash-tool-invoked check running INSIDE the same CC session it targets can itself become a transient open `*.output` handle in that session's tasks dir for the duration of the check (CC's own tracked-wrapper mechanism, not specific to this script) — a long-lived process built this way (the original `probe_bg_task_detection_workflow` loop, run via `run_in_background=true` against its own session) got stuck for 14 minutes waiting for `new=False`, which could never arrive while it was itself the open handle. Mitigations used: (1) drive repeated measurements via `--snapshot` from an external shell `until`-loop (each invocation is independent and short) rather than one long-lived Python loop; (2) for a "handle is now closed" claim, scope `lsof` to the SPECIFIC target file (`lsof <path>`), not the whole session directory, to avoid the self-entry noise entirely.
+
+**Usage (from project root):**
+```bash
+# repeated snapshots, driven by an external loop (safe even when target == own session)
+until [ -s <tasks_dir>/<task_id>.output ]; do sleep 5; done
+python3 dev/hook_smoke/probe_bg_task_live.py --encoded-dir=<encoded_dir> --session-id=<session_id> --task-id=<task_id> --snapshot
+
+# full workflow — only when the target session is NOT the one this script runs in
+python3 dev/hook_smoke/probe_bg_task_live.py --encoded-dir=<encoded_dir> --session-id=<session_id> --task-id=<task_id> --poll-secs 4 --max-polls 100
+```
+
+---
+
 ### test_block_po_read.py (94 LOC)
 
 **Purpose:** 16-case smoke for `block_po_read.py`. Verifies 9 blocked cases (`head`/`tail`/`grep`/`cat`/`sed`/`rg` each on a `~/.claude/.../tool-results/<id>.txt` persisted-output path, the piped `cat <path> | head -20` case, and the `split -l 400 <path> /tmp/x` / `dd if=<path> of=/tmp/x` partitioning-escape cases) and 7 no-op cases (reader on a normal file, reader on a `.log` file, reader on `/tmp/foo.txt` not under `.claude/`, reader on a `.claude/` path not ending `.txt`, redirect-write to a PO path, PO path only inside a quoted string, malformed-JSON stdin fail-open).
