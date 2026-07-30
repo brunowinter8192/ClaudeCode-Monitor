@@ -28,6 +28,7 @@ from .strip_hook_prefix import _strip_hook_prefix, _HOOK_PREFIX_MARKER
 from .strip_git_lock import _strip_git_lock_advice, _GIT_LOCK_MARKER
 from .strip_bd_noise import _strip_bd_noise, _BD_NOISE_MARKERS
 from .strip_sn_notice import _strip_sn_notice, _SN_NOTICE_MARKER
+from .strip_interrupt_marker import _strip_interrupt_marker, _INTERRUPT_MARKER
 from .rule_ops import _ops_from_content_change
 
 # role=system messages starting with this marker are Read-truncation notices (CC 2.1.205+)
@@ -507,6 +508,40 @@ def _apply_bd_noise_strip(messages: list) -> tuple:
             changed_indices.append(idx)
             pass_removed_by_idx[idx] = bd_removed
             pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_content)
+        else:
+            result.append(msg)
+    return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
+
+
+# Interrupt-marker pass — replaces block content with '.' for blocks whose text IS EXACTLY
+# "[Request interrupted by user]" (CC's rendering of the proxy's bg_escape.py tmux-Escape into a
+# worker's pane, not a genuine user interrupt) — returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
+def _apply_interrupt_marker_strip(messages: list) -> tuple:
+    result = []
+    pass_mods = []
+    pass_removed_by_idx = {}
+    pass_injected_by_idx = {}
+    pass_ops_by_msg_blk: dict = {}
+    changed_indices = []
+    for idx, msg in enumerate(messages):
+        if msg.get("role") != "user":
+            result.append(msg)
+            continue
+        old_content = msg.get("content", "")
+        if not _content_contains(old_content, _INTERRUPT_MARKER):
+            result.append(msg)
+            continue
+        new_content, im_removed = _strip_interrupt_marker(old_content)
+        if im_removed:
+            result.append({**msg, "content": new_content})
+            pass_mods.append("stripped_interrupt_marker")
+            changed_indices.append(idx)
+            pass_removed_by_idx[idx] = im_removed
+            # full_replace=True: _strip_interrupt_marker sets a matched block's whole text/content
+            # field to the literal '.' wholesale — every block it leaves alone is appended by
+            # identity, so bt==at for those (same early-return safety as the other full_replace
+            # sites: strip_bg_launch_ack, _apply_role_system_strip, _strip_rejection_message).
+            pass_ops_by_msg_blk[idx] = _ops_from_content_change(old_content, new_content, full_replace=True)
         else:
             result.append(msg)
     return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
