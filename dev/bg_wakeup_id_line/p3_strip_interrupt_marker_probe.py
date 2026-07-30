@@ -4,14 +4,16 @@ rules.py, strip_vocab.py, strip_inject_delta.py).
 
 The proxy sends a tmux Escape into a worker's pane when one of its calls is backgrounded
 (src/proxy/bg_escape.py). Claude Code records that interruption in the conversation as a block
-containing EXACTLY "[Request interrupted by user]" — no user interrupted anything, but a worker
-reading the marker halts and waits for an instruction nobody intended to give. This probe proves
-the marker never reaches the model.
+whose (whitespace-stripped) text is EXACTLY one of two real wordings — "[Request interrupted by
+user]" or "[Request interrupted by user for tool use]", both always trailing-newline-terminated
+in the corpus — no user interrupted anything, but a worker reading the marker halts and waits for
+an instruction nobody intended to give. This probe proves the marker never reaches the model.
 
-Covers: the measured real payload shape (3 blocks: tool_result / marker / injected wake-up,
-neighbors byte-identical after strip), all 4 content shapes, the false-positive class (marker
-embedded inside longer text must survive untouched), and attribution resolving to a named
-function through the real apply_modification_rules -> _build_stripped_injected_deltas path.
+Covers: the measured real payload shape (3 blocks: tool_result / marker(+'\\n') / injected
+wake-up, neighbors byte-identical after strip), all 4 content shapes for both wordings, the
+false-positive class (marker embedded inside longer text must survive untouched, incl. a real
+corpus-derived 180-char quote), and attribution resolving to a named function through the real
+apply_modification_rules -> _build_stripped_injected_deltas path.
 
 Run from project root or worktree root:
     ./venv/bin/python dev/bg_wakeup_id_line/p3_strip_interrupt_marker_probe.py
@@ -25,11 +27,16 @@ from pathlib import Path
 WORKTREE_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(WORKTREE_ROOT / 'src'))
 
-from proxy.strip_interrupt_marker import _strip_interrupt_marker, _INTERRUPT_MARKER
+from proxy.strip_interrupt_marker import _strip_interrupt_marker
 from proxy.message_passes import _apply_interrupt_marker_strip
 from proxy.rules import apply_modification_rules
 from proxy.strip_vocab import attribute_chunk, RULES
 from proxy.strip_inject_delta import _MSG_CODE_TO_FN, _build_stripped_injected_deltas
+
+# Real corpus wordings (src/logs/dual_log/*_original.jsonl, 2026-07-31 re-measurement) — both
+# always trailing-newline-terminated; 10x base wording, 1x "for tool use" wording, 11/11 total.
+_INTERRUPT_MARKER = '[Request interrupted by user]\n'
+_INTERRUPT_MARKER_TOOL_USE = '[Request interrupted by user for tool use]\n'
 
 _PASS = "\033[32mPASS\033[0m"
 _FAIL = "\033[31mFAIL\033[0m"
@@ -82,8 +89,21 @@ def test_four_content_shapes():
           new_tr_list[0]["content"][0]["text"] == "." and r4 == [_INTERRUPT_MARKER])
 
 
+# Test 2b — the 2nd real wording ("for tool use", 1/11 measured occurrences) strips too — this
+# wording was never covered before the 2026-07-31 fix and is why the false negative shipped.
+def test_tool_use_wording():
+    print("\n[Test 2b] 'for tool use' wording strips (newline-terminated and bare)")
+    new_nl, r1 = _strip_interrupt_marker(_INTERRUPT_MARKER_TOOL_USE)
+    check("tool-use wording (real, trailing '\\n') -> '.'", new_nl == "." and r1 == [_INTERRUPT_MARKER_TOOL_USE])
+    bare = _INTERRUPT_MARKER_TOOL_USE.rstrip('\n')
+    new_bare, r2 = _strip_interrupt_marker(bare)
+    check("tool-use wording (bare, no '\\n') -> '.'", new_bare == "." and r2 == [bare])
+
+
 # Test 3 — false-positive class: marker embedded inside longer text (top-level text block and
-# tool_result data) must be left byte-identical, no removal recorded.
+# tool_result data) must be left byte-identical, no removal recorded. Includes a real
+# corpus-derived 180-char user message that quotes the bracketed marker mid-sentence
+# (src/logs/dual_log/api_requests_opus_monitor_cc_1785431184_original.jsonl, msg 11).
 def test_marker_embedded_in_longer_text_untouched():
     print("\n[Test 3] Marker embedded in longer text is NOT destroyed")
     longer_text = f"Earlier in the transcript: {_INTERRUPT_MARKER} — but that was quoted, not live."
@@ -97,6 +117,13 @@ def test_marker_embedded_in_longer_text_untouched():
 
     new_str, r3 = _strip_interrupt_marker(longer_text)
     check("longer top-level str content untouched", new_str == longer_text and r3 == [])
+
+    corpus_quote = (
+        "[Image #3] ok live verify da. hast du  [Request interrupted by user] gesehen? wenn ja "
+        "funktionniert der strip nicht. wenn nein funktionniert der strip aber das rendering ist broken"
+    )
+    new_cq, r4 = _strip_interrupt_marker([{"type": "text", "text": corpus_quote}])
+    check("real corpus 180-char quote untouched", new_cq[0]["text"] == corpus_quote and r4 == [])
 
 
 # Test 4a — message-pass level: gate fires only for role='user', mod name is stripped_interrupt_marker.
@@ -125,7 +152,8 @@ def test_attribution_vocab():
     print("\n[Test 4b] strip_vocab / strip_inject_delta attribution")
     check("'IM' registered in RULES", 'IM' in RULES)
     check("RULES['IM'] full name is stripped_interrupt_marker", RULES['IM'][0] == 'stripped_interrupt_marker')
-    check("attribute_chunk(marker) resolves to 'IM'", attribute_chunk(_INTERRUPT_MARKER) == 'IM')
+    check("attribute_chunk(base wording) resolves to 'IM'", attribute_chunk(_INTERRUPT_MARKER) == 'IM')
+    check("attribute_chunk(tool-use wording) resolves to 'IM'", attribute_chunk(_INTERRUPT_MARKER_TOOL_USE) == 'IM')
     check("'IM' -> named function in _MSG_CODE_TO_FN (not missing)", _MSG_CODE_TO_FN.get('IM') == '_apply_interrupt_marker_strip')
 
 
@@ -175,6 +203,7 @@ def run_probe_workflow():
     print("=" * 70)
     test_real_shape_neighbors_untouched()
     test_four_content_shapes()
+    test_tool_use_wording()
     test_marker_embedded_in_longer_text_untouched()
     test_message_pass_wiring()
     test_attribution_vocab()
