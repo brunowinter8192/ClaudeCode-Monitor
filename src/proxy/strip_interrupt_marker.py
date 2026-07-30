@@ -1,20 +1,29 @@
 # INFRASTRUCTURE
 
-# Exact tmux-Escape interruption marker CC records when the proxy sends an Escape keystroke into
-# a worker's pane mid-tool-call (bg_escape.py) — CC logs this identically to a genuine user
-# Ctrl-C/Escape interrupt, though no user pressed anything. Measured (full dual-log corpus scan,
-# 2026-07-30): 1791 occurrences across 4 log files, EVERY occurrence role='user', block
-# type='text', text EXACTLY this string, block index 1 of 3 (preceded by a tool_result or text
-# block, followed by the proxy's injected wake-up text) — never embedded inside longer text.
-_INTERRUPT_MARKER = '[Request interrupted by user]'
+# tmux-Escape interruption marker CC records when the proxy sends an Escape keystroke into a
+# worker's pane mid-tool-call (bg_escape.py) — CC logs this identically to a genuine user
+# Ctrl-C/Escape interrupt, though no user pressed anything. Re-measured (dual-log corpus scan,
+# 2026-07-31, deduped to the last/fullest line per src/logs/dual_log/*_original.jsonl session
+# file — a raw per-line scan overcounts ~150x because each request log re-embeds the full, growing
+# message history of the session): 11 occurrences across 5 session files, ALL role='user', block
+# type='text', EVERY occurrence carries a trailing '\n'. Two wordings: 10x
+# '[Request interrupted by user]\n', 1x '[Request interrupted by user for tool use]\n'. Block
+# position varies (index 1 of 3, 1 of 5, or 0 of 2 — not fixed) — never embedded inside longer
+# text in any measured occurrence. The 2026-07-30 header's "1791 occurrences" figure was an
+# uncorrected per-request-log count and never reproduced; treat it as wrong.
+_INTERRUPT_MARKERS = frozenset({
+    '[Request interrupted by user]',
+    '[Request interrupted by user for tool use]',
+})
 
 
-# True only for an exact match — the marker is its own whole block in every measured occurrence.
-# Exact-equality, NOT substring-anywhere: a genuine user paste/transcript that happens to CONTAIN
-# this phrase inside longer text must never be nuked (the FP-nuke class every other strip_*.py
-# anchors against).
+# True for a whole-block match against either wording, ignoring only surrounding whitespace (the
+# trailing '\n' every real occurrence carries) — NOT substring-anywhere: a genuine user
+# paste/transcript that happens to CONTAIN one of these phrases inside longer text (measured in
+# the same corpus, e.g. a 180-char user message asking about the marker) must never be nuked (the
+# FP-nuke class every other strip_*.py anchors against).
 def _is_interrupt_marker(text):
-    return text == _INTERRUPT_MARKER
+    return text.strip() in _INTERRUPT_MARKERS
 
 
 # ORCHESTRATOR

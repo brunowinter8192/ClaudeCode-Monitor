@@ -28,7 +28,7 @@ from .strip_hook_prefix import _strip_hook_prefix, _HOOK_PREFIX_MARKER
 from .strip_git_lock import _strip_git_lock_advice, _GIT_LOCK_MARKER
 from .strip_bd_noise import _strip_bd_noise, _BD_NOISE_MARKERS
 from .strip_sn_notice import _strip_sn_notice, _SN_NOTICE_MARKER
-from .strip_interrupt_marker import _strip_interrupt_marker, _INTERRUPT_MARKER
+from .strip_interrupt_marker import _strip_interrupt_marker, _INTERRUPT_MARKERS
 from .rule_ops import _ops_from_content_change
 
 # role=system messages starting with this marker are Read-truncation notices (CC 2.1.205+)
@@ -513,9 +513,10 @@ def _apply_bd_noise_strip(messages: list) -> tuple:
     return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
 
 
-# Interrupt-marker pass — replaces block content with '.' for blocks whose text IS EXACTLY
-# "[Request interrupted by user]" (CC's rendering of the proxy's bg_escape.py tmux-Escape into a
-# worker's pane, not a genuine user interrupt) — returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
+# Interrupt-marker pass — replaces block content with '.' for blocks whose (whitespace-stripped)
+# text IS EXACTLY one of the interrupt-marker wordings (CC's rendering of the proxy's
+# bg_escape.py tmux-Escape into a worker's pane, not a genuine user interrupt) — returns
+# (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
 def _apply_interrupt_marker_strip(messages: list) -> tuple:
     result = []
     pass_mods = []
@@ -528,7 +529,7 @@ def _apply_interrupt_marker_strip(messages: list) -> tuple:
             result.append(msg)
             continue
         old_content = msg.get("content", "")
-        if not _content_contains(old_content, _INTERRUPT_MARKER):
+        if not any(_content_contains(old_content, m) for m in _INTERRUPT_MARKERS):
             result.append(msg)
             continue
         new_content, im_removed = _strip_interrupt_marker(old_content)

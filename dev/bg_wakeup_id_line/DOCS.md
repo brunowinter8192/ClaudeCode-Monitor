@@ -5,8 +5,9 @@
 Measurement + verification scripts for the CC background-launch-ack family: what the raw ack
 text looks like across real wordings (`p1_`), the tmux-Escape mechanism the proxy fires off that
 detection (`p2_`, `src/proxy/bg_escape.py`), and the marker CC itself records in the conversation
-when that Escape lands mid-tool-call — `"[Request interrupted by user]"`, stripped by
-`src/proxy/strip_interrupt_marker.py` (`p3_`). `md/` holds every script's report.
+when that Escape lands mid-tool-call — `"[Request interrupted by user]"` or `"...for tool use]"`,
+both trailing-`\n`-terminated, stripped by `src/proxy/strip_interrupt_marker.py` (`p3_`). `md/`
+holds every script's report.
 
 ## Modules
 
@@ -43,19 +44,23 @@ session for the round-trip test; the log-line test scopes `MONITOR_CC_ROOT` to a
 
 ---
 
-### p3_strip_interrupt_marker_probe.py (214 LOC)
+### p3_strip_interrupt_marker_probe.py (243 LOC)
 
 **Purpose:** Verifies `src/proxy/strip_interrupt_marker.py` and its full wiring through
-`message_passes.py` / `rules.py` / `strip_vocab.py` / `strip_inject_delta.py`. 6 test groups: the
-real measured 3-block shape (`tool_result` / marker / injected wake-up) with byte-identical
-neighbors after strip, all 4 content shapes, the false-positive class (marker embedded inside
-longer text left untouched), message-pass role-gating + mod naming, `strip_vocab`/`_MSG_CODE_TO_FN`
-attribution (`IM` code), and a full-pipeline check: real `apply_modification_rules` →
-real `_build_stripped_injected_deltas`, asserting `fn_map['msg.0.1'] == '_apply_interrupt_marker_strip'`
-(not `'unknown'`).
-**Reads:** Nothing persistent — builds all fixtures in-process (no real dual-log corpus in this
-worktree; the measured 1791-occurrence/4-log-file shape from the 2026-07-30 corpus scan is
-reproduced as a synthetic fixture, not re-scanned here).
+`message_passes.py` / `rules.py` / `strip_vocab.py` / `strip_inject_delta.py`. 7 test groups: the
+real measured 3-block shape (`tool_result` / marker(+trailing `\n`) / injected wake-up) with
+byte-identical neighbors after strip, all 4 content shapes, the 2nd real wording ("for tool use"),
+the false-positive class (marker embedded inside longer text left untouched, incl. a real
+corpus-derived 180-char quote), message-pass role-gating + mod naming,
+`strip_vocab`/`_MSG_CODE_TO_FN` attribution (`IM` code, both wordings), and a full-pipeline check:
+real `apply_modification_rules` → real `_build_stripped_injected_deltas`, asserting
+`fn_map['msg.0.1'] == '_apply_interrupt_marker_strip'` (not `'unknown'`).
+**Reads:** Nothing persistent — builds all fixtures in-process. The 2026-07-30 header's
+"1791 occurrences" figure was an uncorrected per-request-log count and never reproduced; the
+2026-07-31 re-measurement (last/fullest line per `src/logs/dual_log/*_original.jsonl` session
+file) found 11 real occurrences across 5 session files, all trailing-`\n`-terminated, in 2
+wordings — reproduced here as synthetic fixtures, not re-scanned (no real dual-log corpus in this
+worktree).
 **Writes:** `md/p3_strip_interrupt_marker_probe_<timestamp>.md`.
 **Called by:** run manually — regression guard for `strip_interrupt_marker.py`; re-run after any
 change to that module or its wiring.

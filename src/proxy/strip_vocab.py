@@ -48,7 +48,7 @@ RULES: dict[str, tuple[str, list[str]]] = {
     'SNP': ('stripped_sn_notice_paragraph',    ['[SYSTEM NOTIFICATION - NOT USER INPUT]\nThis is an automated background-task event']),  # bare paragraph ahead of <task-notification>, NOT SR-wrapped — see attribute_chunk startswith special-case (shares '[SYSTEM NOTIFICATION' text with SN, disambiguated structurally, not by marker order)
     'FM':  ('stripped_file_modified_sr',       [' was modified']),
     'RS':  ('stripped_role_system_msg',        []),  # role-gated, no content marker — attribution via om_norm.role in _process_messages_section
-    'IM':  ('stripped_interrupt_marker',       ['[Request interrupted by user]']),  # tmux-Escape (bg_escape.py) CC records as if a genuine user interrupt — never one
+    'IM':  ('stripped_interrupt_marker',       ['[Request interrupted by user]', '[Request interrupted by user for tool use]']),  # tmux-Escape (bg_escape.py) CC records as if a genuine user interrupt — never one; 2 wordings measured (2026-07-31), removed chunk substring-matches whichever wording fired
 }
 
 # Tag literal codes — 4 raw tags tracked for LEAK/SUSPECT detection

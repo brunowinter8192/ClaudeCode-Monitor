@@ -423,7 +423,8 @@ _bg_ack_mod = _wakeup_il.import_module('src.proxy.strip_bg_launch_ack')
 _strip_bg_launch_ack = _bg_ack_mod._strip_bg_launch_ack
 _im_mod = _wakeup_il.import_module('src.proxy.strip_interrupt_marker')
 _strip_interrupt_marker = _im_mod._strip_interrupt_marker
-_INTERRUPT_MARKER = _im_mod._INTERRUPT_MARKER
+_INTERRUPT_MARKER = '[Request interrupted by user]'
+_INTERRUPT_MARKER_TOOL_USE = '[Request interrupted by user for tool use]'
 _apply_interrupt_marker_strip = _rules_mod._apply_interrupt_marker_strip
 del _wakeup_il, _rules_mod, _bgk_mod, _sn_mod, _bg_ack_mod, _im_mod
 
@@ -787,39 +788,54 @@ def w24_launch_ack_wording2_trailing_content_not_swallowed_into_path():
     check('W24_id_line_present', 'ID: bsxpatpam' in new_content, repr(new_content))
 
 
-# ── INTERRUPT-MARKER TESTS (strip_interrupt_marker.py, 2026-07-30) ───────────────────────────
+# ── INTERRUPT-MARKER TESTS (strip_interrupt_marker.py, 2026-07-30, re-measured 2026-07-31) ────
 # CC records the proxy's bg_escape.py tmux-Escape into a worker's pane as
-# "[Request interrupted by user]" — never a genuine user interrupt. Exact-match anchored (not
-# substring-anywhere), same FP-nuke class as bg_launch_ack / sn_notice / plan_mode.
+# "[Request interrupted by user]" or "[Request interrupted by user for tool use]" — never a
+# genuine user interrupt. Both real corpus wordings carry a trailing '\n' (11/11 occurrences,
+# src/logs/dual_log/*_original.jsonl, 2026-07-31 re-measurement). Whole-block match anchored
+# (ignoring only surrounding whitespace), NOT substring-anywhere — same FP-nuke class as
+# bg_launch_ack / sn_notice / plan_mode.
+_INTERRUPT_MARKER_NL = _INTERRUPT_MARKER + '\n'
+_INTERRUPT_MARKER_TOOL_USE_NL = _INTERRUPT_MARKER_TOOL_USE + '\n'
 
-# W25 — real measured shape: tool_result / marker / injected wake-up (3 blocks). Marker emptied
-# to '.'; neighbors byte-identical.
+# W25 — real measured shape: tool_result / marker(+trailing '\n') / injected wake-up (3 blocks).
+# Marker emptied to '.'; neighbors byte-identical.
 def w25_interrupt_marker_real_shape_neighbors_intact():
     tool_result_block = {'type': 'tool_result', 'tool_use_id': 'toolu_01', 'content': 'prior output'}
-    marker_block = {'type': 'text', 'text': _INTERRUPT_MARKER}
+    marker_block = {'type': 'text', 'text': _INTERRUPT_MARKER_NL}
     wakeup_block = {'type': 'text', 'text': _WAKEUP_TEXT}
     content = [tool_result_block, marker_block, wakeup_block]
     new_content, removed = _strip_interrupt_marker(content)
-    check('W25_removed_is_marker', removed == [_INTERRUPT_MARKER])
+    check('W25_removed_is_marker', removed == [_INTERRUPT_MARKER_NL])
     check('W25_block_count_unchanged', len(new_content) == 3)
     check('W25_marker_block_emptied', new_content[1] == {'type': 'text', 'text': '.'})
     check('W25_preceding_block_identical', new_content[0] == tool_result_block)
     check('W25_following_block_identical', new_content[2] == wakeup_block)
 
 
-# W26 — 4 content shapes
+# W26 — 4 content shapes, each with the real newline-terminated marker.
 def w26_interrupt_marker_four_shapes():
-    s, r = _strip_interrupt_marker(_INTERRUPT_MARKER)
-    check('W26_str_shape', s == '.' and r == [_INTERRUPT_MARKER])
-    lt, r = _strip_interrupt_marker(text_block(_INTERRUPT_MARKER))
-    check('W26_list_text_shape', lt[0]['text'] == '.' and r == [_INTERRUPT_MARKER])
-    trs, r = _strip_interrupt_marker(tool_result_str(_INTERRUPT_MARKER))
-    check('W26_tool_result_str_shape', trs[0]['content'] == '.' and r == [_INTERRUPT_MARKER])
-    trl, r = _strip_interrupt_marker(tool_result_list(_INTERRUPT_MARKER))
-    check('W26_tool_result_list_shape', trl[0]['content'][0]['text'] == '.' and r == [_INTERRUPT_MARKER])
+    s, r = _strip_interrupt_marker(_INTERRUPT_MARKER_NL)
+    check('W26_str_shape', s == '.' and r == [_INTERRUPT_MARKER_NL])
+    lt, r = _strip_interrupt_marker(text_block(_INTERRUPT_MARKER_NL))
+    check('W26_list_text_shape', lt[0]['text'] == '.' and r == [_INTERRUPT_MARKER_NL])
+    trs, r = _strip_interrupt_marker(tool_result_str(_INTERRUPT_MARKER_NL))
+    check('W26_tool_result_str_shape', trs[0]['content'] == '.' and r == [_INTERRUPT_MARKER_NL])
+    trl, r = _strip_interrupt_marker(tool_result_list(_INTERRUPT_MARKER_NL))
+    check('W26_tool_result_list_shape', trl[0]['content'][0]['text'] == '.' and r == [_INTERRUPT_MARKER_NL])
 
 
-# W27 — false-positive class: marker embedded inside longer text must survive untouched.
+# W26b — the 2nd real wording ("for tool use"), newline-terminated and bare, both strip.
+def w26b_interrupt_marker_tool_use_wording():
+    s, r = _strip_interrupt_marker(_INTERRUPT_MARKER_TOOL_USE_NL)
+    check('W26b_tool_use_wording_nl_stripped', s == '.' and r == [_INTERRUPT_MARKER_TOOL_USE_NL])
+    s2, r2 = _strip_interrupt_marker(_INTERRUPT_MARKER_TOOL_USE)
+    check('W26b_tool_use_wording_bare_stripped', s2 == '.' and r2 == [_INTERRUPT_MARKER_TOOL_USE])
+
+
+# W27 — false-positive class: marker embedded inside longer text must survive untouched, incl.
+# a real corpus-derived 180-char user message that quotes the bracketed marker mid-sentence
+# (src/logs/dual_log/api_requests_opus_monitor_cc_1785431184_original.jsonl, msg 11).
 def w27_interrupt_marker_embedded_in_longer_text_untouched():
     longer = f'Note earlier: {_INTERRUPT_MARKER} was quoted from a transcript.'
     new_tb, r1 = _strip_interrupt_marker(text_block(longer))
@@ -829,14 +845,22 @@ def w27_interrupt_marker_embedded_in_longer_text_untouched():
     new_str, r3 = _strip_interrupt_marker(longer)
     check('W27_top_level_str_untouched', new_str == longer and r3 == [])
 
+    corpus_quote = (
+        '[Image #3] ok live verify da. hast du  [Request interrupted by user] gesehen? wenn ja '
+        'funktionniert der strip nicht. wenn nein funktionniert der strip aber das rendering ist broken'
+    )
+    new_cq, r4 = _strip_interrupt_marker(text_block(corpus_quote))
+    check('W27_corpus_quote_untouched', new_cq[0]['text'] == corpus_quote and r4 == [])
 
-# W28 — message-pass wiring: role='user' only, mod name, removed-chunk attribution.
+
+# W28 — message-pass wiring: role='user' only, mod name, removed-chunk attribution — real
+# newline-terminated marker.
 def w28_interrupt_marker_pass_role_gate_and_mod():
     msgs = [
-        {'role': 'assistant', 'content': text_block(_INTERRUPT_MARKER)},
+        {'role': 'assistant', 'content': text_block(_INTERRUPT_MARKER_NL)},
         {'role': 'user', 'content': [
             {'type': 'tool_result', 'tool_use_id': 'toolu_02', 'content': 'output'},
-            {'type': 'text', 'text': _INTERRUPT_MARKER},
+            {'type': 'text', 'text': _INTERRUPT_MARKER_NL},
             {'type': 'text', 'text': _WAKEUP_TEXT},
         ]},
     ]
@@ -844,8 +868,25 @@ def w28_interrupt_marker_pass_role_gate_and_mod():
     check('W28_assistant_role_untouched', new_msgs[0] == msgs[0])
     check('W28_user_msg_changed', changed == [1])
     check('W28_mod_name', mods == ['stripped_interrupt_marker'])
-    check('W28_removed_chunk', removed_by_idx[1] == [_INTERRUPT_MARKER])
+    check('W28_removed_chunk', removed_by_idx[1] == [_INTERRUPT_MARKER_NL])
     check('W28_ops_recorded_block1', 1 in ops.get(1, {}))
+
+
+# W29 — message-pass wiring for the "for tool use" wording (previously untested — the gap the
+# false-negative shipped through).
+def w29_interrupt_marker_pass_tool_use_wording():
+    msgs = [
+        {'role': 'user', 'content': [
+            {'type': 'tool_result', 'tool_use_id': 'toolu_03', 'content': 'output'},
+            {'type': 'text', 'text': _INTERRUPT_MARKER_TOOL_USE_NL},
+            {'type': 'text', 'text': _WAKEUP_TEXT},
+        ]},
+    ]
+    new_msgs, mods, removed_by_idx, changed, _inj, ops = _apply_interrupt_marker_strip(msgs)
+    check('W29_user_msg_changed', changed == [0])
+    check('W29_mod_name', mods == ['stripped_interrupt_marker'])
+    check('W29_removed_chunk', removed_by_idx[0] == [_INTERRUPT_MARKER_TOOL_USE_NL])
+    check('W29_marker_block_emptied', new_msgs[0]['content'][1]['text'] == '.')
 
 
 if __name__ == '__main__':
@@ -879,7 +920,9 @@ if __name__ == '__main__':
         w21_tn_missing_output_file_omits_output_line, w22_tn_no_id_no_output_reduces_to_bare_wakeup,
         w23_launch_ack_wording2_real_body_exact, w24_launch_ack_wording2_trailing_content_not_swallowed_into_path,
         w25_interrupt_marker_real_shape_neighbors_intact, w26_interrupt_marker_four_shapes,
+        w26b_interrupt_marker_tool_use_wording,
         w27_interrupt_marker_embedded_in_longer_text_untouched, w28_interrupt_marker_pass_role_gate_and_mod,
+        w29_interrupt_marker_pass_tool_use_wording,
     ]
 
     print(f'Running {len(tests)} tests...\n')
