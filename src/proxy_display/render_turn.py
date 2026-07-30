@@ -34,11 +34,11 @@ def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symb
     mt = entry.get('max_tokens') or 0
     think_str = f" think:{_fmt_thinking_budget(mt)}" if (mt and model_short != 'haiku') else ''
     _fid = entry.get('flow_id', '')
-    _n_strip = len(entry.get('_strip_fns_lookup', {}).get(_fid, set()))
-    _n_inj   = len(entry.get('_inject_fns_lookup', {}).get(_fid, set()))
+    _has_strip = entry.get('_strip_fns_lookup', {}).get(_fid, False)
+    _has_inj   = entry.get('_inject_fns_lookup', {}).get(_fid, False)
     _badge_parts = []
-    if _n_strip: _badge_parts.append(f'{YELLOW}{_n_strip}strip{SOFT_RESET}')
-    if _n_inj:   _badge_parts.append(f'{GREEN}{_n_inj}inj{SOFT_RESET}')
+    if _has_strip: _badge_parts.append(f'{YELLOW}strip{SOFT_RESET}')
+    if _has_inj:   _badge_parts.append(f'{GREEN}inject{SOFT_RESET}')
     tag_badge = (' ' + ' '.join(_badge_parts)) if _badge_parts else ''
     header_raw = f"  {WHITE}{req_symbol} {num_label} {model_short} {msg_count}msg{eff_str}{think_str}{mods_str}{warn_str}{haiku_info}{tag_badge}{SOFT_RESET}"
     if copy_feedback is not None:

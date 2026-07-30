@@ -89,6 +89,9 @@ def _find_dual_log_paths(main_log_path: Optional[Path]) -> tuple:
 # acc_by_family: {family -> {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}}}
 # Mutates acc_by_family IN-PLACE so all proxy_entries holding a reference see updates
 # automatically. is_first -> .clear() + .update() on existing section dicts (preserves refs).
+# '_has_content_by_flow_id': per-flow_id bool — did THIS line's delta carry any content, for
+# the header badge. Derived from the delta sections themselves (not fn_map, which omits the
+# "." filler-injection case by design) so it agrees with what the expanded view renders.
 # Returns new file position; silently ignores missing/unreadable file.
 def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict) -> int:
     if path is None or not path.exists():
@@ -110,12 +113,12 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                 family = _infer_model_family(entry.get('model', ''))
                 acc = acc_by_family.setdefault(
                     family,
-                    {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}, '_fns_by_flow_id': {}}
+                    {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}, '_has_content_by_flow_id': {}}
                 )
                 if entry.get('is_first', False):
                     for section in ('system', 'tools', 'messages', 'fields'):
                         acc[section].clear()
-                    acc.setdefault('_fns_by_flow_id', {}).clear()
+                    acc.setdefault('_has_content_by_flow_id', {}).clear()
                 acc['system'].update(entry.get('system_delta') or {})
                 for name, val in (entry.get('tools_delta') or {}).items():
                     acc['tools'][name] = val
@@ -125,7 +128,11 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                     acc['messages'][midx].update(blks)
                 acc['fields'].update(entry.get('fields_delta') or {})
                 fid = entry.get('flow_id', '')
-                acc.setdefault('_fns_by_flow_id', {})[fid] = set((entry.get('fn_map') or {}).values())
+                has_content = bool(
+                    entry.get('system_delta') or entry.get('tools_delta')
+                    or entry.get('messages_delta') or entry.get('fields_delta')
+                )
+                acc.setdefault('_has_content_by_flow_id', {})[fid] = has_content
             return f.tell()
     except OSError:
         return last_pos
