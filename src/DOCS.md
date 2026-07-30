@@ -15,12 +15,12 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 | Subdir | Role | LOC | Modules |
 |---|---|---|---|
 | `core/` | Session polling orchestrator + main-pane output | 911 | 3 |
-| `panes/` | Tmux pane event loops (tokens, warnings) + warnings scan/render/parse helpers | 681 | 3 |
+| `panes/` | Tmux pane event loops (tokens, warnings) + warnings scan/render/parse helpers | 701 | 3 |
 | `format/` | ANSI string rendering (tool calls, events, cache tracker) | 506 | 4 |
 | `input/` | Keyboard/mouse stdin handling | 150 | 1 |
 | `jsonl/` | JSONL parsing + tool call extraction | 580 | 3 |
-| `workers/` | Workers pane (tmux session discovery + status display) | 628 | 3 |
-| `proxy_display/` | Proxy pane TUI (two-level expand, delta rendering, subprocess-parse, copy-button) | 2118 | 8 |
+| `workers/` | Workers pane (tmux session discovery + status display) | 658 | 3 |
+| `proxy_display/` | Proxy pane TUI (two-level expand, delta rendering, subprocess-parse, copy-button) | 2354 | 8 |
 | `proxy/` | mitmproxy addon (payload modification + JSONL logging) | 3074 | 18 |
 | `ram_audit/` | SIGUSR1 RAM-dump helper, gated by MONITOR_CC_RAM_AUDIT env | 101 | 1 |
 | `menubar/` | macOS status-bar app showing live CC sessions (rumps/AppKit) | 3481 | 18 |
