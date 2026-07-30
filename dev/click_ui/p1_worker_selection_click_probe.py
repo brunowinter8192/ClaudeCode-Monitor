@@ -204,7 +204,7 @@ def test_workers_pane_row_click():
         wpane.worker_expand_states.clear()
         wpane.worker_selected_name = None
         _clear_selection(wpane.get_selection_file_path, project_filter)
-        mouse_changed = wpane._handle_workers_mouse(0, click_col, row, project_filter)
+        mouse_changed, _ = wpane._handle_workers_mouse(0, click_col, row, project_filter, False)
         mouse_selection = _read_selection(wpane.get_selection_file_path, project_filter)
         mouse_expanded = wpane.worker_expand_states.get(name, False)
         mouse_selected_name = wpane.worker_selected_name
@@ -218,7 +218,7 @@ def test_workers_pane_row_click():
 
     scroll_row = next(iter(header_row_of.values()))
     wpane.worker_scroll_offsets.clear()
-    scroll_ok = wpane._handle_workers_mouse(64, click_col, scroll_row, project_filter)
+    scroll_ok, _ = wpane._handle_workers_mouse(64, click_col, scroll_row, project_filter, False)
     check("workers-pane: scroll wheel on a worker row still handled (no collision)", scroll_ok)
 
     _clear_selection(wpane.get_selection_file_path, project_filter)

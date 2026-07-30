@@ -82,8 +82,25 @@ def _worker_cache_copy_feedback(copy_feedback: Optional[dict], name: str) -> Opt
             if isinstance(k, tuple) and len(k) == 3 and k[0] == name}
 
 # Build flat (all_lines, line_keys) for workers pane; keys: str=worker name, 3-tuple=cache entry, None=non-clickable
-def format_workers_block(workers: list, expand_states: dict = None, worker_turns: dict = None, scroll_offsets: dict = None, cache_expand_states: dict = None, frozen: bool = False, selected_name: Optional[str] = None, copy_feedback: Optional[dict] = None) -> tuple:
+def format_workers_block(workers: list, expand_states: dict = None, worker_turns: dict = None, scroll_offsets: dict = None, cache_expand_states: dict = None, frozen: bool = False, selected_name: Optional[str] = None, copy_feedback: Optional[dict] = None, regions_out: Optional[dict] = None) -> tuple:
     freeze_indicator = f" {YELLOW}[FROZEN]{SOFT_RESET}" if frozen else f" {CYAN}[LIVE]{SOFT_RESET}"
+
+    try:
+        pane_width = os.get_terminal_size().columns
+    except OSError:
+        pane_width = 80
+
+    # Freeze badge always sits on the FIRST line ("Workers [LIVE]"/"[FROZEN]") — the pane has no
+    # separate fixed header, this line is part of the scrollable content (see worker_pane.py's
+    # DOCS gotcha); the caller resolves whether it survived viewport clipping and, if so, which
+    # phys_row it landed on. Column span only, no row — width-guarded, same as append_copy_symbol.
+    if regions_out is not None:
+        regions_out.clear()
+        badge = "[FROZEN]" if frozen else "[LIVE]"
+        start_col = len("Workers") + 1
+        end_col = start_col + len(badge) - 1
+        if end_col < pane_width:
+            regions_out['freeze'] = (start_col + 1, end_col + 1)
 
     all_lines: List[str] = []
     line_keys: List = []
@@ -101,11 +118,6 @@ def format_workers_block(workers: list, expand_states: dict = None, worker_turns
         expand_states = {}
     if worker_turns is None:
         worker_turns = {}
-
-    try:
-        pane_width = os.get_terminal_size().columns
-    except OSError:
-        pane_width = 80
 
     status_colors = {
         'working': GREEN,
