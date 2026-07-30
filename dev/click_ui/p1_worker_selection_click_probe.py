@@ -9,8 +9,13 @@ Proves, per pane, that after ONE real render pass:
      change (selected worker name written to the IPC selection file, expand-state where
      applicable) as pressing the corresponding digit key
 
+Also proves every rendered worker-proxy header marker stays clickable when the header wraps
+across physical rows -- a marker straddling a wrap boundary gets one region PER row segment it
+occupies (never zero), swept across pane widths from no-wrap to forced multi-straddle.
+
 Covers:
-  - src/proxy_display/worker_proxy_pane.py :: _format_worker_proxy_header header regions,
+  - src/proxy_display/worker_proxy_pane.py :: _format_worker_proxy_header header regions
+    (incl. wrap-straddle segmentation via _register_marker_regions),
     _handle_worker_proxy_mouse vs _handle_worker_proxy_key
   - src/workers/worker_pane.py :: worker_line_map (whole-row hit area), _handle_workers_mouse
     vs _handle_workers_key
@@ -117,6 +122,42 @@ def test_worker_proxy_header_click():
     _clear_selection(wp.get_selection_file_path, _FAKE_PROXY_PROJECT)
 
 
+# Worker-proxy pane: every rendered marker stays clickable when the header wraps -- a marker
+# straddling a wrap boundary must get >=1 region per row segment it occupies, never zero
+def test_worker_proxy_header_wrap_straddle():
+    monitor = SimpleNamespace(active_project_filter=_FAKE_PROXY_PROJECT)
+    workers = [{'name': 'alpha'}, {'name': 'beta'}, {'name': 'gamma-long-name'}, {'name': 'delta'}]
+    wp._worker_proxy_workers = workers
+    names = {w['name'] for w in workers}
+    straddle_found = False
+
+    for pane_width in (200, 60, 40, 30):
+        wp._format_worker_proxy_header(workers, None, pane_width, wp._worker_proxy_header_regions)
+        regions = dict(wp._worker_proxy_header_regions)
+        covered = set(regions.values())
+        check(f"worker-proxy wrap: all {len(workers)} markers have >=1 region at pane_width={pane_width}",
+              covered == names)
+
+        by_name = {}
+        for rect, name in regions.items():
+            by_name.setdefault(name, []).append(rect)
+        for name, rects in by_name.items():
+            if len(rects) <= 1:
+                continue
+            straddle_found = True
+            idx = next(i for i, w in enumerate(workers, 1) if w['name'] == name)
+            for sc, ec, er in rects:
+                _clear_selection(wp.get_selection_file_path, _FAKE_PROXY_PROJECT)
+                changed = wp._handle_worker_proxy_mouse(0, (sc + ec) // 2, er, monitor)
+                selection = _read_selection(wp.get_selection_file_path, _FAKE_PROXY_PROJECT)
+                check(f"worker-proxy wrap: click on segment {(sc, ec, er)} of straddling "
+                      f"'[{idx}]{name}' (pane_width={pane_width}) selects it",
+                      changed and selection == name)
+
+    check("worker-proxy wrap: sweep actually forced >=1 straddling marker", straddle_found)
+    _clear_selection(wp.get_selection_file_path, _FAKE_PROXY_PROJECT)
+
+
 # Workers pane: whole-row hit area (worker_line_map); one header-row region per worker; click ==
 # digit key (expand/collapse + select)
 def test_workers_pane_row_click():
@@ -190,6 +231,7 @@ def run_probe_workflow():
     print("worker-selection click probe -- worker-proxy header + workers-pane row")
     print("=" * 70)
     test_worker_proxy_header_click()
+    test_worker_proxy_header_wrap_straddle()
     test_workers_pane_row_click()
 
     total = len(_RESULTS)

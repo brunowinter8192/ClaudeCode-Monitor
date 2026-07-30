@@ -8,13 +8,17 @@ and the workers pane. `md/` holds every run's report.
 
 ## Modules
 
-### p1_worker_selection_click_probe.py (~215 LOC)
+### p1_worker_selection_click_probe.py (268 LOC)
 
 **Purpose:** Proves, after one real render pass, that the worker-proxy header's per-worker click
 regions (`_worker_proxy_header_regions`) and the workers pane's per-worker row hit area
 (`worker_line_map`) each contain one entry per worker at plausible coordinates, and that
 dispatching a synthetic mouse click at those coordinates produces the same state change (IPC
-selection file content, expand-state) as pressing the corresponding digit key.
+selection file content, expand-state) as pressing the corresponding digit key. Also sweeps the
+worker-proxy header across pane widths (200/60/40/30, with a 16-char worker name) that force a
+marker to straddle a wrap boundary, asserting every worker still has >=1 clickable region at
+every width and that a synthetic click on EACH row-segment of a straddling marker selects that
+worker (`_register_marker_regions` regression guard).
 **Reads:** nothing external — seeds `src.proxy_display.worker_proxy_pane._worker_proxy_workers`
 and calls `src.workers.worker_pane._build_workers_output` directly with synthetic worker lists.
 **Writes:** `md/p1_worker_selection_click_probe_<timestamp>.md`; IPC selection files under

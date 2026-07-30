@@ -8,6 +8,18 @@ from ..utils import _ANSI_ESCAPE_RE
 
 # FUNCTIONS
 
+# Register one click-region segment per physical row a marker spans (wrap-straddling markers get
+# 2+ segments — both are legitimate hit areas for the same worker, none is skipped)
+def _register_marker_regions(regions_out: Dict[Tuple[int, int, int], str], name: str,
+                              start: int, end: int, pane_width: int) -> None:
+    pos = start
+    while pos <= end:
+        row, col = divmod(pos, pane_width)
+        row_end = row * pane_width + pane_width - 1
+        seg_end = min(end, row_end)
+        regions_out[(col + 1, seg_end - row * pane_width + 1, row + 1)] = name
+        pos = seg_end + 1
+
 # Build header line listing workers; populates regions_out with (start_col,end_col,phys_row)->name click targets
 def _format_worker_proxy_header(workers: list, current_worker: Optional[str],
                                  pane_width: int = 80,
@@ -26,10 +38,7 @@ def _format_worker_proxy_header(workers: list, current_worker: Optional[str],
         color = WHITE if name == current_worker else DIM
         parts.append(f"{color}{marker}{RESET}")
         if regions_out is not None:
-            start_row, start_col = divmod(visible_col, pane_width)
-            end_row, end_col = divmod(visible_col + len(marker) - 1, pane_width)
-            if start_row == end_row:
-                regions_out[(start_col + 1, end_col + 1, start_row + 1)] = name
+            _register_marker_regions(regions_out, name, visible_col, visible_col + len(marker) - 1, pane_width)
         visible_col += len(marker) + 2
     return label + '  '.join(parts)
 
