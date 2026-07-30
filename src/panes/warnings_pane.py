@@ -1,6 +1,6 @@
 # INFRASTRUCTURE
 from pathlib import Path
-from typing import Dict, Optional, Set
+from typing import Dict, Optional, Set, Tuple
 import json
 import os
 import time
@@ -25,6 +25,7 @@ error_scroll_offset: int = 0
 error_copy_rows: Set[int] = set()  # phys_rows where ⎘ copy button is rendered; populated by _format_warnings_pane
 _error_copy_feedback_until: Dict[int, float] = {}  # err_idx → expiry timestamp for ✓ flash
 _error_pane_width: int = 80  # updated each render cycle; used by click handler for copy-button column check
+_warnings_header_regions: Dict[Tuple[int, int, int], str] = {}  # (start_col,end_col,phys_row=1) → 'refresh'
 _last_project_filter: Optional[str] = None
 _last_refresh_ts: float = 0.0
 _force_refresh: bool = False
@@ -76,12 +77,12 @@ def run_warnings_loop() -> None:
                     input_changed = True
 
                 if input_changed:
-                    output = _build_warnings_output()
+                    output, header = _build_warnings_output()
                     if output != last_output:
                         print("\033[2J\033[3J\033[H", end='', flush=True)
                         if output:
                             print(output, end='', flush=True)
-                            print(f"\033[H{_format_warnings_header(_last_refresh_ts)}\033[K", end='', flush=True)
+                            print(f"\033[H{header}\033[K", end='', flush=True)
                         last_output = output
 
                 wait_for_input(INPUT_POLL_INTERVAL)
@@ -118,8 +119,14 @@ def _warnings_ram_state() -> list:
 
 # Process one mouse event; returns True if display should refresh
 def _handle_warnings_mouse(button: int, col: int, row: int) -> bool:
-    global error_hover_row, error_scroll_offset, error_expand_states, _error_copy_feedback_until
+    global error_hover_row, error_scroll_offset, error_expand_states, _error_copy_feedback_until, _force_refresh
     if button == 0:
+        for (sc, ec, er), action in _warnings_header_regions.items():
+            if row == er and sc <= col <= ec:
+                if action == 'refresh':
+                    _force_refresh = True
+                    return True
+                return False
         ekey = error_line_map.get(row)
         if ekey is None:
             return False
@@ -247,8 +254,8 @@ def _refresh_warnings_data(now: float, input_changed: bool, last_data_refresh: f
     _last_refresh_ts = now
     return True, now
 
-# Render warnings pane to ANSI string; updates error_line_map
-def _build_warnings_output() -> str:
+# Render warnings pane to ANSI string; updates error_line_map; returns (output, header) for overdraw
+def _build_warnings_output() -> tuple:
     global error_line_map, error_copy_rows, _error_pane_width
     try:
         term = os.get_terminal_size()
@@ -258,9 +265,10 @@ def _build_warnings_output() -> str:
         pane_height = 50
         pane_width = 80
     _error_pane_width = pane_width
+    header = _format_warnings_header(_last_refresh_ts, pane_width, _warnings_header_regions)
     output, error_line_map = _format_warnings_pane(
         tool_errors, error_expand_states, error_hover_row, error_scroll_offset,
-        pane_height, pane_width, _last_refresh_ts,
+        pane_height, pane_width, header,
         copy_feedback=_error_copy_feedback_until, copy_rows_out=error_copy_rows,
     )
-    return output
+    return output, header

@@ -5,7 +5,8 @@
 Regression coverage for the click-UI milestone series (making every tmux-pane control reachable
 by mouse, not just keyboard). Milestone 1 covers worker selection in the worker-proxy pane header
 and the workers pane. Milestone 2 covers copy-by-click in the main/tokens/warnings/workers panes.
-`md/` holds every run's report.
+Milestone 3 covers the three remaining single-purpose keyboard controls (workers freeze, proxy
+undo, warnings refresh) as pane-chrome buttons. `md/` holds every run's report.
 
 ## Modules
 
@@ -66,3 +67,35 @@ panes' `_handle_*_mouse` / `_handle_*_key` functions.
 **Calls out:** `src.core.monitor_display`, `src.core.monitor`, `src.panes.token_pane`,
 `src.format.token_format`, `src.panes.warnings_pane`, `src.panes.warnings_render`,
 `src.workers.worker_pane`, `src.utils` — loaded via `importlib.import_module`.
+
+---
+
+### p3_button_click_probe.py (283 LOC)
+
+**Purpose:** Proves, per pane (workers freeze, proxy undo, warnings refresh), that after one real
+render pass the header/chrome button region is registered at a plausible coordinate, a synthetic
+click on it produces the SAME state change as the corresponding key (`f`/`u`/`r`), the two
+toggle/state-dependent buttons' rendered text reflects state BEFORE the click (workers:
+`[LIVE]`/`[FROZEN]` badge; proxy: `[undo]` color differs empty-vs-non-empty stack, still
+registered/clickable when empty — a no-op, same as pressing `u` with nothing to undo), a
+too-narrow pane registers no region (and, for the two NEW buttons — undo, refresh — renders no
+button text either; the workers freeze badge is pre-existing content, always rendered, only its
+clickability is width-guarded), and that each pane's PRE-EXISTING click handling (workers
+row-select, proxy expand/copy, warnings expand/copy) still works after the header-check was added
+ahead of it. The proxy pane case is the most structurally significant: it previously had NO fixed
+header at all, so this also exercises the new header/body split end-to-end (viewport math,
+`proxy_line_map`/`_proxy_copy_rows` shift by `header_lines`, overdraw) with a real synthetic entry
+set, not just the button itself.
+**Reads:** nothing external — seeds `tool_errors` / synthetic `workers` list / `proxy_entries`
+(via a `_make_proxy_entry` helper matching `dev/display/test_hover_map.py`'s shape) directly.
+**Writes:** `md/p3_button_click_probe_<timestamp>.md`; one throwaway IPC selection file under
+`/tmp/monitor_cc_selected_worker_<hash>.txt` (workers-pane project_filter
+`/tmp/click_ui_probe_p3_workers`), removed after the check.
+**Called by:** run manually — regression guard for the three pane-chrome buttons; re-run after any
+change to `_format_warnings_header`, `_handle_warnings_mouse`/`_handle_warnings_key`,
+`format_workers_block`, `_handle_workers_mouse` (now `(button,col,row,project_filter,frozen) ->
+(changed, frozen)`) / `_handle_workers_key`, `_format_proxy_header`, `_build_proxy_output` (now
+returns `(output, header)`), or `_handle_proxy_mouse`/`_undo_proxy_expand`.
+**Calls out:** `src.panes.warnings_pane`, `src.panes.warnings_render`, `src.workers.worker_pane`,
+`src.workers.worker_format`, `src.proxy_display.pane`, `src.proxy_display.format` — loaded via
+`importlib.import_module`.

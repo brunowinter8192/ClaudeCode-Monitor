@@ -1,5 +1,5 @@
 # INFRASTRUCTURE
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Tuple
 from pathlib import Path
 import hashlib
 import os
@@ -33,6 +33,7 @@ worker_turns: Dict[str, list] = {}
 worker_copy_rows: Set[int] = set()  # phys_rows where ⎘ copy button is rendered; populated by _build_workers_output
 _worker_copy_feedback_until: Dict = {}  # name OR (name,turn_idx,call_idx) → expiry timestamp for ✓ flash
 _worker_pane_width: int = 80  # updated each render cycle; used by click handler for copy-button column check
+_worker_header_regions: Dict[Tuple[int, int, int], str] = {}  # (start_col,end_col,phys_row) → 'freeze'; empty when the header line has scrolled out of view
 
 # ORCHESTRATOR
 
@@ -60,7 +61,9 @@ def run_workers_loop() -> None:
                     if char == '\033':
                         event = read_mouse_event(char)
                         if event is not None:
-                            if _handle_workers_mouse(*event, _monitor.active_project_filter):
+                            changed, frozen = _handle_workers_mouse(
+                                *event, _monitor.active_project_filter, frozen)
+                            if changed:
                                 input_changed = True
                     else:
                         changed, frozen = _handle_workers_key(
@@ -166,35 +169,40 @@ def _workers_ram_state() -> list:
         ('worker_scroll_offset',       worker_scroll_offset),
     ]
 
-# Process one mouse event; returns True if display should refresh
-def _handle_workers_mouse(button: int, col: int, row: int, project_filter: Optional[str]) -> bool:
+# Process one mouse event; returns (input_changed, updated_frozen)
+def _handle_workers_mouse(button: int, col: int, row: int, project_filter: Optional[str], frozen: bool) -> tuple:
     global worker_hover_row, worker_selected_name, _worker_copy_feedback_until
     if button == 0:
+        for (sc, ec, er), action in _worker_header_regions.items():
+            if row == er and sc <= col <= ec:
+                if action == 'freeze':
+                    return True, not frozen
+                return False, frozen
         is_copy_click = col >= _worker_pane_width - 2 and row in worker_copy_rows
         cache_key = worker_cache_line_map.get(row)
         if cache_key:
             if is_copy_click:
                 copy_to_clipboard(_serialize_workers(cache_key))
                 _worker_copy_feedback_until[cache_key] = time.time() + 1.5
-                return True
+                return True, frozen
             w_name, t_idx, c_idx = cache_key
             states = worker_cache_expand_states.setdefault(w_name, {})
             states[(t_idx, c_idx)] = not states.get((t_idx, c_idx), False)
-            return True
+            return True, frozen
         name = worker_line_map.get(row)
         if name:
             if is_copy_click:
                 copy_to_clipboard(_serialize_workers(name))
                 _worker_copy_feedback_until[name] = time.time() + 1.5
-                return True
+                return True, frozen
             is_now_expanded = not worker_expand_states.get(name, False)
             worker_expand_states[name] = is_now_expanded
             if is_now_expanded:
                 worker_scroll_offsets[name] = 0
             worker_selected_name = name
             _write_selection(project_filter, name)
-            return True
-        return False
+            return True, frozen
+        return False, frozen
     if button in (64, 65):
         w_name = None
         cache_hit = worker_cache_line_map.get(row)
@@ -210,12 +218,12 @@ def _handle_workers_mouse(button: int, col: int, row: int, project_filter: Optio
             current = worker_scroll_offsets.get(w_name, 0)
             delta = 3 if button == 64 else -3
             worker_scroll_offsets[w_name] = max(0, current + delta)
-            return True
-        return False
+            return True, frozen
+        return False, frozen
     if button >= 32:
         worker_hover_row = row
-        return True
-    return False
+        return True, frozen
+    return False, frozen
 
 # Resolve the copyable key at/above hover_row, preferring whichever of worker_cache_line_map /
 # worker_line_map has the CLOSER ancestor row — a plain worker_line_map-first fallback would
@@ -292,12 +300,14 @@ def _refresh_workers_data(workers: list, now: float, frozen: bool, input_changed
 
 # Format, clip viewport, and render workers to ANSI string; updates worker_line_map and worker_cache_line_map
 def _build_workers_output(workers: list, frozen: bool) -> str:
-    global worker_scroll_offset, worker_copy_rows, _worker_pane_width
+    global worker_scroll_offset, worker_copy_rows, _worker_pane_width, _worker_header_regions
+    _worker_freeze_span: dict = {}
     all_lines, line_keys = format_workers_block(
         workers, worker_expand_states, worker_turns,
         worker_scroll_offsets, worker_cache_expand_states,
         frozen=frozen, selected_name=worker_selected_name,
         copy_feedback=_worker_copy_feedback_until,
+        regions_out=_worker_freeze_span,
     )
     try:
         term = os.get_terminal_size()
@@ -318,6 +328,13 @@ def _build_workers_output(workers: list, frozen: bool) -> str:
     worker_line_map.clear()
     worker_cache_line_map.clear()
     worker_copy_rows.clear()
+    # Freeze badge is always all_lines[0] — only clickable when it survived viewport clipping
+    # (vp_start == 0 AND at least one line is visible; a scrolled-away header registers nothing,
+    # never a stale/wrong-row region).
+    _worker_header_regions.clear()
+    if 'freeze' in _worker_freeze_span and vp_start == 0 and visible_all:
+        sc, ec = _worker_freeze_span['freeze']
+        _worker_header_regions[(sc, ec, 1)] = 'freeze'
     result_lines = []
     phys_row = 1
     parent_count = sum(1 for k in line_keys[:vp_start] if isinstance(k, str))

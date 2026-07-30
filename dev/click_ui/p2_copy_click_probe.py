@@ -218,7 +218,7 @@ def test_warnings_pane_copy_click():
                   captured[-1] == y_text and y_text)
 
     narrow_out, narrow_map = mod_warnings_render._format_warnings_pane(
-        mod_warnings.tool_errors, {}, None, 0, 50, 10, 0, copy_feedback={}, copy_rows_out=set(),
+        mod_warnings.tool_errors, {}, None, 0, 50, 10, '', copy_feedback={}, copy_rows_out=set(),
     )
     check("warnings: width guard -- no ⎘/✓ symbol rendered when pane_width=10 (too narrow)",
           '⎘' not in narrow_out and '✓' not in narrow_out)
@@ -262,7 +262,7 @@ def test_workers_pane_copy_click():
         captured.clear()
         click_col = mod_workers._worker_pane_width - 1
         pre_click_selected = mod_workers.worker_selected_name
-        changed = mod_workers._handle_workers_mouse(0, click_col, row, project_filter)
+        changed, _ = mod_workers._handle_workers_mouse(0, click_col, row, project_filter, False)
         check(f"workers: click on row {row} (key={key}) triggers copy", changed and len(captured) == 1)
         if captured:
             check(f"workers: click/y parity row {row} (key={key})",
@@ -275,7 +275,7 @@ def test_workers_pane_copy_click():
     mod_workers.worker_selected_name = None
     mod_workers._build_workers_output(workers, frozen=False)
     header_row = next(r for r, k in mod_workers.worker_line_map.items() if k == 'w1')
-    changed = mod_workers._handle_workers_mouse(0, 5, header_row, project_filter)
+    changed, _ = mod_workers._handle_workers_mouse(0, 5, header_row, project_filter, False)
     check("workers: normal (non-edge) row click still selects+expands (milestone-1 undisturbed)",
           changed and mod_workers.worker_selected_name == 'w1' and mod_workers.worker_expand_states.get('w1') is True)
 

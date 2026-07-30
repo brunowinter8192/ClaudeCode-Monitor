@@ -8,20 +8,33 @@ from ..constants import (
     YELLOW, RED, DIM, WHITE, RESET, HOVER_BG, ZEBRA_BG_A, ZEBRA_BG_B, SOFT_RESET,
     DIM_YELLOW_BG, WARNINGS_POLL_INTERVAL,
 )
-from ..utils import truncate_visible, first_word_of_call, format_worker_prefix, append_copy_symbol
+from ..utils import truncate_visible, first_word_of_call, format_worker_prefix, append_copy_symbol, _ANSI_ESCAPE_RE
 from ..format.strip_marker import highlight_stripped
 INDENT = '  '
 
 # FUNCTIONS
 
-# Build header line showing refresh key, last refresh time, and poll interval
-def _format_warnings_header(last_refresh_ts: float) -> str:
+# Build header line showing refresh key, last refresh time, poll interval, and a [refresh] button;
+# when regions_out given, registers the button's (start_col,end_col,phys_row=1) -> 'refresh'
+# region — only when it fits pane_width (no button appended, no region, when it doesn't)
+def _format_warnings_header(last_refresh_ts: float, pane_width: int = 80, regions_out: Optional[dict] = None) -> str:
+    if regions_out is not None:
+        regions_out.clear()
     if last_refresh_ts:
         last_dt = datetime.datetime.fromtimestamp(last_refresh_ts)
         last_str = last_dt.strftime('%H:%M:%S')
     else:
         last_str = '--:--:--'
-    return f"{DIM}[r]efresh · last: {last_str} · polling: {int(WARNINGS_POLL_INTERVAL)}s{RESET}"
+    text = f"{DIM}[r]efresh · last: {last_str} · polling: {int(WARNINGS_POLL_INTERVAL)}s{RESET}"
+    if regions_out is None:
+        return text
+    label = '[refresh]'
+    start_col = len(_ANSI_ESCAPE_RE.sub('', text)) + 2
+    end_col = start_col + len(label) - 1
+    if end_col >= pane_width:
+        return text
+    regions_out[(start_col + 1, end_col + 1, 1)] = 'refresh'
+    return text + '  ' + f"{WHITE}{label}{RESET}"
 
 
 # Render all warning sections; returns (rendered_str, new_error_line_map)
@@ -32,11 +45,10 @@ def _format_warnings_pane(
     error_scroll_offset: int,
     pane_height: int,
     pane_width: int,
-    last_refresh_ts: float,
+    header: str,
     copy_feedback: Optional[dict] = None,
     copy_rows_out: Optional[set] = None,
 ) -> tuple:
-    header = _format_warnings_header(last_refresh_ts)
     content_height = max(1, pane_height - 1)
     all_lines = []
     # each key is None or ('error', idx)
