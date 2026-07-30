@@ -181,9 +181,9 @@ python3 dev/hook_smoke/test_rewrite_websearch_scrape_noise.py
 
 **Purpose:** 11-case smoke for `rewrite_background_sleep.py`. Verifies 5 positive-rewrite cases
 (`sleep 300`, `sleep 5`, `sleep 1200` with `run_in_background=true`; bare `sleep 300` alone;
-`sleep 45 && echo "bg-ack-probe done"` custom echo; `sleep 600 && echo "custom text"` N=600 non-canonical
-→ all rewritten to `sleep 600 && echo done`) and 6 negative no-op cases (foreground flag; exact target
-`sleep 600 && echo done`; non-canonical non-sleep command; wrong chain target `&& rag-cli`).
+`sleep 45 && echo "bg-ack-probe done"` custom echo; `sleep 3300 && echo "custom text"` N=3300 non-canonical
+→ all rewritten to `sleep 3300 && echo done`) and 6 negative no-op cases (foreground flag; exact target
+`sleep 3300 && echo done`; non-canonical non-sleep command; wrong chain target `&& rag-cli`).
 
 **Usage (from project root):**
 ```bash
@@ -196,7 +196,7 @@ python3 dev/hook_smoke/test_rewrite_background_sleep.py
 
 ### test_block_unauthorized_background.py (84 LOC)
 
-**Purpose:** 9-case smoke for `block_unauthorized_background.py`. Verifies 4 ALLOW cases (no foreground-force): original `sleep N && echo done`, bare `sleep N`, custom echo `sleep 45 && echo "bg-ack-probe done"` (fire-log actual), normalized `sleep 600 && echo done`. Verifies 4 FORCE cases (foreground-forced): `reddit-cli index_subreddits`, `workflow.py index-dir` (former whitelisted, now forced), `./venv/bin/python script.py`, `rag-cli update_docs .` (original triggering incident). Verifies 1 PASS case (already foreground → no output): `./venv/bin/python script.py` with `run_in_background=false`.
+**Purpose:** 9-case smoke for `block_unauthorized_background.py`. Verifies 4 ALLOW cases (no foreground-force): original `sleep N && echo done`, bare `sleep N`, custom echo `sleep 45 && echo "bg-ack-probe done"` (fire-log actual), normalized `sleep 3300 && echo done`. Verifies 4 FORCE cases (foreground-forced): `reddit-cli index_subreddits`, `workflow.py index-dir` (former whitelisted, now forced), `./venv/bin/python script.py`, `rag-cli update_docs .` (original triggering incident). Verifies 1 PASS case (already foreground → no output): `./venv/bin/python script.py` with `run_in_background=false`.
 
 **Usage (from project root):**
 ```bash
@@ -292,6 +292,19 @@ python3 dev/hook_smoke/test_escape_idle_worker.py
 ```
 
 **Expected output:** `All 6 tests passed.` (exit 0). Monkeypatches `focus_controller._send_escape_key` for the edge-trigger and targeting-guard cases; the two fail-safe cases call the real function.
+
+---
+
+### test_focus_controller_bg_gate.py (155 LOC)
+
+**Purpose:** 6-case smoke for the auto-abort `has_bg` gate in `src/menubar/focus_controller.py::FocusController.tick`. Drives `tick()` directly with synthetic `SessionInfo`-shaped objects across multiple simulated ticks (1s step), monkeypatching `_abort_bg_sleep_timers` to record calls instead of killing real PIDs. Verifies: idle worker with `has_bg=True` held >5s holds the abort; idle worker with `has_bg=False` held >5s still aborts (baseline unchanged); two workers with one `has_bg=True` holds the abort project-wide; a worker whose `has_bg` flips True→False only starts accumulating the 5s dwell after the flip (no early fire during the True period); a project with zero worker sessions still vacuously aborts; a worker idle within the recent-send grace window (monkeypatched `_read_orchestrator_signals`) does not abort.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_focus_controller_bg_gate.py
+```
+
+**Expected output:** `All 6 tests passed.` (exit 0).
 
 ---
 

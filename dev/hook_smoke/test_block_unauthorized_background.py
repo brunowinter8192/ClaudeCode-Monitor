@@ -17,8 +17,8 @@ CASES = [
      "sleep 300", True, None),
     ("sleep N with custom echo text (fire-log actual) ALLOW",
      'sleep 45 && echo "bg-ack-probe done"', True, None),
-    ("sleep 600 && echo done — normalized form, hook-order independent ALLOW",
-     "sleep 600 && echo done", True, None),
+    ("sleep 3300 && echo done — normalized form, hook-order independent ALLOW",
+     "sleep 3300 && echo done", True, None),
 
     # --- FORCE: former pipeline whitelists — no whitelist, must be foreground-forced ---
     ("reddit-cli index_subreddits — foreground-forced FORCE",

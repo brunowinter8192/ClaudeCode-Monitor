@@ -64,7 +64,9 @@ class FocusController:
     # Per-project auto-abort fires when all workers of a project are idle for >=5s while a
     # bg timer is running, OR when the project has no worker sessions at all (vacuously all-idle
     # — a timer with nothing to wait for is dead weight). A worker is 'working' when hook status
-    # is working OR worker-cli wrote an orchestrator signal within ORCHESTRATOR_SIGNAL_BUFFER_SECS.
+    # is working, has_bg=True (a live background task the worker itself has no visibility into
+    # once the orchestrator's timer is killed, so the project must not count as abortable), OR
+    # worker-cli wrote an orchestrator signal within ORCHESTRATOR_SIGNAL_BUFFER_SECS.
     # See process-docs/menubar_signal_grace/initial_design.md.
     def tick(self, sessions, bg_by_project: dict, now: float) -> None:
         # Escape-on-bg-launch: the moment a worker's Bash call goes to background, force it idle
@@ -112,7 +114,7 @@ class FocusController:
                 continue
             workers = workers_by_project.get(proj, [])
             all_idle = all(
-                w.status == 'idle' and not _has_recent_send_signal(w, signals, now)
+                w.status == 'idle' and not w.has_bg and not _has_recent_send_signal(w, signals, now)
                 for w in workers
             )
             # Build log fields before mutating _all_workers_idle_since_ts
@@ -122,7 +124,7 @@ class FocusController:
             for w in workers:
                 sig_ts = signals.get(w.tmux_session_name) if w.tmux_session_name else None
                 sig_part = f'sig_age={now - sig_ts:.1f}' if sig_ts is not None else 'sig=none'
-                worker_tokens.append(f'{w.name}:{w.status}:{sig_part}')
+                worker_tokens.append(f'{w.name}:{w.status}:has_bg={w.has_bg}:{sig_part}')
             will_abort = (all_idle and since_idle_ts is not None and (now - since_idle_ts) >= 5.0)
             ts_str = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')[:23]
             _abort_log_write(

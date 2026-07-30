@@ -8,24 +8,24 @@ HOOK = "src/hooks/rewrite_background_sleep.py"
 # (description, command, run_in_background, expected_rewrite_or_None)
 # None = no rewrite expected (hook should emit nothing and exit 0)
 CASES = [
-    # --- positive: background timer with N ≠ 600 → rewrite to sleep 600 && echo done ---
+    # --- positive: background timer with N ≠ 3300 → rewrite to sleep 3300 && echo done ---
     (
-        "sleep 300 background timer → normalize to 600",
+        "sleep 300 background timer → normalize to 3300",
         "sleep 300 && echo done",
         True,
-        "sleep 600 && echo done",
+        "sleep 3300 && echo done",
     ),
     (
-        "sleep 5 background timer → normalize to 600",
+        "sleep 5 background timer → normalize to 3300",
         "sleep 5 && echo done",
         True,
-        "sleep 600 && echo done",
+        "sleep 3300 && echo done",
     ),
     (
-        "sleep 1200 background timer → normalize to 600",
+        "sleep 1200 background timer → normalize to 3300",
         "sleep 1200 && echo done",
         True,
-        "sleep 600 && echo done",
+        "sleep 3300 && echo done",
     ),
     # --- negative A: foreground (run_in_background=false) → no rewrite ---
     (
@@ -34,10 +34,10 @@ CASES = [
         False,
         None,
     ),
-    # --- negative B: already 600 → no rewrite ---
+    # --- negative B: already 3300 → no rewrite ---
     (
-        "sleep 600 already canonical — no rewrite",
-        "sleep 600 && echo done",
+        "sleep 3300 already canonical — no rewrite",
+        "sleep 3300 && echo done",
         True,
         None,
     ),
@@ -55,31 +55,31 @@ CASES = [
         True,
         None,
     ),
-    # --- negative E (updated): bare sleep → now normalized to canonical 600s timer ---
+    # --- negative E (updated): bare sleep → now normalized to canonical 3300s timer ---
     (
-        "sleep 300 alone — bare sleep, normalize to sleep 600 && echo done",
+        "sleep 300 alone — bare sleep, normalize to sleep 3300 && echo done",
         "sleep 300",
         True,
-        "sleep 600 && echo done",
+        "sleep 3300 && echo done",
     ),
     # --- positive: custom echo text (fire-log actual incident) → normalize ---
     (
-        "sleep 45 with custom echo text → normalize to 600",
+        "sleep 45 with custom echo text → normalize to 3300",
         'sleep 45 && echo "bg-ack-probe done"',
         True,
-        "sleep 600 && echo done",
+        "sleep 3300 && echo done",
     ),
-    # --- positive: N=600 but non-canonical echo → normalize ---
+    # --- positive: N=3300 but non-canonical echo → normalize ---
     (
-        "sleep 600 with custom echo — not the target string, normalize",
-        'sleep 600 && echo "custom text"',
+        "sleep 3300 with custom echo — not the target string, normalize",
+        'sleep 3300 && echo "custom text"',
         True,
-        "sleep 600 && echo done",
+        "sleep 3300 && echo done",
     ),
-    # --- negative: sleep 600 && echo done — exact target, no rewrite ---
+    # --- negative: sleep 3300 && echo done — exact target, no rewrite ---
     (
-        "sleep 600 && echo done — exact target, no rewrite",
-        "sleep 600 && echo done",
+        "sleep 3300 && echo done — exact target, no rewrite",
+        "sleep 3300 && echo done",
         True,
         None,
     ),

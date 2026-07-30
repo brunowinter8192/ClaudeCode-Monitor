@@ -222,7 +222,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ### block_unauthorized_background.py (67 LOC)
 
-**Purpose:** PreToolUse hook — **silently rewrites** any Bash command dispatched with `run_in_background=true` that is NOT a sleep-only timer, flipping `run_in_background` to `false` via `hookSpecificOutput.updatedInput`. Sleep-only commands (bare `sleep N` OR `sleep N && echo <anything>`) are always exempt — both the raw form and the normalized `sleep 600 && echo done` — so a sleep timer is never foreground-forced regardless of hook execution order. All other background commands are foreground-forced without exception. Exits 0 in all cases (fail-open rewrite hook — never blocks). Logs `decision="rewrite"` with `rewritten="run_in_background: true → false"`.
+**Purpose:** PreToolUse hook — **silently rewrites** any Bash command dispatched with `run_in_background=true` that is NOT a sleep-only timer, flipping `run_in_background` to `false` via `hookSpecificOutput.updatedInput`. Sleep-only commands (bare `sleep N` OR `sleep N && echo <anything>`) are always exempt — both the raw form and the normalized `sleep 3300 && echo done` — so a sleep timer is never foreground-forced regardless of hook execution order. All other background commands are foreground-forced without exception. Exits 0 in all cases (fail-open rewrite hook — never blocks). Logs `decision="rewrite"` with `rewritten="run_in_background: true → false"`.
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`).
 **Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.{command, run_in_background: false}`) on non-canonical bg; nothing on passthrough.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
@@ -241,7 +241,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ### rewrite_background_sleep.py (62 LOC)
 
-**Purpose:** PreToolUse hook (Bash) — **rewrites** ANY sleep-only background command to the canonical `sleep 600 && echo done`. Matches bare `sleep N` OR `sleep N && echo <anything>` (regex `_SLEEP_ONLY_BG`). Already-canonical guard: `command.strip() == _TARGET` (exact string match, not N comparison). Pairs with `block_unauthorized_background.py` which exempts all sleep-only background commands from foreground-forcing; this hook normalizes all of them to the canonical 10-minute timer. Exits 0 in all cases (fail-open rewrite hook — never blocks).
+**Purpose:** PreToolUse hook (Bash) — **rewrites** ANY sleep-only background command to the canonical `sleep 3300 && echo done`. Matches bare `sleep N` OR `sleep N && echo <anything>` (regex `_SLEEP_ONLY_BG`). Already-canonical guard: `command.strip() == _TARGET` (exact string match, not N comparison). Pairs with `block_unauthorized_background.py` which exempts all sleep-only background commands from foreground-forcing; this hook normalizes all of them to the canonical 55-minute timer. Exits 0 in all cases (fail-open rewrite hook — never blocks).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`).
 **Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when command is a non-canonical sleep-only form; nothing on passthrough.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
@@ -250,11 +250,11 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 **Rewrite condition (ALL must hold):**
 1. `run_in_background == True`
 2. Command matches `_SLEEP_ONLY_BG`: `^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$`
-3. `command.strip() != "sleep 600 && echo done"`
+3. `command.strip() != "sleep 3300 && echo done"`
 
 **Passthrough (no output):**
 - `run_in_background=false` or field absent — foreground, any sleep form allowed
-- `command.strip() == "sleep 600 && echo done"` — already the canonical target
+- `command.strip() == "sleep 3300 && echo done"` — already the canonical target
 - Any non-sleep-only command — `_SLEEP_ONLY_BG` fails to match; `block_unauthorized_background.py` handles these
 - Parse errors (fail-open)
 
@@ -635,7 +635,7 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ### block_worker_send_background.py (54 LOC)
 
-**Purpose:** PreToolUse hook (Bash) — blocks `worker-cli send` commands dispatched with `run_in_background=true`. `worker-cli send` is a fire-once, must-confirm action; backgrounding risks SIGTERM-kill before delivery (exit 143, silent message loss) or the orchestrator's next action running before the send completes. Canonical pattern: send in a standalone foreground Bash call; any timer dispatched as a separate `sleep 600 && echo done` call. Exits 2 + stderr. Exits 0 when `run_in_background` is absent or false, or on any parse error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — blocks `worker-cli send` commands dispatched with `run_in_background=true`. `worker-cli send` is a fire-once, must-confirm action; backgrounding risks SIGTERM-kill before delivery (exit 143, silent message loss) or the orchestrator's next action running before the send completes. Canonical pattern: send in a standalone foreground Bash call; any timer dispatched as a separate `sleep 3300 && echo done` call. Exits 2 + stderr. Exits 0 when `run_in_background` is absent or false, or on any parse error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`).
 **Writes:** stderr (block message with fix) on match only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
