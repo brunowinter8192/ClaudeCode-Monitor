@@ -39,6 +39,7 @@ from .cache import _strip_all_cache_control, _set_cache_breakpoints
 from .tools import _strip_unused_tools, _extract_deferred_tool_names
 from .tool_injection import inject_mcp_tools
 from .fixation import _capture_fixation, _apply_fixation
+from .bg_escape import _trigger_bg_escape
 ANTHROPIC_API_HOST = "api.anthropic.com"
 MESSAGES_PATH = "/v1/messages"
 
@@ -100,6 +101,11 @@ class ProxyAddon:
             flow.metadata["mc_stripped_msg_removed"] = stripped_msg_removed
             flow.metadata["mc_injected_msg_added"] = injected_msg_added
             flow.metadata["mc_all_ops"] = all_ops
+
+            try:
+                _trigger_bg_escape(stripped_msg_removed, self._worker_context, project_path)
+            except Exception as e:
+                print(f"[proxy_addon] bg_escape trigger failed: {e}", file=sys.stderr)
 
             prev_mod_msgs = self.prev_messages_by_model.get(model_family)
             modified_payload = _strip_all_cache_control(modified_payload)
