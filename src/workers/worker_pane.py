@@ -1,5 +1,5 @@
 # INFRASTRUCTURE
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from pathlib import Path
 import hashlib
 import os
@@ -10,7 +10,7 @@ from ..jsonl import read_new_lines, parse_jsonl_lines, extract_cache_turns
 from ..input.click_handler import (
     read_keypress, parse_digit_key, setup_keyboard_input, restore_terminal,
     enable_mouse, disable_mouse, read_mouse_event,
-    resolve_parent_key, copy_to_clipboard, wait_for_input,
+    copy_to_clipboard, wait_for_input,
 )
 from ..utils import truncate_visible
 # From worker_format.py: Worker data extraction and block rendering
@@ -30,13 +30,16 @@ worker_cache_line_map: Dict[int, tuple] = {}
 worker_selected_name: Optional[str] = None
 worker_scroll_offset: int = 0
 worker_turns: Dict[str, list] = {}
+worker_copy_rows: Set[int] = set()  # phys_rows where ⎘ copy button is rendered; populated by _build_workers_output
+_worker_copy_feedback_until: Dict = {}  # name OR (name,turn_idx,call_idx) → expiry timestamp for ✓ flash
+_worker_pane_width: int = 80  # updated each render cycle; used by click handler for copy-button column check
 
 # ORCHESTRATOR
 
 # Runs workers display loop (for dedicated workers tmux pane)
 def run_workers_loop() -> None:
     from ..core import monitor as _monitor
-    global worker_expand_states, worker_scroll_offsets, worker_line_map, worker_hover_row, worker_cache_expand_states, worker_cache_line_map, worker_selected_name, worker_scroll_offset, worker_turns
+    global worker_expand_states, worker_scroll_offsets, worker_line_map, worker_hover_row, worker_cache_expand_states, worker_cache_line_map, worker_selected_name, worker_scroll_offset, worker_turns, _worker_copy_feedback_until
 
     register_ram_dump('workers', _workers_ram_state)
     last_output = None
@@ -70,6 +73,10 @@ def run_workers_loop() -> None:
                     workers, now, frozen, input_changed, last_data_refresh,
                     _monitor.active_project_filter,
                 )
+
+                _worker_copy_feedback_until = {k: v for k, v in _worker_copy_feedback_until.items() if v > now}
+                if _worker_copy_feedback_until:
+                    input_changed = True
 
                 if input_changed:
                     output = _build_workers_output(workers, frozen)
@@ -161,16 +168,25 @@ def _workers_ram_state() -> list:
 
 # Process one mouse event; returns True if display should refresh
 def _handle_workers_mouse(button: int, col: int, row: int, project_filter: Optional[str]) -> bool:
-    global worker_hover_row, worker_selected_name
+    global worker_hover_row, worker_selected_name, _worker_copy_feedback_until
     if button == 0:
+        is_copy_click = col >= _worker_pane_width - 2 and row in worker_copy_rows
         cache_key = worker_cache_line_map.get(row)
         if cache_key:
+            if is_copy_click:
+                copy_to_clipboard(_serialize_workers(cache_key))
+                _worker_copy_feedback_until[cache_key] = time.time() + 1.5
+                return True
             w_name, t_idx, c_idx = cache_key
             states = worker_cache_expand_states.setdefault(w_name, {})
             states[(t_idx, c_idx)] = not states.get((t_idx, c_idx), False)
             return True
         name = worker_line_map.get(row)
         if name:
+            if is_copy_click:
+                copy_to_clipboard(_serialize_workers(name))
+                _worker_copy_feedback_until[name] = time.time() + 1.5
+                return True
             is_now_expanded = not worker_expand_states.get(name, False)
             worker_expand_states[name] = is_now_expanded
             if is_now_expanded:
@@ -201,13 +217,30 @@ def _handle_workers_mouse(button: int, col: int, row: int, project_filter: Optio
         return True
     return False
 
+# Resolve the copyable key at/above hover_row, preferring whichever of worker_cache_line_map /
+# worker_line_map has the CLOSER ancestor row — a plain worker_line_map-first fallback would
+# always shadow a cache-row hover (its backward search never stops at cache rows, so it always
+# finds the owning worker's header first), making the cache-map fallback unreachable
+def _resolve_workers_hover_key(hover_row: Optional[int]):
+    if hover_row is None:
+        return None
+    cache_row = worker_row = None
+    for r in range(hover_row, 0, -1):
+        if cache_row is None and r in worker_cache_line_map:
+            cache_row = r
+        if worker_row is None and r in worker_line_map:
+            worker_row = r
+        if cache_row is not None and worker_row is not None:
+            break
+    if cache_row is not None and (worker_row is None or cache_row > worker_row):
+        return worker_cache_line_map[cache_row]
+    return worker_line_map.get(worker_row)
+
 # Process one non-escape key event; returns (input_changed, updated_frozen)
 def _handle_workers_key(char: str, workers: list, frozen: bool, project_filter: Optional[str]) -> tuple:
     global worker_selected_name
     if char == 'y':
-        key = resolve_parent_key(worker_line_map, worker_hover_row)
-        if key is None:
-            key = resolve_parent_key(worker_cache_line_map, worker_hover_row)
+        key = _resolve_workers_hover_key(worker_hover_row)
         if key is not None:
             copy_to_clipboard(_serialize_workers(key))
         return False, frozen
@@ -259,11 +292,12 @@ def _refresh_workers_data(workers: list, now: float, frozen: bool, input_changed
 
 # Format, clip viewport, and render workers to ANSI string; updates worker_line_map and worker_cache_line_map
 def _build_workers_output(workers: list, frozen: bool) -> str:
-    global worker_scroll_offset
+    global worker_scroll_offset, worker_copy_rows, _worker_pane_width
     all_lines, line_keys = format_workers_block(
         workers, worker_expand_states, worker_turns,
         worker_scroll_offsets, worker_cache_expand_states,
         frozen=frozen, selected_name=worker_selected_name,
+        copy_feedback=_worker_copy_feedback_until,
     )
     try:
         term = os.get_terminal_size()
@@ -272,6 +306,7 @@ def _build_workers_output(workers: list, frozen: bool) -> str:
     except OSError:
         pane_width = 80
         pane_height = 50
+    _worker_pane_width = pane_width
     # Viewport clipping: phys_row 1..N must equal terminal row 1..N.
     # worker_scroll_offset > 0 shifts viewport toward older content.
     total_lines = len(all_lines)
@@ -282,6 +317,7 @@ def _build_workers_output(workers: list, frozen: bool) -> str:
     visible_keys = line_keys[vp_start:vp_start + pane_height]
     worker_line_map.clear()
     worker_cache_line_map.clear()
+    worker_copy_rows.clear()
     result_lines = []
     phys_row = 1
     parent_count = sum(1 for k in line_keys[:vp_start] if isinstance(k, str))
@@ -299,6 +335,8 @@ def _build_workers_output(workers: list, frozen: bool) -> str:
             chosen_bg = LIGHT_RED_BG
         else:
             chosen_bg = zebra_bg
+        if key is not None and ('⎘' in line or '✓' in line):
+            worker_copy_rows.add(phys_row)
         trunc = truncate_visible(line, pane_width)
         result_lines.append(f"{chosen_bg}{trunc}\033[K{RESET}")
         if isinstance(key, str):

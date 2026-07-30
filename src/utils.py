@@ -68,6 +68,16 @@ def visual_line_count(line: str, pane_width: int) -> int:
         return 1
     return max(1, (len(visible) + pane_width - 1) // pane_width)
 
+# Right-align copy_sym at the pane edge (1 space + sym_cells reserved); unchanged if no room
+def append_copy_symbol(line: str, copy_sym: str, pane_width: int) -> str:
+    stripped = _ANSI_ESCAPE_RE.sub('', line)
+    sym_cells = _cell_width(copy_sym)
+    visible_len = sum(_cell_width(ch) for ch in stripped)
+    pad = pane_width - 1 - sym_cells - visible_len
+    if pad >= 0:
+        return line + ' ' * pad + ' ' + copy_sym
+    return line
+
 # Truncate line to pane_width terminal cells (ANSI- and wide-char-aware); append … if cut
 def truncate_visible(line: str, pane_width: int) -> str:
     if pane_width <= 0:

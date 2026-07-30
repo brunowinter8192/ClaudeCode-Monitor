@@ -1,6 +1,6 @@
 # INFRASTRUCTURE
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import json
 import os
 import time
@@ -22,6 +22,9 @@ error_expand_states: Dict[int, bool] = {}
 error_line_map: Dict[int, int] = {}
 error_hover_row: Optional[int] = None
 error_scroll_offset: int = 0
+error_copy_rows: Set[int] = set()  # phys_rows where ⎘ copy button is rendered; populated by _format_warnings_pane
+_error_copy_feedback_until: Dict[int, float] = {}  # err_idx → expiry timestamp for ✓ flash
+_error_pane_width: int = 80  # updated each render cycle; used by click handler for copy-button column check
 _last_project_filter: Optional[str] = None
 _last_refresh_ts: float = 0.0
 _force_refresh: bool = False
@@ -35,7 +38,7 @@ _worker_errors_positions: Dict[str, int] = {}  # per-file byte positions for wor
 # Runs warnings-only display loop (for dedicated warnings tmux pane)
 def run_warnings_loop() -> None:
     global tool_errors, error_expand_states, error_line_map, error_hover_row
-    global error_scroll_offset, _last_project_filter
+    global error_scroll_offset, _last_project_filter, _error_copy_feedback_until
     global _last_refresh_ts, _force_refresh
     global _monitor_start_ts, _errors_log_pos, _errors_log_path, _worker_errors_positions
 
@@ -67,6 +70,10 @@ def run_warnings_loop() -> None:
                 input_changed, last_data_refresh = _refresh_warnings_data(
                     now, input_changed, last_data_refresh
                 )
+
+                _error_copy_feedback_until = {k: v for k, v in _error_copy_feedback_until.items() if v > now}
+                if _error_copy_feedback_until:
+                    input_changed = True
 
                 if input_changed:
                     output = _build_warnings_output()
@@ -111,13 +118,17 @@ def _warnings_ram_state() -> list:
 
 # Process one mouse event; returns True if display should refresh
 def _handle_warnings_mouse(button: int, col: int, row: int) -> bool:
-    global error_hover_row, error_scroll_offset, error_expand_states
+    global error_hover_row, error_scroll_offset, error_expand_states, _error_copy_feedback_until
     if button == 0:
         ekey = error_line_map.get(row)
-        if ekey is not None:
-            error_expand_states[ekey] = not error_expand_states.get(ekey, False)
+        if ekey is None:
+            return False
+        if col >= _error_pane_width - 2 and row in error_copy_rows:
+            copy_to_clipboard(_serialize_warnings(ekey, tool_errors))
+            _error_copy_feedback_until[ekey] = time.time() + 1.5
             return True
-        return False
+        error_expand_states[ekey] = not error_expand_states.get(ekey, False)
+        return True
     if button == 64:
         # tmux.h: MOUSE_WHEEL_UP=64 → scroll viewport up → offset decreases.
         # NOTE: token_pane uses offset+3 for button 64 because it renders
@@ -238,7 +249,7 @@ def _refresh_warnings_data(now: float, input_changed: bool, last_data_refresh: f
 
 # Render warnings pane to ANSI string; updates error_line_map
 def _build_warnings_output() -> str:
-    global error_line_map
+    global error_line_map, error_copy_rows, _error_pane_width
     try:
         term = os.get_terminal_size()
         pane_height = term.lines - 1
@@ -246,8 +257,10 @@ def _build_warnings_output() -> str:
     except OSError:
         pane_height = 50
         pane_width = 80
+    _error_pane_width = pane_width
     output, error_line_map = _format_warnings_pane(
         tool_errors, error_expand_states, error_hover_row, error_scroll_offset,
         pane_height, pane_width, _last_refresh_ts,
+        copy_feedback=_error_copy_feedback_until, copy_rows_out=error_copy_rows,
     )
     return output
