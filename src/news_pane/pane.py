@@ -58,7 +58,10 @@ def run_news_loop() -> None:
                             if button == 0:
                                 for (sc, ec, er), (action, target) in list(_button_regions.items()):
                                     if row == er and sc <= col <= ec:
-                                        if not _is_running():
+                                        if action == 'refresh':
+                                            force_refresh = True
+                                            input_changed = True
+                                        elif not _is_running():
                                             _fire_pipeline()
                                             input_changed = True
                                         break
@@ -179,7 +182,15 @@ def _render_pane(pane_width: int, pane_height: int, status: dict, running: bool)
     _button_regions.clear()
     lines: list[str] = []
 
-    lines.append(f"{DIM}{'═' * min(pane_width, 52)}{RESET}  CoinDesk News Pipeline")
+    header_text = f"{DIM}{'═' * min(pane_width, 52)}{RESET}  CoinDesk News Pipeline"
+    refresh_btn = '[refresh]'
+    header_vis_len = len(_strip_ansi(header_text))
+    header_pad = pane_width - header_vis_len - len(refresh_btn)
+    if header_pad >= 1:
+        _button_regions[(header_vis_len + header_pad + 1, header_vis_len + header_pad + len(refresh_btn), 1)] = ('refresh', 'refresh')
+        lines.append(header_text + ' ' * header_pad + refresh_btn)
+    else:
+        lines.append(header_text)
 
     doc_str   = str(status.get('doc_count'))   if status.get('doc_count')   is not None else f"{DIM}?{RESET}"
     chunk_str = str(status.get('chunk_count')) if status.get('chunk_count') is not None else f"{DIM}?{RESET}"

@@ -6,7 +6,9 @@ Regression coverage for the click-UI milestone series (making every tmux-pane co
 by mouse, not just keyboard). Milestone 1 covers worker selection in the worker-proxy pane header
 and the workers pane. Milestone 2 covers copy-by-click in the main/tokens/warnings/workers panes.
 Milestone 3 covers the three remaining single-purpose keyboard controls (workers freeze, proxy
-undo, warnings refresh) as pane-chrome buttons. `md/` holds every run's report.
+undo, warnings refresh) as pane-chrome buttons. Milestone 4 covers gpu (digit keys 1-9 already
+covered by existing buttons; new `[refresh]`) and news (new `[refresh]`) — the last two
+keyboard-only controls anywhere in the app. `md/` holds every run's report.
 
 ## Modules
 
@@ -99,3 +101,34 @@ returns `(output, header)`), or `_handle_proxy_mouse`/`_undo_proxy_expand`.
 **Calls out:** `src.panes.warnings_pane`, `src.panes.warnings_render`, `src.workers.worker_pane`,
 `src.workers.worker_format`, `src.proxy_display.pane`, `src.proxy_display.format` — loaded via
 `importlib.import_module`.
+
+---
+
+### p4_gpu_news_button_probe.py (269 LOC)
+
+**Purpose:** Proves gpu's digit keys 1-9 need NO new button — the pre-existing per-server button
+already registered in `_button_regions` computes the IDENTICAL action and fires the IDENTICAL
+`rag-cli` subprocess call as `_toggle_server(idx, presets)` (what the digit key calls), asserted
+by comparing captured `subprocess.Popen` args + the resulting `_toggle_state` action label
+between the two paths, for both a stopped preset (`start`) and a running+healthy preset (`stop`).
+Also proves the two NEW `[refresh]` header buttons (gpu, news): region registered after a render,
+on row 1, disjoint from every pre-existing button region (different phys_row — asserted, not just
+argued); the dispatch loop correctly special-cases `action == 'refresh'` BEFORE the pre-existing
+`_fire_button`/`_fire_pipeline` branch (verified by replicating `run_gpu_loop`'s /
+`run_news_loop`'s exact inline dispatch snippet in local helpers `_dispatch_gpu_click` /
+`_dispatch_news_click`, since neither loop factors mouse dispatch into a standalone function —
+the local `force_refresh` variable inside each blocking loop is therefore NOT independently
+exercised, only the dispatch-loop's OWN region-matching and branching, mirrored line-for-line);
+narrow-pane gets no `[refresh]` text and no region in either pane; news's pre-existing
+`[run pipeline]` click still fires the pipeline (regression check) after the new branch was added
+ahead of it.
+**Reads:** nothing external — seeds synthetic gpu preset dicts and news status dicts directly;
+`gpu_pane.status.PRESET_NAMES` (resolved once at import time via a REAL `rag-cli server presets`
+subprocess call) is monkeypatched to a fixed list so the probe is deterministic regardless of
+what's actually running on the machine; `subprocess.Popen` is monkeypatched per module to a
+capturing stub (no real rag-cli or news-pipeline process ever launched).
+**Writes:** `md/p4_gpu_news_button_probe_<timestamp>.md`.
+**Called by:** run manually — regression guard for the gpu/news buttons; re-run after any change
+to `_render_pane` (either pane), `_toggle_server`, `_fire_button`, `_fire_pipeline`, or either
+loop's inline mouse-dispatch snippet.
+**Calls out:** `src.gpu_pane.pane`, `src.news_pane.pane` — loaded via `importlib.import_module`.

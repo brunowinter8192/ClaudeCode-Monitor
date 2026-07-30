@@ -70,7 +70,10 @@ def run_gpu_loop() -> None:
                             if button == 0:
                                 for (sc, ec, er), (action, target) in list(_button_regions.items()):
                                     if row == er and sc <= col <= ec:
-                                        if target not in _toggle_state:
+                                        if action == 'refresh':
+                                            force_refresh = True
+                                            input_changed = True
+                                        elif target not in _toggle_state:
                                             _fire_button(action, target)
                                             input_changed = True
                                         break
@@ -237,7 +240,15 @@ def _render_pane(pane_width: int, pane_height: int,
     _button_regions.clear()
     lines: list[str] = []
 
-    lines.append(f"{DIM}{'═' * min(pane_width, 64)}{RESET}  GPU Servers")
+    header_text = f"{DIM}{'═' * min(pane_width, 64)}{RESET}  GPU Servers"
+    refresh_btn = '[refresh]'
+    header_vis_len = len(_strip_ansi(header_text))
+    header_pad = pane_width - header_vis_len - len(refresh_btn)
+    if header_pad >= 1:
+        _button_regions[(header_vis_len + header_pad + 1, header_vis_len + header_pad + len(refresh_btn), 1)] = ('refresh', 'refresh')
+        lines.append(header_text + ' ' * header_pad + refresh_btn)
+    else:
+        lines.append(header_text)
 
     # Preset block — always 3 rows, digit-keyed [1]/[2]/[3]
     for i, s in enumerate(presets):
