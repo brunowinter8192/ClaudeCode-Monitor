@@ -19,6 +19,16 @@ straight from the on-disk dual-log, verifying a span-render fix for block-less m
 (hardcoded stem/request_id — one-off verification, not parameterized).
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_messages}`.
 
+### p2_badge_words_probe.py (109 LOC)
+
+**Purpose:** Verifies the REQ-header `strip`/`inject` word badge (replacing the old numeric
+`Nstrip Ninj`) end-to-end — `accumulate_dual_log` -> pane-style entry attach ->
+`_build_req_header_line` — against 4 recorded requests, including the "."-filler injection
+case (empty `fn_map`, non-empty `messages_delta`) that must still render `inject`.
+**Reads:** `src/logs/dual_log/api_requests_{opus_monitor_cc_1785364138,opus_monitor_cc_1785347492}_{forwarded,stripped,injected}.jsonl`.
+**Writes:** `md/badge_words_probe_report.md`.
+**Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn}`.
+
 ### p1_measure_full_replacement_blast_radius.py (536 LOC)
 
 **Purpose:** Measurement script (dev/ M1 "bg-ack-shapes" milestone, 2026-07-29) — drives real
