@@ -14,12 +14,12 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 
 | Subdir | Role | LOC | Modules |
 |---|---|---|---|
-| `core/` | Session polling orchestrator + main-pane output | 608 | 3 |
-| `panes/` | Tmux pane event loops (tokens, warnings) + warnings scan/render/parse helpers | 935 | 5 |
-| `format/` | ANSI string rendering (tool calls, events, cache tracker) | 490 | 4 |
+| `core/` | Session polling orchestrator + main-pane output | 911 | 3 |
+| `panes/` | Tmux pane event loops (tokens, warnings) + warnings scan/render/parse helpers | 681 | 3 |
+| `format/` | ANSI string rendering (tool calls, events, cache tracker) | 506 | 4 |
 | `input/` | Keyboard/mouse stdin handling | 150 | 1 |
 | `jsonl/` | JSONL parsing + tool call extraction | 580 | 3 |
-| `workers/` | Workers pane (tmux session discovery + status display) | 572 | 3 |
+| `workers/` | Workers pane (tmux session discovery + status display) | 628 | 3 |
 | `proxy_display/` | Proxy pane TUI (two-level expand, delta rendering, subprocess-parse, copy-button) | 2118 | 8 |
 | `proxy/` | mitmproxy addon (payload modification + JSONL logging) | 3074 | 18 |
 | `ram_audit/` | SIGUSR1 RAM-dump helper, gated by MONITOR_CC_RAM_AUDIT env | 101 | 1 |
@@ -34,7 +34,7 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 | File | LOC | Why at root |
 |---|---|---|
 | `constants.py` | 150 | Imported by ~all subpackages — shallow path avoids deep `...constants` chains |
-| `utils.py` | 91 | Same — `format_timestamp` + `visual_line_count` used everywhere |
+| `utils.py` | 101 | Same — `format_timestamp` + `visual_line_count` used everywhere; also `append_copy_symbol` (right-align a ⎘/✓ symbol, width-guarded — shared by `core.monitor_display`, `format.token_format`, `panes.warnings_render`, `workers.worker_format`, and `proxy_display`'s own reference implementation stays independent) |
 | `pane_error_log.py` | 35 | `log_pane_error(pane_name)` — shared exception-safe sink all 8 pane `run_*_loop()` functions call from their `except Exception:` guard (2026-07-31); imported by every pane module the same shallow-path way as `constants.py`, so it belongs at the same level |
 | `log_janitor.py` | 160 | `LogSpec` registry (11 entries) + `sweep_eligible_specs()` + `cleanup_old_jsonl(path)` — authoritative log inventory; 7-day JSONL sweep triggered from `core/monitor.py` every 24h |
 | `session_finder.py` | 85 | Single module, no subpackage warranted |

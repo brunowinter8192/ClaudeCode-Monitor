@@ -1,6 +1,7 @@
 # INFRASTRUCTURE
 from typing import Dict, List, Optional
 import os
+import time
 
 from ..constants import (
     GREEN, RED, YELLOW, WHITE, CYAN,
@@ -8,6 +9,8 @@ from ..constants import (
 )
 from ..format.token_format import _format_k, format_cache_tracker
 from ..jsonl import read_new_lines, parse_jsonl_lines, get_message_content, is_tool_use
+# From utils.py: right-align a ⎘/✓ copy symbol at the pane edge, width-guarded
+from ..utils import append_copy_symbol
 
 INDENT = '  '
 
@@ -70,8 +73,16 @@ def extract_worker_tool_calls(jsonl_path) -> List[dict]:
                 })
     return calls
 
+# Filter a flat copy-feedback dict (str name keys + (name,turn_idx,call_idx) tuple keys) down to
+# this worker's (turn_idx, call_idx)→expiry sub-dict, for format_cache_tracker's own key format
+def _worker_cache_copy_feedback(copy_feedback: Optional[dict], name: str) -> Optional[dict]:
+    if copy_feedback is None:
+        return None
+    return {(k[1], k[2]): exp for k, exp in copy_feedback.items()
+            if isinstance(k, tuple) and len(k) == 3 and k[0] == name}
+
 # Build flat (all_lines, line_keys) for workers pane; keys: str=worker name, 3-tuple=cache entry, None=non-clickable
-def format_workers_block(workers: list, expand_states: dict = None, worker_turns: dict = None, scroll_offsets: dict = None, cache_expand_states: dict = None, frozen: bool = False, selected_name: Optional[str] = None) -> tuple:
+def format_workers_block(workers: list, expand_states: dict = None, worker_turns: dict = None, scroll_offsets: dict = None, cache_expand_states: dict = None, frozen: bool = False, selected_name: Optional[str] = None, copy_feedback: Optional[dict] = None) -> tuple:
     freeze_indicator = f" {YELLOW}[FROZEN]{SOFT_RESET}" if frozen else f" {CYAN}[LIVE]{SOFT_RESET}"
 
     all_lines: List[str] = []
@@ -132,6 +143,9 @@ def format_workers_block(workers: list, expand_states: dict = None, worker_turns
         is_selected = selected_name is not None and name == selected_name
         sel_prefix = f"{GREEN}>>{SOFT_RESET} " if is_selected else "   "
         header_line = f"{sel_prefix}{toggle_symbol} {CYAN}[{idx}] {name}{SOFT_RESET}  {sc}{status.upper()}{SOFT_RESET}{pct_str}{spawned_str}{model_str}{tokens_str}"
+        if copy_feedback is not None:
+            is_flash = copy_feedback.get(name, 0) > time.time()
+            header_line = append_copy_symbol(header_line, '✓' if is_flash else '⎘', pane_width)
         all_lines.append(header_line)
         line_keys.append(name)
 
@@ -153,7 +167,8 @@ def format_workers_block(workers: list, expand_states: dict = None, worker_turns
                 scroll_offset = (scroll_offsets or {}).get(name, 0)
                 per_worker_expand = (cache_expand_states or {}).get(name, {})
                 visible_lines, visible_keys, _, _, _ = format_cache_tracker(
-                    turns, per_worker_expand, 15, pane_width - 4, scroll_offset
+                    turns, per_worker_expand, 15, pane_width - 4, scroll_offset,
+                    copy_feedback=_worker_cache_copy_feedback(copy_feedback, name),
                 )
                 for cl, ck in zip(visible_lines, visible_keys):
                     all_lines.append(f"  {cl}")

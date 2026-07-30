@@ -1,9 +1,12 @@
 # INFRASTRUCTURE
 import datetime
+import time
 import re as _re
 from typing import Optional
 from ..constants import RED, GREEN, YELLOW, WHITE, PASTEL_PURPLE, PASTEL_ORANGE, LIGHT_RED_BG, DIM, SOFT_RESET
 from .formatter import shorten_tool_name
+# From utils.py: right-align a ⎘/✓ copy symbol at the pane edge, width-guarded
+from ..utils import append_copy_symbol
 
 # FUNCTIONS
 
@@ -170,7 +173,7 @@ def _compute_cache_viewport(all_lines: list, line_keys: list, pane_height: int, 
     return visible_lines, visible_keys, sticky_header, start, initial_parent_count
 
 # Format cache tracker — returns (visible_lines, visible_keys, sticky_header, viewport_start, initial_parent_count)
-def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: int = 50, pane_width: int = 80, scroll_offset: int = 0, response_rid_map: dict = None) -> tuple:
+def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: int = 50, pane_width: int = 80, scroll_offset: int = 0, response_rid_map: dict = None, copy_feedback: Optional[dict] = None) -> tuple:
     if not turns:
         return [f"{YELLOW}No turns yet{SOFT_RESET}"], [None], None, 0, 0
 
@@ -212,7 +215,11 @@ def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: i
             request_num += 1
             has_thinking = any(b.get('type') == 'thinking' for b in call.get('content_blocks', []))
             sig_chars = sum(b.get('sig_chars', 0) for b in call.get('content_blocks', []) if b.get('type') == 'thinking')
-            all_lines.append(_format_cache_call(symbol, cr, cc, d, out, wide, request_num, has_thinking, sig_chars))
+            call_line = _format_cache_call(symbol, cr, cc, d, out, wide, request_num, has_thinking, sig_chars)
+            if copy_feedback is not None:
+                is_flash = copy_feedback.get(key, 0) > time.time()
+                call_line = append_copy_symbol(call_line, '✓' if is_flash else '⎘', pane_width)
+            all_lines.append(call_line)
             line_keys.append(key)
             if is_expanded:
                 exp_lines, exp_keys = _render_expanded_call_lines(call, response_rid_map)

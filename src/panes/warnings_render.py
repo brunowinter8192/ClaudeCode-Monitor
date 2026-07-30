@@ -1,12 +1,14 @@
 # INFRASTRUCTURE
 import datetime
 import json
+import time
+from typing import Optional
 
 from ..constants import (
     YELLOW, RED, DIM, WHITE, RESET, HOVER_BG, ZEBRA_BG_A, ZEBRA_BG_B, SOFT_RESET,
     DIM_YELLOW_BG, WARNINGS_POLL_INTERVAL,
 )
-from ..utils import truncate_visible, first_word_of_call, format_worker_prefix
+from ..utils import truncate_visible, first_word_of_call, format_worker_prefix, append_copy_symbol
 from ..format.strip_marker import highlight_stripped
 INDENT = '  '
 
@@ -31,12 +33,16 @@ def _format_warnings_pane(
     pane_height: int,
     pane_width: int,
     last_refresh_ts: float,
+    copy_feedback: Optional[dict] = None,
+    copy_rows_out: Optional[set] = None,
 ) -> tuple:
     header = _format_warnings_header(last_refresh_ts)
     content_height = max(1, pane_height - 1)
     all_lines = []
     # each key is None or ('error', idx)
     all_keys = []
+    if copy_rows_out is not None:
+        copy_rows_out.clear()
 
     if tool_errors:
         all_lines.append(f"{RED}TOOL ERRORS ({len(tool_errors)}){SOFT_RESET}")
@@ -47,7 +53,11 @@ def _format_warnings_pane(
             tool_col = f"{WHITE}{err['tool_name']:<16}{SOFT_RESET}"
             w_prefix = format_worker_prefix(err.get('worker_name', ''))
             inline = first_word_of_call(err['tool_name'], err.get('tool_call_input', {}))
-            all_lines.append(f"{DIM}{symbol} {err['timestamp']}  {w_prefix}{tool_col}  {DIM}{inline}{SOFT_RESET}")
+            line = f"{DIM}{symbol} {err['timestamp']}  {w_prefix}{tool_col}  {DIM}{inline}{SOFT_RESET}"
+            if copy_feedback is not None:
+                is_flash = copy_feedback.get(err_idx, 0) > time.time()
+                line = append_copy_symbol(line, '\u2713' if is_flash else '\u2398', pane_width)
+            all_lines.append(line)
             all_keys.append(('error', err_idx))
             if is_expanded:
                 for k, v in err.get('tool_call_input', {}).items():
@@ -92,22 +102,22 @@ def _format_warnings_pane(
             key_type, key_idx = key
             if key_type == 'error':
                 new_error_line_map[phys_row] = key_idx
+                if copy_rows_out is not None and ('⎘' in line or '✓' in line):
+                    copy_rows_out.add(phys_row)
         rendered.append(f"{chosen_bg}{truncate_visible(line, pane_width)}\033[K{RESET}")
         phys_row += 1
     return header + '\n' + '\n'.join(rendered), new_error_line_map
 
 
-# Serialize a warnings-pane entry to full untruncated text for clipboard
+# Serialize a warnings-pane entry to full untruncated text for clipboard; key is the bare int error_line_map stores
 def _serialize_warnings(key, tool_errors: list) -> str:
-    if isinstance(key, tuple) and len(key) == 2:
-        kind, idx = key
-        if kind == 'error' and idx < len(tool_errors):
-            err = tool_errors[idx]
-            parts = [err.get('tool_name', '?')]
-            inp = err.get('tool_call_input', {})
-            if inp:
-                parts.append(json.dumps(inp, ensure_ascii=False, indent=2))
-            parts.append('')
-            parts.append(err.get('full_text', ''))
-            return '\n'.join(parts)
+    if isinstance(key, int) and 0 <= key < len(tool_errors):
+        err = tool_errors[key]
+        parts = [err.get('tool_name', '?')]
+        inp = err.get('tool_call_input', {})
+        if inp:
+            parts.append(json.dumps(inp, ensure_ascii=False, indent=2))
+        parts.append('')
+        parts.append(err.get('full_text', ''))
+        return '\n'.join(parts)
     return ''

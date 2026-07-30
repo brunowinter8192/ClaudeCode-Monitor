@@ -4,7 +4,8 @@
 
 Regression coverage for the click-UI milestone series (making every tmux-pane control reachable
 by mouse, not just keyboard). Milestone 1 covers worker selection in the worker-proxy pane header
-and the workers pane. `md/` holds every run's report.
+and the workers pane. Milestone 2 covers copy-by-click in the main/tokens/warnings/workers panes.
+`md/` holds every run's report.
 
 ## Modules
 
@@ -31,3 +32,37 @@ any change to `_format_worker_proxy_header`, `_handle_worker_proxy_mouse`,
 `_handle_workers_key`.
 **Calls out:** `src.proxy_display.worker_proxy_pane`, `src.workers.worker_pane` — loaded via
 `importlib.import_module` (package-qualified; double-dot relative imports).
+
+---
+
+### p2_copy_click_probe.py (343 LOC)
+
+**Purpose:** Proves, per pane (main, tokens, warnings, workers), that after one real render pass
+the copy-row registry contains an entry for every row carrying a copyable unit, and that a
+synthetic click on the symbol column copies EXACTLY the same string the `y` key produces for that
+row — both paths run through the real serializer (`serialize_main_event`, `_serialize_tokens`,
+`_serialize_warnings`, `_serialize_workers`), compared against each other, nothing hardcoded.
+Also: a pure-function width-guard regression (`utils.append_copy_symbol`) plus one
+render-integration width-guard check per pane (narrow `pane_width` → no symbol, no row
+registration). Regression guards for two bugs found and fixed in this milestone: (1)
+`warnings_render._serialize_warnings` expected a `('error', idx)` tuple but `error_line_map`
+stores a bare `int` — `y` silently copied `''` for every warnings row until fixed; (2)
+`worker_pane._handle_workers_key`'s `y`-branch resolution order made the
+`worker_cache_line_map` fallback dead code — hovering an expanded cache-call row always resolved
+to the parent worker's identity instead of the specific call, fixed via
+`_resolve_workers_hover_key` (closer-ancestor-wins). Also checks that the workers-pane
+copy-region priority does not disturb milestone-1's row-click-select wiring (no state change on a
+copy click; a normal non-edge click still selects+expands).
+**Reads:** nothing external — seeds `main_event_buffer` / `_cache_turns` / `tool_errors` /
+`worker_turns` with synthetic data; `copy_to_clipboard` is monkeypatched per module to a
+capturing stub (no real pbcopy calls).
+**Writes:** `md/p2_copy_click_probe_<timestamp>.md`; one throwaway IPC selection file under
+`/tmp/monitor_cc_selected_worker_<hash>.txt` (workers-pane project_filter
+`/tmp/click_ui_probe_p2_workers`), removed after the check.
+**Called by:** run manually — regression guard for copy-by-click wiring; re-run after any change
+to `append_copy_symbol`, `render_main_buffer`, `format_cache_tracker`, `_format_warnings_pane`,
+`_serialize_warnings`, `format_workers_block`, `_resolve_workers_hover_key`, or any of the four
+panes' `_handle_*_mouse` / `_handle_*_key` functions.
+**Calls out:** `src.core.monitor_display`, `src.core.monitor`, `src.panes.token_pane`,
+`src.format.token_format`, `src.panes.warnings_pane`, `src.panes.warnings_render`,
+`src.workers.worker_pane`, `src.utils` — loaded via `importlib.import_module`.

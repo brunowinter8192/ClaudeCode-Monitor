@@ -1,5 +1,5 @@
 # INFRASTRUCTURE
-from typing import Dict, Optional
+from typing import Dict, Optional, Set
 import os
 import time
 
@@ -20,6 +20,9 @@ cache_expand_states: Dict[tuple, bool] = {}
 cache_line_map: Dict[int, tuple] = {}
 cache_hover_row: Optional[int] = None
 cache_scroll_offset: int = 0
+cache_copy_rows: Set[int] = set()  # phys_rows where ⎘ copy button is rendered; populated by _build_tokens_output
+_cache_copy_feedback_until: Dict[tuple, float] = {}  # (turn_idx, call_idx) → expiry timestamp for ✓ flash
+_cache_pane_width: int = 80  # updated each render cycle; used by click handler for copy-button column check
 
 _cache_jsonl_position: int = 0
 _cache_turns: list = []
@@ -32,7 +35,7 @@ _response_rid_map: dict = {}
 # Runs cache tracker display loop (for dedicated tokens tmux pane)
 def run_tokens_loop() -> None:
     global cache_expand_states, cache_line_map, cache_hover_row, cache_scroll_offset
-    global _cache_jsonl_position, _cache_turns, _cache_current_filepath
+    global _cache_jsonl_position, _cache_turns, _cache_current_filepath, _cache_copy_feedback_until
 
     register_ram_dump('tokens', _tokens_ram_state)
     last_output = None
@@ -60,6 +63,10 @@ def run_tokens_loop() -> None:
                 input_changed, last_data_refresh = _refresh_tokens_data(
                     now, input_changed, last_data_refresh
                 )
+
+                _cache_copy_feedback_until = {k: v for k, v in _cache_copy_feedback_until.items() if v > now}
+                if _cache_copy_feedback_until:
+                    input_changed = True
 
                 if input_changed:
                     output = _build_tokens_output()
@@ -175,13 +182,17 @@ def _tokens_ram_state() -> list:
 
 # Process one mouse event; returns True if display should refresh
 def _handle_tokens_mouse(button: int, col: int, row: int) -> bool:
-    global cache_hover_row, cache_scroll_offset, cache_expand_states
+    global cache_hover_row, cache_scroll_offset, cache_expand_states, _cache_copy_feedback_until
     if button == 0:
         key = cache_line_map.get(row)
-        if key:
-            cache_expand_states[key] = not cache_expand_states.get(key, False)
+        if key is None:
+            return False
+        if col >= _cache_pane_width - 2 and row in cache_copy_rows:
+            copy_to_clipboard(_serialize_tokens(key))
+            _cache_copy_feedback_until[key] = time.time() + 1.5
             return True
-        return False
+        cache_expand_states[key] = not cache_expand_states.get(key, False)
+        return True
     if button == 64:
         cache_scroll_offset = max(0, cache_scroll_offset + 3)
         return True
@@ -234,7 +245,7 @@ def _refresh_tokens_data(now: float, input_changed: bool, last_data_refresh: flo
 
 # Format, clip viewport, and render token turns to ANSI string; updates cache_line_map
 def _build_tokens_output() -> str:
-    global cache_line_map
+    global cache_line_map, cache_copy_rows, _cache_pane_width
     try:
         term = os.get_terminal_size()
         pane_height = term.lines - 1
@@ -242,15 +253,17 @@ def _build_tokens_output() -> str:
     except OSError:
         pane_height = 50
         pane_width = 80
+    _cache_pane_width = pane_width
     visible_lines, visible_keys, sticky_header, viewport_start, initial_parent_count = format_cache_tracker(
         _cache_turns, cache_expand_states, pane_height, pane_width, cache_scroll_offset,
-        response_rid_map=_response_rid_map,
+        response_rid_map=_response_rid_map, copy_feedback=_cache_copy_feedback_until,
     )
     result_lines = []
     if sticky_header is not None:
         trunc = truncate_visible(sticky_header, pane_width)
         result_lines.append(f"{ZEBRA_BG_A}{trunc}\033[K{RESET}")
     cache_line_map.clear()
+    cache_copy_rows.clear()
     phys_row = 1 + (1 if sticky_header is not None else 0)
     parent_count = initial_parent_count
     for line, key in zip(visible_lines, visible_keys):
@@ -267,6 +280,8 @@ def _build_tokens_output() -> str:
             chosen_bg = LIGHT_RED_BG
         else:
             chosen_bg = zebra_bg
+        if key is not None and ('⎘' in line or '✓' in line):
+            cache_copy_rows.add(phys_row)
         trunc = truncate_visible(line, pane_width)
         result_lines.append(f"{chosen_bg}{trunc}\033[K{RESET}")
         if key is not None:

@@ -10,7 +10,7 @@ from ..constants import (
 )
 from ..format.formatter import format_tool_call
 from ..format.formatter_events import format_user_prompt, format_user_media, format_thinking, format_skill_activation, format_system_message
-from ..utils import truncate_visible, _ANSI_ESCAPE_RE, _cell_width
+from ..utils import truncate_visible, _ANSI_ESCAPE_RE, _cell_width, append_copy_symbol
 
 # Private search-bar colors (not in palette; internal to this module)
 _SRCH_LABEL = '\033[38;2;108;112;134m'   # muted gray — "Search:" label
@@ -304,6 +304,7 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
     main_line_map.clear()
     _main_copy_rows.clear()
     result_lines = []
+    prev_eidx = -2  # sentinel distinct from any real eidx or the -1 blank-separator marker
 
     for phys_idx, (line, eidx) in enumerate(zip(visible, visible_event_indices)):
         phys_row = phys_idx + 2  # row 1 is search bar; buffer starts at row 2
@@ -333,11 +334,24 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
                 if pad >= 0:
                     line = line + ' ' * pad + ' ' + copy_sym
                 _main_copy_rows[phys_row] = (eidx, part)
+        # ⎘ copy-button on the first line of any other event type — part='all', matching what
+        # the 'y' key already copies for these rows (serialize_main_event default). Registered
+        # ONLY when the symbol actually fits (unlike the tool_call branch above), so a too-narrow
+        # pane never leaves an invisible hit zone.
+        elif eidx >= 0 and eidx != prev_eidx:
+            stripped = _ANSI_ESCAPE_RE.sub('', line)
+            is_flash = _main_copy_feedback_until.get((eidx, 'all'), 0) > time.time()
+            copy_sym = '✓' if is_flash else '⎘'
+            padded = append_copy_symbol(line, copy_sym, pane_width)
+            if padded != line:
+                line = padded
+                _main_copy_rows[phys_row] = (eidx, 'all')
 
         trunc = truncate_visible(line, pane_width)
         result_lines.append(f"{trunc}\033[49m\033[K{RESET}")
         if eidx >= 0:
             main_line_map[phys_row] = eidx
+        prev_eidx = eidx
 
     search_bar = _render_search_bar(pane_width)
     return f"{search_bar}\033[K{RESET}\n" + '\n'.join(result_lines)
