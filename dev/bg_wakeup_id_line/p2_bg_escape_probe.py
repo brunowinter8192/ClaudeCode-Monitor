@@ -131,6 +131,46 @@ def test_tmux_session_name_derivation():
     check("'main' context -> no tmux session derivable", _derive_tmux_session_name(main_ctx, "/x/monitor-cc") == "")
 
 
+# Test 5b — a fire writes one JSONL trace line to bg_escape_events.jsonl (MONITOR_CC_ROOT-scoped),
+# carrying task id, derived tmux session, and the send result — the trace the rolled-back menubar
+# mechanism had and this one lacked until now.
+def test_fire_writes_log_line():
+    print("\n[Test 5b] Fire writes a log line (task id, tmux session, send result)")
+    bg_escape._escaped_task_ids.clear()
+    with tempfile.TemporaryDirectory() as tmp_root:
+        log_path = Path(tmp_root) / "src" / "logs" / "bg_escape_events.jsonl"
+        ack = _WORDING_1.replace("bg_task_alpha", "bg_task_epsilon")
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root}, clear=False):
+            with mock.patch.object(bg_escape, "_send_escape_key", lambda s: True):
+                _trigger_bg_escape({0: [ack]}, "worker:esc-live", str(WORKTREE_ROOT))
+        check("bg_escape_events.jsonl created under MONITOR_CC_ROOT/src/logs/", log_path.exists())
+        lines = log_path.read_text().strip().splitlines() if log_path.exists() else []
+        check("exactly one log line written for the fire", len(lines) == 1)
+        entry = json.loads(lines[0]) if lines else {}
+        check("logged event == 'fired'", entry.get("event") == "fired")
+        check("logged task_id == 'bg_task_epsilon'", entry.get("task_id") == "bg_task_epsilon")
+        check("logged tmux_session == expected worker session", entry.get("tmux_session") == f"worker-{WORKTREE_ROOT.name}-esc-live")
+        check("logged send_result == True", entry.get("send_result") is True)
+
+    # Same request-shape, main context this time — this IS a matter-of skip case, so it must ALSO
+    # log (not silently no-op), reason == 'main_context'.
+    with tempfile.TemporaryDirectory() as tmp_root:
+        log_path = Path(tmp_root) / "src" / "logs" / "bg_escape_events.jsonl"
+        ack = _WORDING_1.replace("bg_task_alpha", "bg_task_zeta")
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root}, clear=False):
+            _trigger_bg_escape({0: [ack]}, "main", str(WORKTREE_ROOT))
+        entry = json.loads(log_path.read_text().strip().splitlines()[0]) if log_path.exists() else {}
+        check("main-context skip logs event='skipped' reason='main_context'",
+              entry.get("event") == "skipped" and entry.get("reason") == "main_context")
+
+    # A request with no bg-launch-ack chunk at all must never touch the log sink.
+    with tempfile.TemporaryDirectory() as tmp_root:
+        log_path = Path(tmp_root) / "src" / "logs" / "bg_escape_events.jsonl"
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root}, clear=False):
+            _trigger_bg_escape({0: ["ordinary tool_result content, no ack here"]}, "worker:esc-live", str(WORKTREE_ROOT))
+        check("no ack present -> log sink never touched (no file created)", not log_path.exists())
+
+
 # Test 6 — real tmux round trip: spawn a throwaway session running a raw-mode 1-byte reader,
 # call the PRODUCTION _send_escape_key against it, confirm the Escape byte (0x1b) arrived via
 # capture-pane.
@@ -261,6 +301,7 @@ def run_probe_workflow():
     test_both_wordings_trigger()
     test_main_context_never_triggers()
     test_tmux_session_name_derivation()
+    test_fire_writes_log_line()
     test_real_tmux_roundtrip()
     test_failure_isolation()
 

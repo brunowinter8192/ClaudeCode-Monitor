@@ -20,17 +20,20 @@ that detection (`p2_`, `src/proxy/bg_escape.py`). `md/` holds every script's rep
 
 ---
 
-### p2_bg_escape_probe.py (298 LOC)
+### p2_bg_escape_probe.py (339 LOC)
 
 **Purpose:** Verifies `src/proxy/bg_escape.py` — the tmux-Escape-on-launch-ack mechanism.
-7 test groups: dedup across repeated acks (real 142/169 shape), two distinct task ids → two
+8 test groups: dedup across repeated acks (real 142/169 shape), two distinct task ids → two
 Escapes, both CC wordings trigger, a `main` (non-worker) context never triggers, tmux session
 name derivation from `PROXY_LOG_ID` + `PROXY_PROJECT_PATH` (including a hyphenated worker name),
-a real tmux round trip (throwaway session, real `send-keys`, `capture-pane` proof), and failure
-isolation (dead/missing tmux session, missing `tmux` binary — both at the unit level and through
-a real `ProxyAddon.request()` call with the binary simulated absent).
+**a fire writes one JSONL trace line to `bg_escape_events.jsonl` under a `MONITOR_CC_ROOT`-scoped
+temp dir (task id, tmux session, send result), a main-context skip logs `reason='main_context'`,
+and a request with no ack chunk at all never creates the log file (2026-07-30)**, a real tmux
+round trip (throwaway session, real `send-keys`, `capture-pane` proof), and failure isolation
+(dead/missing tmux session, missing `tmux` binary — both at the unit level and through a real
+`ProxyAddon.request()` call with the binary simulated absent).
 **Reads:** Nothing persistent — builds all fixtures in-process; spawns/kills one throwaway tmux
-session for the round-trip test.
+session for the round-trip test; the log-line test scopes `MONITOR_CC_ROOT` to a `tempfile.TemporaryDirectory()`, never the real `src/logs/`.
 **Writes:** `md/p2_bg_escape_probe_<timestamp>.md`.
 **Called by:** run manually — regression guard for `bg_escape.py`; re-run after any change to
 `strip_bg_launch_ack.py`'s detection or `addon.py`'s worker-context derivation.
