@@ -39,13 +39,9 @@ class FocusController:
     # bg timer is running, OR when the project has no worker sessions at all (vacuously all-idle
     # — a timer with nothing to wait for is dead weight). A worker is 'working' when hook status
     # is working, has_bg=True, OR worker-cli wrote an orchestrator signal within
-    # ORCHESTRATOR_SIGNAL_BUFFER_SECS.
-    # On has_bg: alone it is NOT a backgrounding signal — measured 2026-07-30, every FOREGROUND
-    # Bash call also holds an open handle on a tasks/<id>.output file, which is why it failed as
-    # a standalone Escape trigger (fired on a worker's first call and killed it). Conjoined with
-    # status == 'idle' it is sound: a foreground call keeps the worker 'working', so idle + a live
-    # handle means a call outlived its turn — i.e. it was backgrounded. Observed live 18:28:43,
-    # `esc-live2:idle:has_bg=True` while its re-index ran.
+    # ORCHESTRATOR_SIGNAL_BUFFER_SECS. has_bg counts only conjoined with status == 'idle' — a
+    # foreground call keeps the worker 'working', so idle + a live output-file handle means the
+    # call outlived its turn.
     # See process-docs/menubar_signal_grace/initial_design.md.
     def tick(self, sessions, bg_by_project: dict, now: float) -> None:
         # Auto-focus: debounce idle main sessions (working→idle transition + 3s hold-off)
