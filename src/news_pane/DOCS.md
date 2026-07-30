@@ -21,13 +21,13 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 ## Modules
 
-### pane.py (208 LOC)
+### pane.py (223 LOC)
 
-**Purpose:** Left control pane event loop. Collection stats display, SGR mouse button click dispatch, subprocess launch, running-state indicator. `NEWS_POLL_INTERVAL = 2.0` s; `LOG_RUNNING_RECENT_SECS = 60`. **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — an uncaught exception (this pane previously had none) is caught, logged via `pane_error_log.log_pane_error('news')`, and the loop continues after `wait_for_input(INPUT_POLL_INTERVAL)`; `KeyboardInterrupt`/`SystemExit` still propagate, `finally: disable_mouse(); restore_terminal()` still runs.
+**Purpose:** Left control pane event loop. Collection stats display, SGR mouse button click dispatch, subprocess launch, running-state indicator. `NEWS_POLL_INTERVAL = 2.0` s; `LOG_RUNNING_RECENT_SECS = 60`. **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — an uncaught exception (this pane previously had none) is caught, logged via `pane_error_log.log_pane_error('news')`, and the loop continues after `wait_for_input(INPUT_POLL_INTERVAL)`; `KeyboardInterrupt`/`SystemExit` still propagate, `finally: disable_mouse(); restore_terminal()` still runs. **(2026-07-30) New `[refresh]` header button:** appended to the `CoinDesk News Pipeline` title line (row 1, disjoint from the `[run pipeline]`/`[running…]` button which starts several rows down), registered under `('refresh', 'refresh')`. The mouse dispatch loop now special-cases `action == 'refresh'` (sets `force_refresh = True`) BEFORE the pre-existing `if not _is_running(): _fire_pipeline()` branch — previously that branch fired UNCONDITIONALLY on any matched region regardless of `action`/`target` (there was only ever one button, so this never mattered before). Width-guarded with a real gate — no button text, no region, when it doesn't fit. **(2026-07-30 review fix) Decoration yields to the button, not the reverse:** the `'═' * min(pane_width, 52)` rule used to be computed at FULL length regardless of whether `[refresh]` fit, so the button silently disappeared at pane_width < 86 even though the title text needed only 25 cols — `utils.compute_header_rule_len('  CoinDesk News Pipeline', '[refresh]', 52, pane_width)` now shrinks the rule first (down to a 4-char minimum) to make room for the button. Crossover: button visible from pane_width >= 38 (was 86); title text always renders regardless of width. Verified with a width sweep in `dev/click_ui/p4_gpu_news_button_probe.py` spanning both sides of the crossover, down to well below today's live pane width (107).
 **Reads:** `rag-cli list_documents searxng_crypto` + `rag-cli list_collections --json` (every 2s); `LAST_RUN_FILE` (every 2s); `_pipeline_proc.poll()` (every render); log file via `_is_running_via_log()`.
 **Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`).
 **Called by:** `workflow.py` (`--mode news` route).
-**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`), `log_parser` (constants + file helpers), `pane_error_log` (`log_pane_error`), `subprocess.Popen` (pipeline launch).
+**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`), `log_parser` (constants + file helpers), `pane_error_log` (`log_pane_error`), `utils` (`compute_header_rule_len`), `subprocess.Popen` (pipeline launch).
 
 ---
 
@@ -55,7 +55,7 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 | Owner | State | Reads | Writes |
 |---|---|---|---|
-| `pane.py` | `_button_regions: dict[(start_col, end_col, phys_row) → (action, target)]` | mouse-click handler in `run_news_loop` | `_render_pane` (cleared + rebuilt per tick) |
+| `pane.py` | `_button_regions: dict[(start_col, end_col, phys_row) → (action, target)]` | mouse-click handler in `run_news_loop` | `_render_pane` (cleared + rebuilt per tick); `('refresh', 'refresh')` value added 2026-07-30 for the header `[refresh]` button, on row 1 — always disjoint from the `('run', 'pipeline')` entry, which starts several rows lower |
 | `pane.py` | `_pipeline_proc: Popen \| None` | `_is_running()` | `_fire_pipeline()` |
 
 ## Gotchas

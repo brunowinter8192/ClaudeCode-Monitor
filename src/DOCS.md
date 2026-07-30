@@ -24,8 +24,8 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 | `proxy/` | mitmproxy addon (payload modification + JSONL logging) | 3074 | 18 |
 | `ram_audit/` | SIGUSR1 RAM-dump helper, gated by MONITOR_CC_RAM_AUDIT env | 101 | 1 |
 | `menubar/` | macOS status-bar app showing live CC sessions (rumps/AppKit) | 3481 | 18 |
-| `gpu_pane/` | GPU server monitor pane (cross-project, reads RAG state) | 204 | 3 |
-| `news_pane/` | CoinDesk news pipeline control (left) + live log tail (right) | 364 | 3 |
+| `gpu_pane/` | GPU server monitor pane (cross-project, reads RAG state) | 613 | 3 |
+| `news_pane/` | CoinDesk news pipeline control (left) + live log tail (right) | 388 | 3 |
 | `hooks/` | Global CC safety hooks (PreToolUse scripts + hook_setup) | 1674 | 22 |
 | `ccwrap/` | Standalone PTY wrapper with diagnostic ANSI logging for CC (Phase 1 diagnostic tool) | 254 | 4 |
 
@@ -34,7 +34,7 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 | File | LOC | Why at root |
 |---|---|---|
 | `constants.py` | 150 | Imported by ~all subpackages — shallow path avoids deep `...constants` chains |
-| `utils.py` | 101 | Same — `format_timestamp` + `visual_line_count` used everywhere; also `append_copy_symbol` (right-align a ⎘/✓ symbol, width-guarded — shared by `core.monitor_display`, `format.token_format`, `panes.warnings_render`, `workers.worker_format`, and `proxy_display`'s own reference implementation stays independent) |
+| `utils.py` | 114 | Same — `format_timestamp` + `visual_line_count` used everywhere; also `append_copy_symbol` (right-align a ⎘/✓ symbol, width-guarded — shared by `core.monitor_display`, `format.token_format`, `panes.warnings_render`, `workers.worker_format`, and `proxy_display`'s own reference implementation stays independent) and `compute_header_rule_len` (shrinking-decoration header layout, shared by `gpu_pane`/`news_pane`) |
 | `pane_error_log.py` | 35 | `log_pane_error(pane_name)` — shared exception-safe sink all 8 pane `run_*_loop()` functions call from their `except Exception:` guard (2026-07-31); imported by every pane module the same shallow-path way as `constants.py`, so it belongs at the same level |
 | `log_janitor.py` | 160 | `LogSpec` registry (11 entries) + `sweep_eligible_specs()` + `cleanup_old_jsonl(path)` — authoritative log inventory; 7-day JSONL sweep triggered from `core/monitor.py` every 24h |
 | `session_finder.py` | 85 | Single module, no subpackage warranted |

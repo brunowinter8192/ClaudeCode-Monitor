@@ -78,6 +78,19 @@ def append_copy_symbol(line: str, copy_sym: str, pane_width: int) -> str:
         return line + ' ' * pad + ' ' + copy_sym
     return line
 
+# Compute (rule_len, show_button) for a "'═' rule + prefix_text + button" header line: the
+# decorative rule shrinks first (down to rule_min) to make room for the button; the button is
+# only dropped when even the title text (prefix_text) can't fit alongside it at rule_min
+def compute_header_rule_len(prefix_text: str, btn_label: str, rule_cap: int, pane_width: int,
+                             rule_min: int = 4, gap: int = 1) -> tuple:
+    full_rule_len = min(pane_width, rule_cap)
+    if full_rule_len + len(prefix_text) + gap + len(btn_label) <= pane_width:
+        return full_rule_len, True
+    shrunk = pane_width - len(prefix_text) - gap - len(btn_label)
+    if shrunk >= rule_min:
+        return shrunk, True
+    return max(0, min(full_rule_len, pane_width - len(prefix_text))), False
+
 # Truncate line to pane_width terminal cells (ANSI- and wide-char-aware); append … if cut
 def truncate_visible(line: str, pane_width: int) -> str:
     if pane_width <= 0:
