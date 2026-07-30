@@ -1,4 +1,5 @@
 # INFRASTRUCTURE
+import subprocess
 import sys
 from datetime import datetime
 
@@ -16,6 +17,30 @@ def _abort_log_write(line: str) -> None:
     except Exception as e:
         print(f'[abort-log] write error: {e}', file=sys.stderr)
 
+# Append one line to menubar.log ([escape] category); always-on (no env-var gate)
+def _escape_log_write(line: str) -> None:
+    try:
+        log_menubar('escape', line.rstrip('\n'))
+    except Exception as e:
+        print(f'[escape-log] write error: {e}', file=sys.stderr)
+
+# Send ONE Escape keystroke into a worker's tmux pane (no -l flag — tmux interprets the key
+# name rather than typing it). Interrupts a live Claude Code turn, forcing the worker idle so
+# it can't poll a backgrounded task once the menubar's auto-abort kills the bg sleep timer.
+# Fail-safe: a missing/dead tmux session or any subprocess error degrades to a logged no-op —
+# must never raise into the AppKit tick.
+def _send_escape_key(tmux_session_name: str) -> bool:
+    try:
+        exists = subprocess.run(['tmux', 'has-session', '-t', tmux_session_name],
+                                 capture_output=True, timeout=3)
+        if exists.returncode != 0:
+            return False
+        sent = subprocess.run(['tmux', 'send-keys', '-t', tmux_session_name, 'Escape'],
+                               capture_output=True, timeout=3)
+        return sent.returncode == 0
+    except Exception:
+        return False
+
 # True if worker-cli has signalled a send to this worker's tmux session in the last buffer window.
 # Uses worker.tmux_session_name (carries the iterative-dev tmux convention basename(project_path));
 # NEVER reconstruct from project_name — that's a different decoded-path heuristic (MCP-RAG vs RAG).
@@ -32,6 +57,7 @@ class FocusController:
         self._idle_since_ts: dict = {}
         self._all_workers_idle_since_ts: dict = {}
         self._last_statuses: dict = {}
+        self._bg_escaped_workers: set = set()
 
     # Auto-focus + auto-abort: called once per _tick after bg_by_project is computed.
     # self._last_statuses holds the OLD snapshot — update_statuses() is called at tick-end.
@@ -41,6 +67,25 @@ class FocusController:
     # is working OR worker-cli wrote an orchestrator signal within ORCHESTRATOR_SIGNAL_BUFFER_SECS.
     # See process-docs/menubar_signal_grace/initial_design.md.
     def tick(self, sessions, bg_by_project: dict, now: float) -> None:
+        # Escape-on-bg-launch: the moment a worker's Bash call goes to background, force it idle
+        # so a subsequent orchestrator prod (after the menubar's own auto-abort kills the bg sleep
+        # timer) finds nothing to poll. Edge-triggered on has_bg False->True per worker, keyed by
+        # tmux_session_name: current_bg_workers - self._bg_escaped_workers is exactly the rising
+        # edges this tick. A second Escape into an already-idle CC TUI opens the quit menu, so this
+        # must fire once per background-launch — self._bg_escaped_workers = current_bg_workers at
+        # tick-end both suppresses re-fire while has_bg stays True and resets on has_bg->False.
+        # Workers only — mains are never targeted.
+        worker_bg = {s.tmux_session_name: s for s in sessions
+                     if s.is_worker and s.tmux_session_name and s.has_bg}
+        current_bg_workers = set(worker_bg)
+        for tmux_name in current_bg_workers - self._bg_escaped_workers:
+            s = worker_bg[tmux_name]
+            sent = _send_escape_key(tmux_name)
+            ts_str = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')[:23]
+            _escape_log_write(
+                f'{ts_str} escape_idle worker={s.name} tmux={tmux_name} sent={sent}\n'
+            )
+        self._bg_escaped_workers = current_bg_workers
         # Auto-focus: debounce idle main sessions (working→idle transition + 3s hold-off)
         if self.app._auto_focus:
             for s in sessions:
