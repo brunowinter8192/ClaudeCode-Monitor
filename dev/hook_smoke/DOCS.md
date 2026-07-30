@@ -295,6 +295,19 @@ python3 dev/hook_smoke/test_escape_idle_worker.py
 
 ---
 
+### test_focus_controller_bg_gate.py (155 LOC)
+
+**Purpose:** 6-case smoke for the auto-abort `has_bg` gate in `src/menubar/focus_controller.py::FocusController.tick`. Drives `tick()` directly with synthetic `SessionInfo`-shaped objects across multiple simulated ticks (1s step), monkeypatching `_abort_bg_sleep_timers` to record calls instead of killing real PIDs. Verifies: idle worker with `has_bg=True` held >5s holds the abort; idle worker with `has_bg=False` held >5s still aborts (baseline unchanged); two workers with one `has_bg=True` holds the abort project-wide; a worker whose `has_bg` flips True→False only starts accumulating the 5s dwell after the flip (no early fire during the True period); a project with zero worker sessions still vacuously aborts; a worker idle within the recent-send grace window (monkeypatched `_read_orchestrator_signals`) does not abort.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_focus_controller_bg_gate.py
+```
+
+**Expected output:** `All 6 tests passed.` (exit 0).
+
+---
+
 ### probe_escape_real_tmux_roundtrip.py (101 LOC)
 
 **Purpose:** Real tmux round-trip proof for `_send_escape_key` (Escape-on-idle milestone) — NOT a synthetic/mocked test. Creates a throwaway tmux session running a one-byte cbreak-mode stdin reader (reads exactly one raw byte, prints its `repr`, sidesteps any VT100 escape-sequence interpretation the terminal might otherwise apply to a bare ESC), captures the pane before sending, calls the real `focus_controller._send_escape_key` (the exact production send path, not a re-implementation), captures the pane after, and asserts the reader's stdout shows `GOT_BYTE:'\x1b'`. Does NOT involve Claude Code — proves the tmux invocation mechanics only (`has-session` check + `send-keys -t <name> Escape` with no `-l` flag). Kills the throwaway session and deletes the temp reader script in a `finally` block regardless of outcome.
