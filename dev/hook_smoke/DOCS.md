@@ -253,7 +253,7 @@ normalization. Does NOT require a live mitmproxy process — uses minimal mock h
 
 ---
 
-### test_bg_task_detection.py (152 LOC)
+### test_bg_task_detection.py (145 LOC)
 
 **Purpose:** 6-case smoke for `src/menubar/proc_cache.py::_has_active_bg` (open-file-handle predicate, replacing the old 0-byte-file check). 3 unit cases via a monkeypatched `_bg_task_open_paths` snapshot (match, no-match, session-id prefix-collision boundary), 1 integration case (real subprocess holds a real file open under a scratch tasks dir, real `lsof` scan detects it while open and its absence after the writer is killed), 1 fail-open case (`lsof` raising leaves the prior snapshot in place, does not crash), 1 TTL-gate case (second refresh call inside `_PROC_REFRESH_INTERVAL` does not re-invoke `lsof`).
 
