@@ -5,10 +5,11 @@
 Regression coverage for the click-UI milestone series (making every tmux-pane control reachable
 by mouse, not just keyboard). Milestone 1 covers worker selection in the worker-proxy pane header
 and the workers pane. Milestone 2 covers copy-by-click in the main/tokens/warnings/workers panes.
-Milestone 3 covers the three remaining single-purpose keyboard controls (workers freeze, proxy
-undo, warnings refresh) as pane-chrome buttons. Milestone 4 covers gpu (digit keys 1-9 already
-covered by existing buttons; new `[refresh]`) and news (new `[refresh]`) — the last two
-keyboard-only controls anywhere in the app. `md/` holds every run's report.
+Milestone 3 covers two of three remaining single-purpose keyboard controls (workers freeze,
+warnings refresh) as pane-chrome buttons — the third (proxy undo) got a button too but it was
+reverted 2026-07-30 per user decision after live-testing; `u` stays the only way to undo, and the
+proxy pane has no header. Milestone 4 covers gpu (digit keys 1-9 already covered by existing
+buttons; new `[refresh]`) and news (new `[refresh]`). `md/` holds every run's report.
 
 ## Modules
 
@@ -72,32 +73,34 @@ panes' `_handle_*_mouse` / `_handle_*_key` functions.
 
 ---
 
-### p3_button_click_probe.py (283 LOC)
+### p3_button_click_probe.py (309 LOC)
 
-**Purpose:** Proves, per pane (workers freeze, proxy undo, warnings refresh), that after one real
-render pass the header/chrome button region is registered at a plausible coordinate, a synthetic
-click on it produces the SAME state change as the corresponding key (`f`/`u`/`r`), the two
-toggle/state-dependent buttons' rendered text reflects state BEFORE the click (workers:
-`[LIVE]`/`[FROZEN]` badge; proxy: `[undo]` color differs empty-vs-non-empty stack, still
-registered/clickable when empty — a no-op, same as pressing `u` with nothing to undo), a
-too-narrow pane registers no region (and, for the two NEW buttons — undo, refresh — renders no
-button text either; the workers freeze badge is pre-existing content, always rendered, only its
-clickability is width-guarded), and that each pane's PRE-EXISTING click handling (workers
-row-select, proxy expand/copy, warnings expand/copy) still works after the header-check was added
-ahead of it. The proxy pane case is the most structurally significant: it previously had NO fixed
-header at all, so this also exercises the new header/body split end-to-end (viewport math,
-`proxy_line_map`/`_proxy_copy_rows` shift by `header_lines`, overdraw) with a real synthetic entry
-set, not just the button itself.
+**Purpose:** Proves, per pane (workers freeze, warnings refresh), that after one real render pass
+the header/chrome button region is registered at a plausible coordinate, a synthetic click on it
+produces the SAME state change as the corresponding key (`f`/`r`), the freeze badge's rendered
+text reflects state BEFORE the click (`[LIVE]`/`[FROZEN]`), a too-narrow pane registers no region
+(and renders no button text either), and that each pane's PRE-EXISTING click handling (workers
+row-select, warnings expand/copy) still works after the header-check was added ahead of it.
+**(2026-07-30) Proxy pane: button reverted, probe now proves the REVERT instead.** The `[undo]`
+button and the header/body split introduced solely to host it were reverted per user decision
+after live-testing (`u` stays the only way to undo) — `test_proxy_pane_reverted_no_header`
+replaces the old button test: asserts `_build_proxy_output` is back to a plain-string return, no
+`[undo]` text anywhere, no leftover `_proxy_header_regions` / `_format_proxy_header`, that row 1
+resolves to real body content (not a header), and that expand/collapse clicks, copy-symbol
+clicks, scroll, auto-scroll-to-just-expanded, and `_undo_proxy_expand` itself all still work at
+UNSHIFTED rows — using a real synthetic entry set (`_make_proxy_entry`, matching
+`dev/display/test_hover_map.py`'s shape), not just checking the absence of the button.
 **Reads:** nothing external — seeds `tool_errors` / synthetic `workers` list / `proxy_entries`
-(via a `_make_proxy_entry` helper matching `dev/display/test_hover_map.py`'s shape) directly.
+(via `_make_proxy_entry`) directly.
 **Writes:** `md/p3_button_click_probe_<timestamp>.md`; one throwaway IPC selection file under
 `/tmp/monitor_cc_selected_worker_<hash>.txt` (workers-pane project_filter
 `/tmp/click_ui_probe_p3_workers`), removed after the check.
-**Called by:** run manually — regression guard for the three pane-chrome buttons; re-run after any
+**Called by:** run manually — regression guard for the two remaining pane-chrome buttons (workers
+freeze, warnings refresh) and for the proxy pane's reverted no-header shape; re-run after any
 change to `_format_warnings_header`, `_handle_warnings_mouse`/`_handle_warnings_key`,
-`format_workers_block`, `_handle_workers_mouse` (now `(button,col,row,project_filter,frozen) ->
-(changed, frozen)`) / `_handle_workers_key`, `_format_proxy_header`, `_build_proxy_output` (now
-returns `(output, header)`), or `_handle_proxy_mouse`/`_undo_proxy_expand`.
+`format_workers_block`, `_handle_workers_mouse` (`(button,col,row,project_filter,frozen) ->
+(changed, frozen)`) / `_handle_workers_key`, or `_build_proxy_output`/`_handle_proxy_mouse`/
+`_undo_proxy_expand`.
 **Calls out:** `src.panes.warnings_pane`, `src.panes.warnings_render`, `src.workers.worker_pane`,
 `src.workers.worker_format`, `src.proxy_display.pane`, `src.proxy_display.format` — loaded via
 `importlib.import_module`.

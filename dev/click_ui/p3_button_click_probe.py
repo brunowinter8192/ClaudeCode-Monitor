@@ -1,19 +1,24 @@
 """
 P3 -- pane-chrome button click parity probe (Milestone 3: the remaining single-purpose keyboard
-controls -- workers 'f' freeze, proxy 'u' undo, warnings 'r' refresh).
+controls -- workers 'f' freeze, warnings 'r' refresh; proxy 'u' undo stays keyboard-only, see
+below).
 
 Proves, per pane, that after ONE real render pass:
   1. the header/chrome button region is registered at a plausible (start_col,end_col,phys_row)
   2. dispatching a synthetic click on it produces the SAME state change as the corresponding key
-  3. for the two toggle/state-dependent buttons (freeze, undo) the render reflects state BEFORE
-     the click: the freeze badge text differs live-vs-frozen; the undo button's color differs
-     empty-vs-non-empty stack (still clickable when empty -- same no-op _undo_proxy_expand()
-     already gives the 'u' key)
-  4. a too-narrow pane registers no region (and, for the two NEW buttons -- undo, refresh --
-     renders no button text either; the workers freeze badge is pre-existing content, always
-     rendered, only its clickability is width-guarded)
-  5. the existing click handling each pane already had (workers row-select, proxy expand/copy,
-     warnings expand/copy) still works after adding the header check ahead of it
+  3. the freeze button's rendered text reflects state BEFORE the click (badge differs
+     live-vs-frozen)
+  4. a too-narrow pane registers no region (and renders no button text either; the workers freeze
+     badge is pre-existing content, always rendered, only its clickability is width-guarded)
+  5. the existing click handling each pane already had (workers row-select, warnings
+     expand/copy) still works after adding the header check ahead of it
+
+(2026-07-30) The proxy pane's [undo] button and the one-line header introduced solely to host it
+were REVERTED per user decision after live-testing: 'u' is the only way to undo, and stays. The
+proxy-pane test now proves the revert is complete instead (no header, no button, no leftover
+`_proxy_header_regions`/`_format_proxy_header`) and that everything the header/body split had
+touched -- expand/collapse clicks, copy symbols, scroll, auto-scroll-to-just-expanded, and 'u'
+itself -- still works at UNSHIFTED rows (row 1 is body content again, not a header).
 
 Covers:
   - src/panes/warnings_pane.py :: _build_warnings_output (_warnings_header_regions),
@@ -22,9 +27,9 @@ Covers:
   - src/workers/worker_pane.py :: _build_workers_output (_worker_header_regions),
     _handle_workers_mouse (now returns (changed, frozen)), _handle_workers_key --
     src/workers/worker_format.py :: format_workers_block
-  - src/proxy_display/pane.py :: _build_proxy_output (now returns (output, header) with a new
-    header/body split), _handle_proxy_mouse, _undo_proxy_expand -- src/proxy_display/format.py ::
-    _format_proxy_header
+  - src/proxy_display/pane.py :: _build_proxy_output (back to a plain string return, no header
+    split), _handle_proxy_mouse, _undo_proxy_expand -- src/proxy_display/format.py (no
+    _format_proxy_header)
 
 No live tmux/terminal needed -- module globals are seeded directly with synthetic data;
 copy_to_clipboard is monkeypatched where needed (reused from milestone 2's pattern) so the
@@ -178,9 +183,13 @@ def test_workers_freeze_button():
         os.remove(mod_workers.get_selection_file_path(project_filter))
 
 
-# Proxy pane: [undo] header button -- region, click/key parity, empty-stack state, no collision
-# with expand/copy rows, width guard
-def test_proxy_undo_button():
+# Proxy pane: milestone-3's [undo] button and its one-line header were REVERTED per user
+# decision after live-testing -- 'u' stays the only way to undo; the pane goes back to having no
+# header at all (body content is the first rendered row again). Proves the revert is complete
+# (no header, no button, no leftover regions/functions) and that everything the header/body split
+# touched -- expand/collapse clicks, copy symbols, scroll, auto-scroll-to-just-expanded, and the
+# 'u' key itself -- still works at UNSHIFTED rows.
+def test_proxy_pane_reverted_no_header():
     mod_proxy.proxy_entries.clear()
     mod_proxy.proxy_expand_states.clear()
     mod_proxy.proxy_line_map.clear()
@@ -188,55 +197,72 @@ def test_proxy_undo_button():
     mod_proxy.proxy_scroll_offset = 0
     mod_proxy._proxy_undo_stack.clear()
     mod_proxy._copy_feedback_until.clear()
-
-    output_empty, header_empty = mod_proxy._build_proxy_output()
-    regions_empty = dict(mod_proxy._proxy_header_regions)
-    check("proxy: [undo] region registered with an empty stack (still clickable)",
-          list(regions_empty.values()) == ['undo'])
-    check("proxy: [undo] button text visible even with an empty stack", '[undo]' in header_empty)
-
-    (sc, ec, er) = next(iter(regions_empty))
-    click_col = (sc + ec) // 2
-    empty_click_changed = mod_proxy._handle_proxy_mouse(0, click_col, er)
-    check("proxy: clicking [undo] with an empty stack is a no-op (same as 'u' key)",
-          empty_click_changed is False)
-
-    mod_proxy.proxy_expand_states[0] = True
-    mod_proxy._proxy_undo_stack.append((0, False))
-    output_full, header_full = mod_proxy._build_proxy_output()
-    check("proxy: [undo] header text differs empty-vs-non-empty stack (color-coded state)",
-          header_full != header_empty and '[undo]' in header_full)
-
-    regions_full = dict(mod_proxy._proxy_header_regions)
-    (sc2, ec2, er2) = next(iter(regions_full))
-    click_col2 = (sc2 + ec2) // 2
-    click_changed = mod_proxy._handle_proxy_mouse(0, click_col2, er2)
-    check("proxy: clicking [undo] pops the stack and restores prior expand-state",
-          click_changed and mod_proxy.proxy_expand_states.get(0) is False and not mod_proxy._proxy_undo_stack)
-
-    mod_proxy.proxy_expand_states[0] = True
-    mod_proxy._proxy_undo_stack.append((0, False))
-    key_changed = mod_proxy._undo_proxy_expand()
-    check("proxy: 'u' key (_undo_proxy_expand) produces the same state change as the click",
-          key_changed and mod_proxy.proxy_expand_states.get(0) is False and not mod_proxy._proxy_undo_stack)
-
-    # Existing row click (expand/collapse) must still work after the header/body split
-    mod_proxy.proxy_entries.clear()
-    mod_proxy.proxy_expand_states.clear()
-    mod_proxy.proxy_line_map.clear()
-    mod_proxy._proxy_undo_stack.clear()
     mod_proxy.proxy_entries.extend(_make_proxy_entry(i) for i in range(3))
-    output, header = mod_proxy._build_proxy_output()
-    req_row = next(r for r, k in mod_proxy.proxy_line_map.items()
-                    if (isinstance(k, tuple) and k[0] == 'req') or isinstance(k, int))
-    row_click_changed = mod_proxy._handle_proxy_mouse(0, 5, req_row)
-    check("proxy: body row click (expand/collapse) still works after header/body split",
-          row_click_changed and len(mod_proxy._proxy_undo_stack) == 1)
 
-    narrow_regions = {}
-    narrow_header = mod_proxy_format._format_proxy_header(True, 5, narrow_regions)
-    check("proxy: width guard -- no region and no button text when pane_width=5 (too narrow)",
-          len(narrow_regions) == 0 and '[undo]' not in narrow_header)
+    output = mod_proxy._build_proxy_output()
+    check("proxy: _build_proxy_output returns a plain string again (no (output, header) tuple)",
+          isinstance(output, str))
+    check("proxy: no [undo] button text anywhere in the output", '[undo]' not in output)
+    check("proxy: no leftover _proxy_header_regions module attribute",
+          not hasattr(mod_proxy, '_proxy_header_regions'))
+    check("proxy: no leftover _format_proxy_header function in format.py",
+          not hasattr(mod_proxy_format, '_format_proxy_header'))
+
+    # Row 1 resolves to real body content (a REQ entry), not a header -- the pane's first
+    # rendered row is body content again, matching the pre-milestone-3 shape
+    key_row1 = mod_proxy.proxy_line_map.get(1)
+    check("proxy: row 1 resolves to a body row (REQ key), not a header",
+          key_row1 is not None and ((isinstance(key_row1, tuple) and key_row1[0] == 'req') or isinstance(key_row1, int)))
+
+    # Expand/collapse click still works, directly at row 1 -- unshifted (no header_lines offset)
+    pre_expand = mod_proxy.proxy_expand_states.get(key_row1, False)
+    row_click_changed = mod_proxy._handle_proxy_mouse(0, 5, 1)
+    check("proxy: click on row 1 toggles expand/collapse at the unshifted row",
+          row_click_changed and mod_proxy.proxy_expand_states.get(key_row1) != pre_expand)
+    mod_proxy._build_proxy_output()  # re-render to pick up the new copy-row set post-expand
+
+    # Copy-symbol click still fires, at its own (unshifted) row
+    orig_copy = mod_proxy.copy_to_clipboard
+    captured = []
+    mod_proxy.copy_to_clipboard = lambda text: captured.append(text)
+    try:
+        check("proxy: at least one copy row registered", bool(mod_proxy._proxy_copy_rows))
+        if mod_proxy._proxy_copy_rows:
+            copy_row = next(iter(mod_proxy._proxy_copy_rows))
+            copy_click_changed = mod_proxy._handle_proxy_mouse(0, mod_proxy._proxy_pane_width - 1, copy_row)
+            check("proxy: copy-symbol click still fires at its own unshifted row",
+                  copy_click_changed and len(captured) == 1)
+    finally:
+        mod_proxy.copy_to_clipboard = orig_copy
+
+    # 'u' key (_undo_proxy_expand) keeps working, unchanged
+    mod_proxy.proxy_expand_states.clear()
+    mod_proxy._proxy_undo_stack.clear()
+    mod_proxy.proxy_expand_states[key_row1] = True
+    mod_proxy._proxy_undo_stack.append((key_row1, False))
+    key_changed = mod_proxy._undo_proxy_expand()
+    check("proxy: 'u' key (_undo_proxy_expand) still undoes the last toggle, unchanged",
+          key_changed and mod_proxy.proxy_expand_states.get(key_row1) is False and not mod_proxy._proxy_undo_stack)
+
+    # Scroll wheel still works
+    mod_proxy.proxy_scroll_offset = 0
+    scroll_changed = mod_proxy._handle_proxy_mouse(64, 5, 1)
+    check("proxy: scroll wheel (button 64) still works",
+          scroll_changed and mod_proxy.proxy_scroll_offset == 3)
+
+    # Auto-scroll-to-just-expanded: the entry that was just expanded stays visible in the very
+    # next render (this is what the item_positions_out/_proxy_just_expanded machinery guarantees,
+    # unchanged code -- verified byte-identical to pre-milestone-3 via `git diff`)
+    mod_proxy.proxy_scroll_offset = 0
+    mod_proxy.proxy_expand_states.clear()
+    mod_proxy._build_proxy_output()
+    target_row = next(iter(mod_proxy.proxy_line_map))
+    target_key = mod_proxy.proxy_line_map[target_row]
+    mod_proxy._handle_proxy_mouse(0, 5, target_row)
+    check("proxy: _proxy_just_expanded set by the click", mod_proxy._proxy_just_expanded == target_key)
+    mod_proxy._build_proxy_output()
+    check("proxy: just-expanded entry stays visible in the next render (auto-scroll intact)",
+          target_key in mod_proxy.proxy_line_map.values())
 
 
 # ORCHESTRATOR
@@ -247,7 +273,7 @@ def run_probe_workflow():
     print("=" * 70)
     test_warnings_refresh_button()
     test_workers_freeze_button()
-    test_proxy_undo_button()
+    test_proxy_pane_reverted_no_header()
 
     total = len(_RESULTS)
     passed = sum(1 for _, ok in _RESULTS if ok)

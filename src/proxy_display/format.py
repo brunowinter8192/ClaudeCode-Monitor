@@ -3,34 +3,14 @@ from collections import Counter
 from typing import Optional
 
 from ..constants import (
-    RESET, SOFT_RESET, DIM, YELLOW, WHITE, HOVER_BG,
+    RESET, SOFT_RESET, DIM, YELLOW, HOVER_BG,
     DIM_YELLOW_BG, DIM_GREEN_BG, ZEBRA_BG_A, ZEBRA_BG_B, COLLISION_BG,
 )
 from ..format.token_format import _format_k
-from ..utils import truncate_visible, _ANSI_ESCAPE_RE
+from ..utils import truncate_visible
 from .parser import _chars_to_tokens
 
 # FUNCTIONS
-
-# Build the proxy pane's one-line header: title + [undo] button (dimmed when _proxy_undo_stack is
-# empty, still clickable — same no-op as pressing 'u' with nothing to undo). When regions_out
-# given, registers the button's (start_col,end_col,phys_row=1) -> 'undo' region, but ONLY when it
-# fits pane_width — no wrap-splitting (unlike worker-proxy's header markers): a single short
-# button either fits on row 1 or is omitted entirely (text AND region), matching
-# utils.append_copy_symbol's no-room-no-symbol convention.
-def _format_proxy_header(undo_available: bool, pane_width: int = 80, regions_out: Optional[dict] = None) -> str:
-    if regions_out is not None:
-        regions_out.clear()
-    title = f"{YELLOW}PROXY{RESET}"
-    btn_label = "[undo]"
-    start_col = len("PROXY") + 2
-    end_col = start_col + len(btn_label) - 1
-    if end_col >= pane_width:
-        return title
-    if regions_out is not None:
-        regions_out[(start_col + 1, end_col + 1, 1)] = 'undo'
-    color = WHITE if undo_available else DIM
-    return f"{title}  {color}{btn_label}{RESET}"
 
 # Format token estimate as compact string with ~ prefix
 def _format_tok_est(chars: int) -> str:

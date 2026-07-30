@@ -1,7 +1,7 @@
 # INFRASTRUCTURE
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set
 import os
 import time
 
@@ -14,7 +14,7 @@ from .parser import (
     parse_proxy_log_forwarded, _lazy_load_messages_forwarded, find_proxy_log_path,
     accumulate_dual_log, _find_dual_log_paths, _infer_model_family,
 )
-from .format import format_proxy_block, _is_standalone_entry, _format_proxy_header
+from .format import format_proxy_block, _is_standalone_entry
 from ..panes.token_pane import build_cache_turns
 from ..input.click_handler import (
     read_keypress, setup_keyboard_input, restore_terminal,
@@ -24,8 +24,6 @@ from ..input.click_handler import (
 from ..ram_audit import register_ram_dump
 # From pane_error_log.py: shared exception-safe pane-error sink
 from ..pane_error_log import log_pane_error
-# From utils.py: header wrap-row count, consistent with worker_proxy_pane's header/body split
-from ..utils import visual_line_count
 
 proxy_entries: List[dict] = []
 proxy_expand_states: Dict[int, bool] = {}
@@ -51,7 +49,6 @@ _proxy_just_expanded = None  # line_map key set by mouse handler on expand; clea
 _proxy_current_main_session: Optional[str] = None  # tracks session change for full state reset
 _proxy_session_start_ts: Optional[str] = None  # filters new entries to current session window
 _proxy_undo_stack: list = []  # (key, prev_state) tuples for 'u' expand/collapse undo, capped at 200
-_proxy_header_regions: Dict[Tuple[int, int, int], str] = {}  # (start_col,end_col,phys_row=1) → 'undo'
 
 # ORCHESTRATOR
 
@@ -96,12 +93,11 @@ def run_proxy_loop() -> None:
                     input_changed = True
 
                 if input_changed:
-                    output, header = _build_proxy_output()
+                    output = _build_proxy_output()
                     if output != last_output:
                         print("\033[2J\033[3J\033[H", end='', flush=True)
                         if output:
-                            print(output, end='', flush=True)
-                            print(f"\033[H{header}\033[K", end='', flush=True)
+                            print(output)
                         last_output = output
 
                 wait_for_input(INPUT_POLL_INTERVAL)
@@ -196,11 +192,6 @@ def _handle_proxy_mouse(button: int, col: int, row: int) -> bool:
     global proxy_expand_states, proxy_scroll_offset, proxy_hover_row
     global _proxy_just_expanded, _copy_feedback_until, _proxy_undo_stack
     if button == 0:
-        for (sc, ec, er), action in _proxy_header_regions.items():
-            if row == er and sc <= col <= ec:
-                if action == 'undo':
-                    return _undo_proxy_expand()
-                return False
         key = proxy_line_map.get(row)
         if key is None:
             return False
@@ -335,9 +326,8 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
         )
     return True, now
 
-# Build ANSI output for proxy pane with header ([undo] button) + body split; auto-scrolls to
-# just_expanded entry; clears _proxy_just_expanded; returns (output, header) for overdraw
-def _build_proxy_output() -> tuple:
+# Build ANSI output for proxy pane; auto-scrolls to just_expanded entry; clears _proxy_just_expanded
+def _build_proxy_output() -> str:
     global proxy_scroll_offset, _proxy_pane_width, _proxy_copy_rows, _proxy_just_expanded
     try:
         term = os.get_terminal_size()
@@ -347,28 +337,20 @@ def _build_proxy_output() -> tuple:
         pane_height = 50
         pane_width = 80
     _proxy_pane_width = pane_width
-    header = _format_proxy_header(bool(_proxy_undo_stack), pane_width, _proxy_header_regions)
-    header_lines = visual_line_count(header, pane_width)
-    content_height = max(1, pane_height - header_lines)
-    viewport_lines_n = max(1, content_height - 1)
     _proxy_copy_rows.clear()
     item_positions: dict = {}
     output, total_lines = format_proxy_block(
         proxy_entries, proxy_expand_states, proxy_line_map, proxy_hover_row,
-        content_height, pane_width, proxy_scroll_offset,
+        pane_height, pane_width, proxy_scroll_offset,
         turns=_proxy_cache_turns, item_positions_out=item_positions,
         copy_feedback=_copy_feedback_until, copy_rows_out=_proxy_copy_rows,
     )
+    viewport_lines_n = pane_height - 1
     max_scroll = max(0, total_lines - viewport_lines_n)
     proxy_scroll_offset = min(proxy_scroll_offset, max_scroll)
-    shifted = {r + header_lines: k for r, k in proxy_line_map.items()}
-    proxy_line_map.clear()
-    proxy_line_map.update(shifted)
-    shifted_copy = {r + header_lines for r in _proxy_copy_rows}
-    _proxy_copy_rows.clear()
-    _proxy_copy_rows.update(shifted_copy)
     if _proxy_just_expanded is not None and _proxy_just_expanded in item_positions:
         item_line = item_positions[_proxy_just_expanded]
+        viewport_lines_n = pane_height - 1
         max_scroll = max(0, total_lines - viewport_lines_n)
         clamped = min(proxy_scroll_offset, max_scroll)
         start = max(0, total_lines - viewport_lines_n - clamped)
@@ -377,15 +359,9 @@ def _build_proxy_output() -> tuple:
             _proxy_copy_rows.clear()
             output, total_lines = format_proxy_block(
                 proxy_entries, proxy_expand_states, proxy_line_map, proxy_hover_row,
-                content_height, pane_width, proxy_scroll_offset,
+                pane_height, pane_width, proxy_scroll_offset,
                 turns=_proxy_cache_turns,
                 copy_feedback=_copy_feedback_until, copy_rows_out=_proxy_copy_rows,
             )
-            shifted = {r + header_lines: k for r, k in proxy_line_map.items()}
-            proxy_line_map.clear()
-            proxy_line_map.update(shifted)
-            shifted_copy = {r + header_lines for r in _proxy_copy_rows}
-            _proxy_copy_rows.clear()
-            _proxy_copy_rows.update(shifted_copy)
     _proxy_just_expanded = None
-    return header + '\n' + output, header
+    return output
