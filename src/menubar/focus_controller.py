@@ -38,11 +38,14 @@ class FocusController:
     # Per-project auto-abort fires when all workers of a project are idle for >=5s while a
     # bg timer is running, OR when the project has no worker sessions at all (vacuously all-idle
     # — a timer with nothing to wait for is dead weight). A worker is 'working' when hook status
-    # is working OR worker-cli wrote an orchestrator signal within ORCHESTRATOR_SIGNAL_BUFFER_SECS.
-    # NOT gated on has_bg: measured 2026-07-30, EVERY foreground Bash call holds an open handle on
-    # a tasks/<id>.output file, so has_bg is "some call is running", not "a task was backgrounded"
-    # — gating on it would hold the abort for any busy worker, which `status == working` already
-    # covers. Backgrounding is only unambiguous at the proxy's launch-ack injection.
+    # is working, has_bg=True, OR worker-cli wrote an orchestrator signal within
+    # ORCHESTRATOR_SIGNAL_BUFFER_SECS.
+    # On has_bg: alone it is NOT a backgrounding signal — measured 2026-07-30, every FOREGROUND
+    # Bash call also holds an open handle on a tasks/<id>.output file, which is why it failed as
+    # a standalone Escape trigger (fired on a worker's first call and killed it). Conjoined with
+    # status == 'idle' it is sound: a foreground call keeps the worker 'working', so idle + a live
+    # handle means a call outlived its turn — i.e. it was backgrounded. Observed live 18:28:43,
+    # `esc-live2:idle:has_bg=True` while its re-index ran.
     # See process-docs/menubar_signal_grace/initial_design.md.
     def tick(self, sessions, bg_by_project: dict, now: float) -> None:
         # Auto-focus: debounce idle main sessions (working→idle transition + 3s hold-off)
@@ -71,7 +74,7 @@ class FocusController:
                 continue
             workers = workers_by_project.get(proj, [])
             all_idle = all(
-                w.status == 'idle' and not _has_recent_send_signal(w, signals, now)
+                w.status == 'idle' and not w.has_bg and not _has_recent_send_signal(w, signals, now)
                 for w in workers
             )
             # Build log fields before mutating _all_workers_idle_since_ts
