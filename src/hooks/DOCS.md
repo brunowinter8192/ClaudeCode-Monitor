@@ -374,9 +374,9 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_rag_cli_index_isolated.py (74 LOC)
+### block_rag_cli_index_isolated.py (87 LOC)
 
-**Purpose:** PreToolUse hook (Bash) — blocks any `rag-cli index` call that shares the Bash invocation with anything other than a single leading `cd`. `rag-cli index` runs for minutes; `block_rag_cli_chained.py`'s trailing-only rule misses noise placed BEFORE the index segment (e.g. `tail <log> \n echo ... \n cd ... && rag-cli index ...` — a poll-then-index pattern that grabs the collection lock mid-run). This hook enforces the tighter rule: at most one leading `cd`, exactly one `rag-cli index` segment, nothing else — in any position. Out of scope for all other rag-cli subcommands (`search`, `delete`, `list_documents`, etc.), which stay governed by `block_rag_cli_chained.py`. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — blocks any `rag-cli index` call that shares the Bash invocation with anything other than shell variable assignments and a `cd`. `rag-cli index` runs for minutes; `block_rag_cli_chained.py`'s trailing-only rule misses noise placed BEFORE the index segment (e.g. `tail <log> \n echo ... \n cd ... && rag-cli index ...` — a poll-then-index pattern that grabs the collection lock mid-run). This hook enforces the tighter rule: any number of assignment-only segments, any number of `cd` segments, exactly one `rag-cli index` segment (optionally env-var-prefixed, e.g. `PYTHONUNBUFFERED=1 rag-cli index ...`), nothing else — in any position. Backslash+newline line-continuations are collapsed before segment-splitting (not treated as a separator). Out of scope for all other rag-cli subcommands (`search`, `delete`, `list_documents`, etc.), which stay governed by `block_rag_cli_chained.py`. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
@@ -389,18 +389,26 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 - `rag-cli index --collection x ; tail /tmp/x.log` — noise after index via `;`
 - `rag-cli delete --collection x && rag-cli index --collection x` — a second rag-cli command (even `rag-cli`) is not exempt
 - `rag-cli index --collection x | tee /tmp/log` — piped
+- `tail -20 /tmp/x.log && PYTHONUNBUFFERED=1 rag-cli index --collection x` — env-var-prefixed index does NOT exempt a preceding non-cd/non-assignment segment (2026-08-01 fix — see Gotchas)
+- `RAG_ROOT=/x \n tail /tmp/y.log \n cd "$RAG_ROOT" && PYTHONUNBUFFERED=1 rag-cli index --collection x` — the standalone assignment line is allowed, the `tail` line still blocks
 
 **Allowed patterns:**
 - `rag-cli index --collection x` — bare, standalone
 - `rag-cli index --collection x > /tmp/out.log 2>&1` — redirect is not a separator, stays in the segment
-- `cd /some/path && rag-cli index --collection x` — one leading cd + index, nothing else
+- `cd /some/path && rag-cli index --collection x` — cd + index, nothing else
 - `cd /path && rag-cli index --collection x > /tmp/out.log 2>&1`
+- `PYTHONUNBUFFERED=1 rag-cli index --collection x` — env-var prefix on the index segment itself
+- `RAG_ROOT=~/path \n cd "$RAG_ROOT" && PYTHONUNBUFFERED=1 rag-cli index --collection x \\\n > /tmp/out.log 2>&1` — the canonical skill form: standalone assignment line, cd, env-prefixed index, backslash-continued redirect
 - any command without `rag-cli index` — out of scope, anchor exits early (`rag-cli search`/`delete`/`list_documents` all pass)
 - `rag-cli index` inside a quoted string / heredoc body — blanked by `_strip_non_shell_active`, anchor fails
 
-**Segment split.** Same `_SEPARATOR_RE` as `block_rag_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; redirects (`>`, `2>&1`) survive intact as part of their segment. Fast-path anchor `_RAG_INDEX_RE` (`\brag-cli\s+index\b`) searched first; if absent, exit 0 immediately (no `rag-cli index` in the command at all). Every segment must then match either `_RAG_INDEX_SEGMENT_RE` (`^rag-cli\s+index\b`) or `_CD_SEGMENT_RE` (`^cd\b`) — position-independent (a cd segment may appear before OR after the index segment); exactly one index segment is required, more than one blocks.
+**Segment split.** Same `_SEPARATOR_RE` as `block_rag_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; redirects (`>`, `2>&1`) survive intact as part of their segment. Before splitting, `_LINE_CONTINUATION_RE` (`\\\n`) is collapsed to a space so a backslash-continued line stays one logical segment. Fast-path anchor `_RAG_INDEX_RE` (`\brag-cli\s+index\b`) searched first; if absent, exit 0 immediately. Every segment must then match one of three classifiers: `_RAG_INDEX_SEGMENT_RE` (`^(?:VAR=val\s+)*rag-cli\s+index\b` — env-assignment prefix optional), `_CD_SEGMENT_RE` (`^cd\b`), or `_ASSIGNMENT_ONLY_SEGMENT_RE` (`^(?:VAR=val\s*)+$` — one or more bare assignments, nothing else) — all position-independent; exactly one index segment is required, more than one blocks.
 
-**Smoke:** `dev/hook_smoke/test_block_rag_cli_index_isolated.py` (16 cases: 6 block including the observed incident, 10 allow covering bare/redirect/cd-leading/out-of-scope-subcommand/no-rag-cli/single-quote/heredoc).
+**Gotchas:**
+- **2026-08-01 fix — env-var prefix bypass.** The original `_RAG_INDEX_SEGMENT_RE` was anchored `^rag-cli\s+index\b` with no assignment-prefix allowance. An env-prefixed segment (`PYTHONUNBUFFERED=1 rag-cli index ...`) matched neither the index regex nor the cd regex, so `index_segments` came back empty and the early-exit `if not index_segments: sys.exit(0)` treated the whole command as out-of-scope — silently ALLOWING any noise placed alongside an env-prefixed index call. Fixed by making the assignment prefix part of `_RAG_INDEX_SEGMENT_RE` itself, and adding `_ASSIGNMENT_ONLY_SEGMENT_RE` as a third allowed classifier (needed because a real skill invocation commonly declares `RAG_ROOT=...` on its own line before `cd "$RAG_ROOT"`). See `process-docs/tool_use_safety/`.
+- **Line continuation:** without the `_LINE_CONTINUATION_RE` collapse, `rag-cli index --collection x \` + newline + `> /tmp/x.log` split into two segments at the bare `\n`, and the second (`> /tmp/x.log`) matched neither classifier — a legitimate backslash-continued redirect blocked.
+
+**Smoke:** `dev/hook_smoke/test_block_rag_cli_index_isolated.py` (24 cases: 10 block including the observed incident and both 2026-08-01 hole reproductions, 14 allow covering bare/redirect/cd/env-prefix/assignment-line/line-continuation/out-of-scope-subcommand/no-rag-cli/single-quote/heredoc).
 
 ---
 

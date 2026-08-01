@@ -10,41 +10,54 @@ from _fire_log import log_fire
 
 # Fast-path anchor: skip commands with no rag-cli index call at all
 _RAG_INDEX_RE = re.compile(r'\brag-cli\s+index\b')
-# A segment is the rag-cli index call itself (redirects stay part of the segment)
-_RAG_INDEX_SEGMENT_RE = re.compile(r'^rag-cli\s+index\b')
-# A segment is a leading cd — the only other thing allowed alongside rag-cli index
+# One `VAR=value` shell assignment token (value = any non-whitespace run)
+_ASSIGN_TOKEN = r'[A-Za-z_][A-Za-z0-9_]*=\S*'
+# Zero or more assignment tokens, space-separated, as an env-var prefix on a command
+_ASSIGN_PREFIX = rf'(?:{_ASSIGN_TOKEN}\s+)*'
+# A segment is the rag-cli index call itself, optionally env-var-prefixed
+# (redirects stay part of the segment)
+_RAG_INDEX_SEGMENT_RE = re.compile(rf'^{_ASSIGN_PREFIX}rag-cli\s+index\b')
+# A segment is a leading cd — allowed alongside rag-cli index
 _CD_SEGMENT_RE = re.compile(r'^cd\b')
+# A segment is one or more bare shell variable assignments and nothing else — allowed
+# alongside rag-cli index (e.g. `RAG_ROOT=~/path` on its own line before `cd "$RAG_ROOT"`)
+_ASSIGNMENT_ONLY_SEGMENT_RE = re.compile(rf'^(?:{_ASSIGN_TOKEN}\s*)+$')
 # Shell command separators: && || ; newline | (single, after ||) and space-bounded &.
 # Order matters — && before single &, || before |. `2>&1` / `>&` not matched
 # (no whitespace before &, no |/;/&& token).
 _SEPARATOR_RE = re.compile(r'&&|\|\||;|\n|\||\s&(?=\s|$)')
+# Backslash+newline is a shell line continuation, not a separator — collapsed before split
+_LINE_CONTINUATION_RE = re.compile(r'\\\n')
 
 _BLOCK_MESSAGE = (
     "rag-cli index must run alone in the Bash invocation — no other commands before, after, or "
-    "piped to it. Only a leading `cd` and output redirection (>, >>, 2>&1) may accompany it. "
-    "Run log checks or other commands in a separate Bash call.\n"
+    "piped to it. Only shell variable assignments, a `cd`, and the rag-cli index call itself "
+    "(optionally env-var-prefixed, with output redirection) may accompany it. Run log checks or "
+    "other commands in a separate Bash call.\n"
 )
 
 
 # ORCHESTRATOR
 
 # Read Bash tool_input from stdin; exit 2 + stderr if a rag-cli index call shares the Bash
-# invocation with anything other than a leading cd. Fail-open on any parse error.
+# invocation with anything other than assignments, a cd, and itself. Fail-open on any parse error.
 def block_rag_cli_index_isolated_workflow() -> None:
     command, session_id = _parse_command()
     if command is None:
         sys.exit(0)
     stripped = _strip_non_shell_active(command)
-    if not _RAG_INDEX_RE.search(stripped):
+    joined = _LINE_CONTINUATION_RE.sub(' ', stripped)
+    if not _RAG_INDEX_RE.search(joined):
         sys.exit(0)
-    segments = [s.strip() for s in _SEPARATOR_RE.split(stripped) if s.strip()]
+    segments = [s.strip() for s in _SEPARATOR_RE.split(joined) if s.strip()]
     index_segments = [s for s in segments if _RAG_INDEX_SEGMENT_RE.match(s)]
     if not index_segments:
         sys.exit(0)
     if len(index_segments) > 1:
         _block(command, session_id)
     for seg in segments:
-        if _RAG_INDEX_SEGMENT_RE.match(seg) or _CD_SEGMENT_RE.match(seg):
+        if (_RAG_INDEX_SEGMENT_RE.match(seg) or _CD_SEGMENT_RE.match(seg)
+                or _ASSIGNMENT_ONLY_SEGMENT_RE.match(seg)):
             continue
         _block(command, session_id)
     sys.exit(0)
