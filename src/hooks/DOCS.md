@@ -22,7 +22,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 **Purpose:** Shared utility — provides `_strip_non_shell_active(command)`, the position-preserving shell-region stripper used by twenty Bash-scanning hooks. Replaces heredoc bodies, single/double-quoted strings, and ANSI-C `$'...'` quotes with spaces of the same length before pattern matching runs. Command substitutions `$(...)` and backtick expressions are kept shell-active. Fail-open: any parse error returns the original command unchanged (never silently allows a blocked pattern due to a strip failure). `_strip_impl` is decomposed into 6 private scan helpers (`_scan_heredoc`, `_scan_ansi_c_quote`, `_scan_cmd_subst`, `_scan_backtick`, `_scan_single_quote`, `_scan_double_quote`), each returning `(fragment, new_i)`.
 **Reads:** n/a (pure logic module, not a standalone script).
 **Writes:** n/a.
-**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_gh_cli_chained.py`, `block_manual_worker_cleanup.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_opus.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py`, `rewrite_gh_cli_read_noise.py`, `rewrite_rag_cli_search_noise.py`, `rewrite_websearch_scrape_noise.py`, `rewrite_worker_cli_capture_noise.py`, `rewrite_worker_cli_response_noise.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
+**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_gh_cli_chained.py`, `block_manual_worker_cleanup.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_cli_index_isolated.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_opus.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py`, `rewrite_gh_cli_read_noise.py`, `rewrite_rag_cli_search_noise.py`, `rewrite_websearch_scrape_noise.py`, `rewrite_worker_cli_capture_noise.py`, `rewrite_worker_cli_response_noise.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
 **Calls out:** stdlib only (no imports).
 
 ---
@@ -371,6 +371,36 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 **Segment split.** Same `_SEPARATOR_RE` as `block_gh_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact. `_find_first_rag_segment()` returns the index of the first segment whose stripped form `.startswith('rag-cli')`.
 
 **Smoke:** `dev/hook_smoke/test_block_rag_cli_chained.py` (11 cases: 4 block, 7 allow including redirect/guard/cd/two-rag-cli/no-rag-cli/single-quote/heredoc).
+
+---
+
+### block_rag_cli_index_isolated.py (74 LOC)
+
+**Purpose:** PreToolUse hook (Bash) — blocks any `rag-cli index` call that shares the Bash invocation with anything other than a single leading `cd`. `rag-cli index` runs for minutes; `block_rag_cli_chained.py`'s trailing-only rule misses noise placed BEFORE the index segment (e.g. `tail <log> \n echo ... \n cd ... && rag-cli index ...` — a poll-then-index pattern that grabs the collection lock mid-run). This hook enforces the tighter rule: at most one leading `cd`, exactly one `rag-cli index` segment, nothing else — in any position. Out of scope for all other rag-cli subcommands (`search`, `delete`, `list_documents`, etc.), which stay governed by `block_rag_cli_chained.py`. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
+**Writes:** stderr (block message) on violation only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+
+**Blocked patterns:**
+- `tail -20 /tmp/x.log \n echo ... \n cd ... && rag-cli index --collection x > /tmp/out.log 2>&1` — the observed incident: polling noise before a leading cd + index
+- `tail -20 /tmp/x.log && rag-cli index --collection x` — noise before index
+- `rag-cli index --collection x && echo done` — noise after index
+- `rag-cli index --collection x ; tail /tmp/x.log` — noise after index via `;`
+- `rag-cli delete --collection x && rag-cli index --collection x` — a second rag-cli command (even `rag-cli`) is not exempt
+- `rag-cli index --collection x | tee /tmp/log` — piped
+
+**Allowed patterns:**
+- `rag-cli index --collection x` — bare, standalone
+- `rag-cli index --collection x > /tmp/out.log 2>&1` — redirect is not a separator, stays in the segment
+- `cd /some/path && rag-cli index --collection x` — one leading cd + index, nothing else
+- `cd /path && rag-cli index --collection x > /tmp/out.log 2>&1`
+- any command without `rag-cli index` — out of scope, anchor exits early (`rag-cli search`/`delete`/`list_documents` all pass)
+- `rag-cli index` inside a quoted string / heredoc body — blanked by `_strip_non_shell_active`, anchor fails
+
+**Segment split.** Same `_SEPARATOR_RE` as `block_rag_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; redirects (`>`, `2>&1`) survive intact as part of their segment. Fast-path anchor `_RAG_INDEX_RE` (`\brag-cli\s+index\b`) searched first; if absent, exit 0 immediately (no `rag-cli index` in the command at all). Every segment must then match either `_RAG_INDEX_SEGMENT_RE` (`^rag-cli\s+index\b`) or `_CD_SEGMENT_RE` (`^cd\b`) — position-independent (a cd segment may appear before OR after the index segment); exactly one index segment is required, more than one blocks.
+
+**Smoke:** `dev/hook_smoke/test_block_rag_cli_index_isolated.py` (16 cases: 6 block including the observed incident, 10 allow covering bare/redirect/cd-leading/out-of-scope-subcommand/no-rag-cli/single-quote/heredoc).
 
 ---
 
