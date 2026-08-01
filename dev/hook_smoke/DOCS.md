@@ -57,6 +57,19 @@ python3 dev/hook_smoke/test_block_rag_cli_chained.py
 
 ---
 
+### test_block_rag_cli_index_isolated.py (93 LOC)
+
+**Purpose:** 16-case smoke for `block_rag_cli_index_isolated.py`. Verifies 6 blocked cases (the observed poll-then-index incident: `tail` + `echo` + `cd` + index across newlines; noise before index via `&&`; noise after index via `&&`/`;`; a second `rag-cli delete` command alongside index; index piped to `tee`) and 10 allow cases (bare index, index with redirect, cd-before-index, cd-before-index-with-redirect, three out-of-scope rag-cli subcommands (`search_hybrid`/`list_documents`/`delete`), no rag-cli at all, index inside single-quotes, index inside heredoc body).
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_block_rag_cli_index_isolated.py
+```
+
+**Expected output:** `All 16 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+
+---
+
 ### test_block_dangerous_kill.py (90 LOC)
 
 **Purpose:** 18-case smoke for `block_dangerous_kill.py` — pkill -f patterns, pipe-kill chains, heredoc/quote exemptions, and allowlist cases.
