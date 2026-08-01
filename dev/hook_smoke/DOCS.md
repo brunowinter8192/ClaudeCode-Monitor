@@ -57,16 +57,16 @@ python3 dev/hook_smoke/test_block_rag_cli_chained.py
 
 ---
 
-### test_block_rag_cli_index_isolated.py (116 LOC)
+### test_block_rag_cli_index_isolated.py (146 LOC)
 
-**Purpose:** 24-case smoke for `block_rag_cli_index_isolated.py`. Verifies 10 blocked cases (the observed poll-then-index incident: `tail` + `echo` + `cd` + index across newlines; noise before/after index via `&&`/`;`; a second `rag-cli delete` command alongside index; index piped to `tee`; plus the 2026-08-01 hole reproductions — `tail && ` env-prefixed index, env-prefixed index `&& echo`, multi-assignment-prefixed index piped to `tee`, standalone assignment line + `tail` + `cd` + env-prefixed index) and 14 allow cases (bare index, index with redirect, cd-before-index with/without redirect, env-prefixed bare index, the real HOLE-2 command verbatim — assignment line + cd + env-prefixed index + backslash line-continuation before the redirect, assignment line + cd + bare index + redirect, bare index with a backslash-continued redirect, three out-of-scope rag-cli subcommands (`search_hybrid`/`list_documents`/`delete`), no rag-cli at all, index inside single-quotes, index inside heredoc body).
+**Purpose:** 37-case smoke for `block_rag_cli_index_isolated.py`. Verifies 20 blocked cases (the observed poll-then-index incident: `tail` + `echo` + `cd` + index across newlines; noise before/after index via `&&`/`;`; a second `rag-cli delete` command alongside index; index piped to `tee`; the 2026-08-01 holes — env-prefixed index preceded by `tail`, env-prefixed index followed by `echo`, multi-assignment-prefixed index piped to `tee`, standalone assignment line + `tail` + `cd` + env-prefixed index; the 2026-08-02 holes — command/backtick substitution in an assignment value, substitution in the `--collection` argument, process substitution on a redirect target and as input, arithmetic expansion in an assignment, substitution nested inside a double-quoted `cd` target, backtick in a redirect filename, bare `&` smuggling with and without surrounding whitespace) and 17 allow cases (bare index, index with redirect, cd-before-index with/without redirect, env-prefixed bare index, the real HOLE-2 command verbatim — assignment line + cd + env-prefixed index + backslash line-continuation before the redirect, assignment line + cd + bare index + redirect, bare index with a backslash-continued redirect, quoted semicolon in an assignment value, plain `$VAR` expansion in a `cd` target, `&>` redirect not mistaken for the bare-`&` separator, three out-of-scope rag-cli subcommands (`search_hybrid`/`list_documents`/`delete`), no rag-cli at all, index inside single-quotes, index inside heredoc body).
 
 **Usage (from project root):**
 ```bash
 python3 dev/hook_smoke/test_block_rag_cli_index_isolated.py
 ```
 
-**Expected output:** `All 24 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** `All 37 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
 
 ---
 
