@@ -1,4 +1,4 @@
-# rag-cli index Isolation Hook — Command-Substitution and Bare-& Bypass Fix (2026-08-03)
+# rag-cli index Isolation Hook — Command-Substitution and Bare-& Bypass Fix (2026-08-02)
 
 **Topic:** two further bypass holes in `block_rag_cli_index_isolated.py`, found by
 adversarial replay after the 2026-08-02 env-prefix fix, plus additional vectors found
