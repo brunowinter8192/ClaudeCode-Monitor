@@ -23,6 +23,39 @@ CASES = [
      "rag-cli delete --collection x && rag-cli index --collection x", 2),
     ("index piped to tee BLOCK",
      "rag-cli index --collection x | tee /tmp/log", 2),
+    # --- must block: HOLE 1 — env-var prefix must not defeat the anchor ---
+    ("tail before env-prefixed index BLOCK",
+     "tail -20 /tmp/x.log && PYTHONUNBUFFERED=1 rag-cli index --collection x", 2),
+    ("env-prefixed index then echo BLOCK",
+     "PYTHONUNBUFFERED=1 rag-cli index --collection x && echo done", 2),
+    ("multi-env-prefixed index piped to tee BLOCK",
+     "FOO=1 BAR=2 rag-cli index --collection x | tee /tmp/log", 2),
+    # --- must block: HOLE 2 — standalone assignment line does not exempt a tail before it ---
+    ("assignment line + tail + cd + env-prefixed index BLOCK",
+     'RAG_ROOT=/x\ntail /tmp/y.log\ncd "$RAG_ROOT" && PYTHONUNBUFFERED=1 rag-cli index --collection x', 2),
+    # --- must block: HOLE 3 — command substitution smuggles a second command in via an
+    #     assignment value / argument / redirect target (_shell_strip keeps these shell-active) ---
+    ("cmd subst in assignment value BLOCK",
+     "X=$(tail /tmp/a.log) rag-cli index --collection x", 2),
+    ("backtick subst in assignment value BLOCK",
+     "X=`tail /tmp/a.log` rag-cli index --collection x", 2),
+    ("cmd subst in --collection argument BLOCK",
+     "rag-cli index --collection $(cat /tmp/name.txt)", 2),
+    ("process substitution on redirect target BLOCK",
+     "rag-cli index --collection x > >(tail -5)", 2),
+    ("process substitution as input BLOCK",
+     "rag-cli index --collection x < <(cat /tmp/y)", 2),
+    ("arithmetic expansion in assignment value BLOCK",
+     "X=$((1+1)) rag-cli index --collection x", 2),
+    ("cmd subst inside double-quoted cd target BLOCK",
+     'cd "$(pwd)" && rag-cli index --collection x', 2),
+    ("backtick inside redirect filename BLOCK",
+     "rag-cli index --collection x > `pwd`/out.log", 2),
+    # --- must block: bare & smuggles a second command regardless of surrounding whitespace ---
+    ("bare & no trailing space smuggling BLOCK",
+     "rag-cli index --collection x &tail /tmp/y", 2),
+    ("bare & no spaces at all smuggling BLOCK",
+     "rag-cli index --collection x&tail /tmp/y", 2),
     # --- must allow: bare index ---
     ("bare index ALLOW",
      "rag-cli index --collection linkedin-reference", 0),
@@ -35,6 +68,26 @@ CASES = [
     # --- must allow: leading cd before index with redirect ---
     ("cd before index with redirect ALLOW",
      "cd /path && rag-cli index --collection x > /tmp/out.log 2>&1", 0),
+    # --- must allow: env-var prefix on the index call itself ---
+    ("env-prefixed bare index ALLOW",
+     "PYTHONUNBUFFERED=1 rag-cli index --collection x", 0),
+    # --- must allow: the real HOLE 2 command — assignment line, cd, env-prefixed index,
+    #     backslash line-continuation before the redirect ---
+    ("assignment line + cd + env-prefixed index + line-continued redirect ALLOW",
+     'RAG_ROOT=~/Documents/ai/Meta/ClaudeCode/cli/rag-cli\n'
+     'cd "$RAG_ROOT" && PYTHONUNBUFFERED=1 rag-cli index --collection linkedin-reference \\\n'
+     '    > /tmp/linkedin-reference_batch3_index.log 2>&1', 0),
+    ("assignment line + cd + bare index + redirect ALLOW",
+     'RAG_ROOT=/x\ncd "$RAG_ROOT" && rag-cli index --collection x > /tmp/o.log 2>&1', 0),
+    ("bare index with backslash line-continued redirect ALLOW",
+     "rag-cli index --collection x \\\n    > /tmp/x.log 2>&1", 0),
+    # --- must allow: quoted metacharacters that are NOT command substitution ---
+    ("quoted semicolon in assignment value ALLOW",
+     'X="a;b" rag-cli index --collection x', 0),
+    ("plain $VAR expansion in cd target is not command substitution ALLOW",
+     'RAG_ROOT=/x\ncd "$RAG_ROOT" && rag-cli index --collection x', 0),
+    ("&> redirect not mistaken for background-& separator ALLOW",
+     "rag-cli index --collection x &> /tmp/out.log", 0),
     # --- out of scope: rag-cli without index ---
     ("rag-cli search out of scope ALLOW",
      'rag-cli search_hybrid "q" coll', 0),
