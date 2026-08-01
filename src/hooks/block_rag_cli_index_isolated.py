@@ -22,16 +22,25 @@ _CD_SEGMENT_RE = re.compile(r'^cd\b')
 # A segment is one or more bare shell variable assignments and nothing else — allowed
 # alongside rag-cli index (e.g. `RAG_ROOT=~/path` on its own line before `cd "$RAG_ROOT"`)
 _ASSIGNMENT_ONLY_SEGMENT_RE = re.compile(rf'^(?:{_ASSIGN_TOKEN}\s*)+$')
-# Shell command separators: && || ; newline | (single, after ||) and space-bounded &.
-# Order matters — && before single &, || before |. `2>&1` / `>&` not matched
-# (no whitespace before &, no |/;/&& token).
-_SEPARATOR_RE = re.compile(r'&&|\|\||;|\n|\||\s&(?=\s|$)')
+# Shell command separators: && || ; newline | (single, after ||) and bare & (background).
+# Order matters — && before single &, || before |. Single & excludes `&&`/`&>`/`N>&M`
+# (2>&1) via lookaround on both sides — no whitespace requirement, since bash treats
+# `x&tail` (no spaces at all) identically to `x & tail` as two commands.
+_SEPARATOR_RE = re.compile(r'&&|\|\||;|\n|\||(?<![&>])&(?![&>])')
 # Backslash+newline is a shell line continuation, not a separator — collapsed before split
 _LINE_CONTINUATION_RE = re.compile(r'\\\n')
+# Any command/process substitution anywhere blocks outright when rag-cli index is present —
+# checked against the RAW (unstripped) command: _strip_non_shell_active keeps $()/backticks
+# shell-active outside quotes, but its double-quote scanner blanks them INSIDE "..." even
+# though real bash still evaluates $(...) there (`cd "$(pwd)"` really runs pwd) — a bare
+# raw-text search closes that gap too. Plain `$VAR`/`${VAR}` expansion does not match (no
+# literal `(` follows `$`).
+_SUBSHELL_RE = re.compile(r'\$\(|`|<\(|>\(')
 
 _BLOCK_MESSAGE = (
     "rag-cli index must run alone in the Bash invocation — no other commands before, after, or "
-    "piped to it. Only shell variable assignments, a `cd`, and the rag-cli index call itself "
+    "piped to it, and no command/process substitution ($(...), `...`, <(...), >(...)) anywhere "
+    "in it. Only shell variable assignments, a `cd`, and the rag-cli index call itself "
     "(optionally env-var-prefixed, with output redirection) may accompany it. Run log checks or "
     "other commands in a separate Bash call.\n"
 )
@@ -49,6 +58,8 @@ def block_rag_cli_index_isolated_workflow() -> None:
     joined = _LINE_CONTINUATION_RE.sub(' ', stripped)
     if not _RAG_INDEX_RE.search(joined):
         sys.exit(0)
+    if _SUBSHELL_RE.search(command):
+        _block(command, session_id)
     segments = [s.strip() for s in _SEPARATOR_RE.split(joined) if s.strip()]
     index_segments = [s for s in segments if _RAG_INDEX_SEGMENT_RE.match(s)]
     if not index_segments:
