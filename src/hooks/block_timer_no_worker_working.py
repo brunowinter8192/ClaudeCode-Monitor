@@ -17,8 +17,7 @@ _SLEEP_ONLY_BG = re.compile(r'^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]
 _WORKTREE_FRAGMENT = '.claude/worktrees/'
 
 _BLOCK_MESSAGE = (
-    "no worker of this project is currently working — arming the background sleep-timer now "
-    "would idle the orchestrator for nothing. Skip the timer, or arm it after a worker starts.\n"
+    "Go idle immediately. No worker of this project is working — this timer may not be armed.\n"
 )
 
 # ORCHESTRATOR
@@ -93,12 +92,17 @@ def _resolve_worker_cli() -> str:
     return sorted(candidates)[-1] if candidates else None
 
 # Run 'worker-cli status --all <project_path>' with 3s timeout; return raw stdout.
-# Raises on unresolved binary / subprocess error / timeout / non-zero exit — a broken probe
-# must never be mistaken for a zero-worker project; caller (decide) treats any raise as allow.
+# Raises on unresolved binary / unresolved tmux / subprocess error / timeout / non-zero exit —
+# a broken probe must never be mistaken for a zero-worker project; caller (decide) treats any
+# raise as allow. tmux check: worker-cli shells out to bare 'tmux' internally — when tmux is
+# not on the hook's PATH, worker-cli silently degrades to '(no active workers)' with exit 0
+# instead of erroring, which would otherwise be misread as a genuine empty worker set.
 def _live_worker_statuses(project_path: str) -> str:
     binary = _resolve_worker_cli()
     if binary is None:
         raise RuntimeError("worker-cli not resolvable")
+    if shutil.which('tmux') is None:
+        raise RuntimeError("tmux not resolvable on hook PATH — worker-cli status degrades silently")
     result = subprocess.run(
         [binary, 'status', '--all', project_path],
         capture_output=True, text=True, timeout=3,
