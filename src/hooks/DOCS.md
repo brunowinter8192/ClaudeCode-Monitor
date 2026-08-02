@@ -22,7 +22,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 **Purpose:** Shared utility — provides `_strip_non_shell_active(command)`, the position-preserving shell-region stripper used by twenty Bash-scanning hooks. Replaces heredoc bodies, single/double-quoted strings, and ANSI-C `$'...'` quotes with spaces of the same length before pattern matching runs. Command substitutions `$(...)` and backtick expressions are kept shell-active. Fail-open: any parse error returns the original command unchanged (never silently allows a blocked pattern due to a strip failure). `_strip_impl` is decomposed into 6 private scan helpers (`_scan_heredoc`, `_scan_ansi_c_quote`, `_scan_cmd_subst`, `_scan_backtick`, `_scan_single_quote`, `_scan_double_quote`), each returning `(fragment, new_i)`.
 **Reads:** n/a (pure logic module, not a standalone script).
 **Writes:** n/a.
-**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_gh_cli_chained.py`, `block_manual_worker_cleanup.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_cli_index_isolated.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_opus.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py`, `rewrite_gh_cli_read_noise.py`, `rewrite_rag_cli_search_noise.py`, `rewrite_websearch_scrape_noise.py`, `rewrite_worker_cli_capture_noise.py`, `rewrite_worker_cli_response_noise.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
+**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_gh_cli_chained.py`, `block_linkedin_cli_isolated.py`, `block_manual_worker_cleanup.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_cli_index_isolated.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_opus.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py`, `rewrite_gh_cli_read_noise.py`, `rewrite_rag_cli_search_noise.py`, `rewrite_websearch_scrape_noise.py`, `rewrite_worker_cli_capture_noise.py`, `rewrite_worker_cli_response_noise.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
 **Calls out:** stdlib only (no imports).
 
 ---
@@ -748,6 +748,41 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 **Block message escalation.** States the verified-correct escape: read via the Read tool; when the total exceeds the per-call token cap, page with MULTIPLE Read calls via `offset`/`limit` (offset starts at 1); files with very long single lines need a small line-count limit per call.
 
 **Smoke:** `dev/hook_smoke/test_block_po_read.py` (16 cases: 9 block including the piped `cat | head` case and the `split`/`dd` partitioning cases, 7 no-op including redirect-write, quoted-string, and parse-error fail-open).
+
+---
+
+### block_linkedin_cli_isolated.py (95 LOC)
+
+**Purpose:** PreToolUse hook (Bash) — blocks the `linkedin` CLI (the LinkedIn project's `~/.local/bin/linkedin` wrapper) from sharing a Bash invocation with ANY other segment — no piping (`grep`/`head`/`tail`/`sed`/`awk`/`wc`), no chaining with an unrelated command, and no more than one `linkedin` call per invocation. Rule collapses to one check: if any segment is a `linkedin` invocation, more than one segment total (of any kind) is a violation — this single condition covers both "chained with something else" and "two `linkedin` calls" without a separate count check. Differs from `block_gh_cli_chained.py` (the closest structural analog by segment-matching, but explicitly allows multiple calls of its protected tools) — `linkedin` holds a process lock for its whole dispatch and cold-starts Chrome (~7s) per invocation, so a second call in the same block does not run in parallel, it blocks on the first's lock. The count-based enforcement itself is closer to `block_rag_cli_index_isolated.py`'s `len(index_segments) > 1` check. One deliberate allowance: a single env-var-assignment prefix on the `linkedin` segment itself (`LINKEDIN_HEADED=1 linkedin get_messages`) — grounded in a real usage (`src/linkedin/browser.py` reads `LINKEDIN_HEADED` for headed-browser debugging), not invented for symmetry with `block_rag_cli_index_isolated.py`'s assignment handling. No `cd` allowance — unlike `rag-cli index` (path-relative), `linkedin` resolves via `$PATH` from any directory, so chaining a `cd` before it serves no legitimate purpose. **Explicitly does NOT chase command/process substitution** (`$(...)`, backticks, `<(...)`, `>(...)`) the way `block_rag_cli_index_isolated.py` hardens against it — that hook's target has real correctness stakes (a multi-minute indexing operation holding a collection lock); this hook's target is a performance guard only, so a false negative here just loses the optimization while a false positive would block legitimate work outright. This scope decision is stated in the hook file itself (not only here), specifically so a future reader does not "fix" it as an oversight the way the `rag-cli index` hardening fixed a real observed incident. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
+**Writes:** stderr (block message explaining the process-lock/cold-Chrome reason, not just the rule) on violation only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+
+**Blocked patterns:**
+- `linkedin get_notifications | grep NEW` — piped to grep (also: head/tail/sed/awk/wc)
+- `linkedin get_messages --count 3 && linkedin get_notifications` — two `linkedin` calls, even both valid
+- `linkedin get_messages ; linkedin get_notifications` — same, via `;`
+- `linkedin get_messages && echo done` — chained with an unrelated command
+- `echo start && linkedin get_messages` — unrelated command BEFORE the `linkedin` call (no leading-segment exemption, unlike `block_rag_cli_chained.py`'s trailing-only rule)
+- `LINKEDIN_HEADED=1 linkedin get_messages | grep NEW` — env-prefix does not exempt a second segment
+
+**Allowed patterns:**
+- `linkedin get_notifications --count 15` — standalone
+- `linkedin get_messages --days 3` — standalone, any subcommand/flags
+- `linkedin get_messages > /tmp/out.txt` — redirect is not a separator, one segment
+- `LINKEDIN_HEADED=1 linkedin get_messages` — env-prefixed standalone (real usage, see Purpose)
+- `linkedin` — bare, no subcommand: still exactly one segment, pinned ALLOWED not a special case
+- `cd /path/to/.../linkedin && git status` — "linkedin" as a path segment inside `cd`, unrelated command follows: neither segment starts with the `linkedin` token, out of scope entirely
+- `python3 cli/linkedin/cli.py get_messages` — path containing "linkedin", not the `linkedin` command itself — out of scope (this hook does not detect direct `cli.py` invocations, only the literal wrapper command)
+- `grep linkedin file.txt` — "linkedin" as a grep argument, not a command
+- `linkedin-web scrape` — different tool name, boundary check requires whitespace/end-of-segment after the token, not just a non-word character
+- `echo "call linkedin later"`, `echo 'linkedin get_messages | grep NEW'` — quoted mentions, blanked by `_strip_non_shell_active` before segment-splitting
+- any command with no `linkedin` token at all — not policed
+
+**Segment split.** Same `_SEPARATOR_RE` as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact. `_LINKEDIN_SEGMENT_RE` (`^(?:VAR=val\s+)*linkedin(?:\s|$)`) requires the token at segment-start, optionally env-assignment-prefixed, followed by whitespace or end-of-segment — NOT a bare `\blinkedin\b` word boundary, which would incorrectly match `linkedin-web`/`linkedin2` (`-`/digits are non-word characters too, so `\b` alone doesn't exclude them).
+
+**Smoke:** `dev/hook_smoke/test_block_linkedin_cli_isolated.py` (25 cases: 11 block covering pipe/chain/two-calls/leading-unrelated-command/env-prefix-then-pipe, 13 allow covering standalone/redirect/env-prefix/bare-no-subcommand/false-positive-avoidance (path segment, cd, grep argument, lookalike tool name, quoted mentions), 1 malformed-stdin fail-open).
 
 ---
 

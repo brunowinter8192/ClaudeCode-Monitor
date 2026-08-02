@@ -308,3 +308,16 @@ python3 dev/hook_smoke/test_block_po_read.py
 ```
 
 **Expected output:** `All 14 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+
+---
+
+### test_block_linkedin_cli_isolated.py (114 LOC)
+
+**Purpose:** 25-case smoke for `block_linkedin_cli_isolated.py`. Verifies 11 blocked cases (piped to grep/head/tail/sed/awk/wc, two `linkedin` calls chained via `&&`/`;`, chained with an unrelated command both after and BEFORE the `linkedin` call, env-prefixed call then piped) and 13 pass cases (standalone with `--count`/`--days`, redirect-to-file, env-prefixed standalone, bare `linkedin` with no subcommand — a pinned decision, not accidental — non-`linkedin` command untouched, and 5 false-positive-avoidance cases: "linkedin" as a `cd` path segment, as a `cli/linkedin/cli.py` path, as a `grep` argument, as a different tool's name prefix (`linkedin-web`), and as text inside quotes), plus 1 malformed-stdin fail-open case.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_block_linkedin_cli_isolated.py
+```
+
+**Expected output:** `All 25 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
