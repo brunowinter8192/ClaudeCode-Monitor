@@ -334,3 +334,16 @@ python3 dev/hook_smoke/test_block_rag_cli_document_repeat.py
 ```
 
 **Expected output:** `All rag-cli document-repeat tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+
+---
+
+### test_block_timer_no_worker_working.py (104 LOC)
+
+**Purpose:** 10-case smoke for `block_timer_no_worker_working.py`. Calls `decide()` directly with a stub `status_fn` (raw `worker-cli status --all` stdout text, or `raises` sentinel — no real workers). Verifies 3 BLOCK cases (empty worker set / `(no active workers)`; all-idle including `'idle 59%'` suffix form; bare `sleep N` background with no worker working) and 7 ALLOW cases (one `working` among idle; single `unknown`; `unknown` mixed with idle; `limit reached`; foreground call; non-sleep background command; `status_fn` raises — fail-open). Does NOT cover the `tmux`-unresolvable broken-probe guard in `_live_worker_statuses` — that check sits below the `status_fn` injection boundary; verified instead by a live PATH-stripped subprocess drive (see `process-docs/timer_guard/`).
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_block_timer_no_worker_working.py
+```
+
+**Expected output:** `10/10 passed` (exit 0).
