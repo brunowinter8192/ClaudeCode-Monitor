@@ -813,7 +813,32 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ---
 
-### hook_setup.py (149 LOC)
+### block_rag_cli_document_repeat.py (196 LOC)
+
+**Purpose:** PreToolUse hook (Bash) — the first STATEFUL hook in this family. Blocks the 2nd (or later) single-document `rag-cli index --collection X --document Y` / `rag-cli delete --collection X --document Y` call to the SAME `(subcommand, collection)` within a 10-minute rolling window, across SEPARATE Bash invocations. `block_rag_cli_index_isolated.py` already forbids CHAINING (>1 `index` segment in one Bash call) but each individually-isolated `--document` call passes that hook fine — the gap it cannot see is REPETITION across calls: an observed incident issued ~40 consecutive `rag-cli index --document <file>` calls (and ~48 `rag-cli delete --document <file>` calls) instead of one collection-wide call, none of which individually run long enough to auto-background, so the worker stayed awake for dozens of turns instead of sleeping through one long run. State-persistence architecture is a direct clone of the disabled `block_polling_loop.py.disabled`'s pattern (append-only JSONL, self-pruned to the window on every write, count by session_id+target) — the only established stateful-hook precedent in this codebase; the alternative `last_cmd_state.jsonl`/adjacency-based "last command" pattern was deliberately NOT used (it was redesigned then fully removed in 2026-07-20/21 specifically because adjacency tracking false-positive-blocked legitimate interleaved commands — see `2026-07-20_timer_guard_concurrent_redesign.md`). Segment/argument extraction reuses `block_rag_docs_layer.py`'s technique (regex segment-end scan on the shell-stripped command, then `shlex.split` the ORIGINAL unstripped segment to recover real quoted flag values). Threshold 2, not 3: a genuine single-document op is singular by definition (pull one file back in) — a SECOND `--document` call to the same collection+subcommand within the window is already the opening move of the per-file loop, not a second legitimate one-off. Window 600s, not the polling-loop's 30s: a full model turn sits between two rag-cli calls, so a short window would expire before a real repeat pattern registers. Exits 2 + stderr (naming the collection-wide form as the fix) on the 2nd+ call. Exits 0 on any parse/state error (fail-open — a state-file failure can only undercount, never overcount, so it never causes a false block).
+**Reads:** stdin (CC PreToolUse JSON payload: `{session_id, tool_input: {command}}`); `src/logs/rag_doc_repeat_state.jsonl` (own state, read-modify-write each call).
+**Writes:** stderr (block message naming the collection-wide escape) on the 2nd+ call only; `src/logs/rag_doc_repeat_state.jsonl` (rewritten in full each call — self-pruning overwrite, not append-only on disk even though logically append+prune).
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_fire_log.log_fire`; stdlib (`json`, `re`, `shlex`, `datetime`, `os`).
+
+**Blocked patterns:**
+- `rag-cli index --collection monitor-cc-docs --document a.md` then (separate Bash call, same session, within 10 min) `rag-cli index --collection monitor-cc-docs --document b.md` — 2nd single-document index call to the same collection
+- `rag-cli delete --collection monitor-cc-docs --document a.md` then `rag-cli delete --collection monitor-cc-docs --document b.md` (same session) — delete is covered identically to index
+
+**Allowed patterns:**
+- `rag-cli index --collection monitor-cc-docs --document a.md` — a single one-off `--document` call, alone, always passes
+- `rag-cli index --collection monitor-cc-docs` (no `--document`, any number of times) — collection-wide call never touches the state file, out of scope by design
+- a 2nd `--document` call from a DIFFERENT `session_id` — session-scoped counting, no cross-session leakage
+- any command without `rag-cli index`/`delete` — anchor exits early
+- a segment with `--collection` but no `--document` (or vice versa) — `_extract_target` returns `None`, not counted
+
+**State mechanic.** `_STATE_FILE` (env-var override `MONITOR_CC_RAG_DOC_REPEAT_STATE` for test isolation) holds one JSON line per qualifying occurrence: `{ts, session_id, target}` where `target = "<subcommand>:<collection>"`. On every qualifying call: read entries with `ts >= now - 600s` (self-pruning — older entries silently dropped), append the new occurrence, overwrite the file, then count entries matching `(session_id, target)`; block if count `>= 2`. Accepted trade-off (not discovered later): a legitimate collection-wide call interspersed between two `--document` calls does NOT reset the window — purely time-based, matching the established precedent and avoiding the false-positive history of adjacency-based state.
+
+**Smoke:** `dev/hook_smoke/test_block_rag_cli_document_repeat.py` (7 cases: single `--document` call allow, 2nd call block, 3x collection-wide always-allow, cross-session independence, delete-subcommand-also-counts, malformed-stdin fail-open).
+
+---
+
+### hook_setup.py (150 LOC)
 
 **Purpose:** Idempotent installer with two defense layers. **Layer 1 — Worktree Guard:** `_guard_not_worktree()` checks `Path(__file__).resolve().parts` for consecutive `.claude`/`worktrees` components; exits 2 with a clear error message (stderr) if running from a worktree — preventing dead-path registration. **Layer 2 — Stale-hook Sweep:** `_sweep_stale_hooks()` iterates ALL event keys in `settings["hooks"]` (not only `PreToolUse`), checks every `python3 <path>` entry, and removes any whose script path fails `os.path.exists()`; drops now-empty groups, saves atomically, then runs the normal add-loop. Re-running heals stale entries from any source (worktree accident, repo move, etc.). Runs completely silent on success — no stdout output; stderr only for error conditions (worktree guard, JSON parse failure).
 **Reads:** `~/.claude/settings.json`.

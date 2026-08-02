@@ -53,6 +53,7 @@ _HOOK_SCRIPTS = [
     ("block_po_read.py",                 "Bash"),
     ("block_linkedin_cli_isolated.py",   "Bash"),
     ("block_pipe_scraper_isolated.py",   "Bash"),
+    ("block_rag_cli_document_repeat.py", "Bash"),
 ]
 _HOOK_ENTRIES = [(f"python3 {_HOOKS_DIR / s}", m) for s, m in _HOOK_SCRIPTS]
 

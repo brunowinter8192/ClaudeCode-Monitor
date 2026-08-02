@@ -321,3 +321,16 @@ python3 dev/hook_smoke/test_block_linkedin_cli_isolated.py
 ```
 
 **Expected output:** `All 25 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+
+---
+
+### test_block_rag_cli_document_repeat.py (193 LOC)
+
+**Purpose:** 7-case smoke for `block_rag_cli_document_repeat.py`. Verifies: a single `--document` call passes (exit 0); a 2nd `--document` call to the same collection+subcommand within the window blocks (exit 0 then exit 2); collection-wide calls (no `--document`) always pass, 3x in a row; a different session's `--document` call does not count toward another session's counter (session A #1 = 0, session B #1 = 0, session A #2 = 2); `rag-cli delete --document` is covered by the same threshold as `index`; malformed stdin fails open (exit 0). Each case uses `MONITOR_CC_RAG_DOC_REPEAT_STATE` set to a fresh `tempfile` per case — no shared/leftover state across cases.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_block_rag_cli_document_repeat.py
+```
+
+**Expected output:** `All rag-cli document-repeat tests passed.` (exit 0). HOOK path is relative — must be run from project root.
