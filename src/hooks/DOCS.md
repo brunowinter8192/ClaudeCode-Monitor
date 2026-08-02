@@ -262,6 +262,30 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
+### block_timer_no_worker_working.py (125 LOC)
+
+**Purpose:** PreToolUse hook (Bash) — blocks the canonical background sleep-timer (`sleep 3300 && echo done`, or any sleep-only form matching `_SLEEP_ONLY_BG`) when no worker of the current project is working. That timer exists only to wake the orchestrator when an active worker finishes; arming it with no worker actively working idles the session for nothing. Runs `worker-cli status --all <project>` (3s timeout, resolved via `_resolve_worker_cli()`) and parses each `<name>: <status>` line. Blocks iff the worker set is empty OR every worker's first status token (`status.split()[0]`, so `'idle 59%'` counts as `idle`) is exactly `idle`. `unknown`, `working`, and `limit reached` never contribute to a block — `unknown` in particular covers the fresh-spawn window right after `worker-cli spawn` returns, before the new worker's CC instance has written its first status. Skipped entirely when the hook's own cwd is inside a worktree (`.claude/worktrees/` fragment) — this hook is orchestrator-only. Exits 2 + stderr on block. Fail-open on everything else: parse errors, unresolved `worker-cli` binary, subprocess error, non-zero exit, timeout, or any other exception.
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`); `worker-cli status --all <project_path>` output (subprocess); `os.getcwd()` (worktree exemption + project path).
+**Writes:** stderr (block message) on block only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_fire_log.log_fire` (same-dir import via `sys.path` insert); `subprocess` (`worker-cli status --all` by absolute path via `_resolve_worker_cli()`: `shutil.which` first, then glob `~/.claude/plugins/cache/brunowinter-plugins/iterative-dev/*/bin/worker-cli` newest — CC hook env PATH does not include plugin-cache bins); `shutil`, `glob` (stdlib).
+
+**Block condition (BOTH must hold):**
+1. `run_in_background == True` AND command matches `_SLEEP_ONLY_BG` (identical shape to `rewrite_background_sleep.py`/`block_unauthorized_background.py` — order-independent relative to those two hooks).
+2. Project's worker set is empty, OR every worker's first status token == `idle`.
+
+**Passthrough (no block):**
+- Any worker reporting `working` (normal case) — blocks the all-idle condition
+- Any worker reporting `unknown` — fresh-spawn window; must never contribute to a block
+- Any worker reporting `limit reached`
+- `run_in_background=false`/absent, or a non-sleep-only command
+- Hook cwd inside `.claude/worktrees/` — orchestrator-only guard
+- `worker-cli` unresolvable, subprocess error, non-zero exit, timeout, or parse error — `_live_worker_statuses` raises in all these cases so `decide()`'s status_fn try/except routes to allow, never to the empty-worker-set block path
+
+**Smoke:** `dev/hook_smoke/test_block_timer_no_worker_working.py` (10 cases: 3 block, 7 allow).
+
+---
+
 ### block_broad_grep.py (104 LOC)
 
 **Purpose:** PreToolUse hook (Bash) — blocks recursive `grep -r`/`-R` calls on directories when no `--include=` scope is present. Unrestricted recursive grep matches JSONL logs, node_modules, and vendored content, producing 10MB+ output that floods the context window. Exits 2 + stderr with fix options. Exits 0 on any parse/internal error (fail-open).
