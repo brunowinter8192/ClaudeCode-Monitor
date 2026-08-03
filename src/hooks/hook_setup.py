@@ -1,12 +1,16 @@
 # INFRASTRUCTURE
+import functools
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 
 _SETTINGS_FILE = Path("~/.claude/settings.json").expanduser()
 _HOOKS_DIR     = Path(__file__).resolve().parent
+_REPO_ROOT     = _HOOKS_DIR.parent.parent
 _HOOK_TIMEOUT  = 5
+_MAIN_BRANCH   = "main"
 
 # Hook scripts to install: (script_filename, PreToolUse matcher)
 # block_path_typo registers under Bash + Read + Write + Edit — the same hook script
@@ -56,7 +60,6 @@ _HOOK_SCRIPTS = [
     ("block_pipe_scraper_isolated.py",   "Bash"),
     ("block_rag_cli_document_repeat.py", "Bash"),
 ]
-_HOOK_ENTRIES = [(f"python3 {_HOOKS_DIR / s}", m) for s, m in _HOOK_SCRIPTS]
 
 # ORCHESTRATOR
 
@@ -67,10 +70,13 @@ def hook_setup_workflow() -> None:
     swept = _sweep_stale_hooks(settings)
     if swept:
         _save_settings(settings)
+    installable, skipped = decide_entries(_HOOK_SCRIPTS, _script_on_main)
+    _report_skipped(skipped)
+    hook_entries = [(f"python3 {_HOOKS_DIR / s}", m) for s, m in installable]
     hooks = settings.setdefault("hooks", {})
     pre = hooks.setdefault("PreToolUse", [])
     installed = 0
-    for command, matcher in _HOOK_ENTRIES:
+    for command, matcher in hook_entries:
         if not _already_installed(pre, command, matcher):
             _add_hook(pre, command, matcher)
             installed += 1
@@ -78,6 +84,71 @@ def hook_setup_workflow() -> None:
         _save_settings(settings)
 
 # FUNCTIONS
+
+# Pure: partition hook_scripts into (installable [(script, matcher)], skipped [(script, matcher, reason)])
+# using git_query_fn(script_filename) -> True (present on main) / False (confirmed absent from main) /
+# None (query could not be answered — no git, no main ref, subprocess error/timeout).
+# Fail-safe: False AND None both route to skip — never install a script whose main-branch presence
+# is unverified. The failure this prevents (a dead absolute path in the GLOBAL ~/.claude/settings.json,
+# breaking every Bash call on the machine the moment the tree lands on a branch lacking the script)
+# is categorically worse than losing one hook's enforcement until the query can succeed again.
+# Decision is cached per script filename — multiple matcher entries for the same script (e.g.
+# block_path_typo.py under Bash/Read/Write/Edit) query git once and share the verdict.
+def decide_entries(hook_scripts: list, git_query_fn) -> tuple:
+    to_install, skipped, cache = [], [], {}
+    for script, matcher in hook_scripts:
+        if script not in cache:
+            cache[script] = git_query_fn(script)
+        present = cache[script]
+        if present is True:
+            to_install.append((script, matcher))
+        elif present is False:
+            skipped.append((script, matcher,
+                f"{script} is not committed on '{_MAIN_BRANCH}' — not registered "
+                f"(would become a dead absolute path once the tree leaves this branch)"))
+        else:
+            skipped.append((script, matcher,
+                f"{script}: could not verify '{_MAIN_BRANCH}'-branch presence (git query failed) "
+                f"— not registered (fail-safe: unverifiable presence is treated as absent)"))
+    return to_install, skipped
+
+# Print one line per skipped script to stderr (deduped by script — one line even with multiple matchers)
+def _report_skipped(skipped: list) -> None:
+    seen = set()
+    for script, _matcher, reason in skipped:
+        if script in seen:
+            continue
+        seen.add(script)
+        print(f"SKIPPED: {reason}", file=sys.stderr)
+
+# True if 'main' resolves to a real ref in this repo; cached — called once per hook_setup_workflow run
+# regardless of how many scripts are checked.
+@functools.lru_cache(maxsize=None)
+def _main_branch_resolves() -> bool:
+    try:
+        result = subprocess.run(
+            ['git', '-C', str(_REPO_ROOT), 'rev-parse', '--verify', '--quiet', _MAIN_BRANCH],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+# Real git-query for decide_entries: True if src/hooks/<script_filename> exists in the tree at the
+# tip of 'main'; False if 'main' resolves but the path is absent there; None if 'main' itself does
+# not resolve, git is missing, or the subprocess errors/times out (query unanswerable).
+def _script_on_main(script_filename: str):
+    if not _main_branch_resolves():
+        return None
+    try:
+        result = subprocess.run(
+            ['git', '-C', str(_REPO_ROOT), 'cat-file', '-e',
+             f'{_MAIN_BRANCH}:src/hooks/{script_filename}'],
+            capture_output=True, timeout=5,
+        )
+        return result.returncode == 0
+    except Exception:
+        return None
 
 # Refuse to run if this script is executing from inside a worktree path
 def _guard_not_worktree() -> None:
