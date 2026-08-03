@@ -350,13 +350,13 @@ python3 dev/hook_smoke/test_block_timer_no_worker_working.py
 
 ---
 
-### test_hook_setup_main_branch_gate.py (92 LOC)
+### test_hook_setup_main_branch_gate.py (135 LOC)
 
-**Purpose:** 6-case smoke for the main-branch presence gate in `hook_setup.py` (`decide_entries()`). Stub `git_query_fn` maps script filename → `True`/`False`/`None` (missing key defaults `True`, so cases only name the interesting scripts) — no real git calls. Verifies: all-present → all installed, none skipped; one script absent from `main` → that script skipped, rest installed; `git_query_fn` returns `None` (query unanswerable) → fail-safe skip, rest installed; a mixed set with present + absent + query-error entries all resolved independently; a script with multiple matcher entries (e.g. `block_path_typo.py`-shaped) that is absent from `main` has EVERY one of its entries skipped, not just the first, and each entry carries its own skip-reason tuple.
+**Purpose:** 10-case smoke for the two-condition install gate in `hook_setup.py` (`decide_entries()`). Stub `git_query_fn` (script → `True`/`False`/`None`, on-`main` presence) and stub `tree_query_fn` (script → bool, working-tree presence), both defaulting to present so cases only name the interesting scripts — no real git or filesystem calls. Verifies: all-present → all installed; one absent from `main` → skipped, rest installed; `git_query_fn` returns `None` (query unanswerable) → fail-safe skip; mixed present/absent/query-error set resolved independently; a multi-matcher script (e.g. `block_path_typo.py`-shaped) absent from `main` has EVERY entry skipped; **on `main` but missing from the working tree → skipped** (the mirror-image condition — a script can be genuinely committed on `main` yet absent from the CURRENT tree if a branch deleted/renamed it while its `_HOOK_SCRIPTS` entry stayed); on `main` AND in the tree → installed (mirror-image positive); missing from BOTH → skipped, reporting the main-branch reason (checked first); skip-reason text distinguishes "not committed on main" from "missing from the current working tree" so a maintainer knows which condition failed.
 
 **Usage (from project root):**
 ```bash
 python3 dev/hook_smoke/test_hook_setup_main_branch_gate.py
 ```
 
-**Expected output:** `6/6 passed` (exit 0).
+**Expected output:** `10/10 passed` (exit 0).

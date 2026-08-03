@@ -70,7 +70,7 @@ def hook_setup_workflow() -> None:
     swept = _sweep_stale_hooks(settings)
     if swept:
         _save_settings(settings)
-    installable, skipped = decide_entries(_HOOK_SCRIPTS, _script_on_main)
+    installable, skipped = decide_entries(_HOOK_SCRIPTS, _script_on_main, _script_in_worktree)
     _report_skipped(skipped)
     hook_entries = [(f"python3 {_HOOKS_DIR / s}", m) for s, m in installable]
     hooks = settings.setdefault("hooks", {})
@@ -85,32 +85,49 @@ def hook_setup_workflow() -> None:
 
 # FUNCTIONS
 
-# Pure: partition hook_scripts into (installable [(script, matcher)], skipped [(script, matcher, reason)])
-# using git_query_fn(script_filename) -> True (present on main) / False (confirmed absent from main) /
-# None (query could not be answered — no git, no main ref, subprocess error/timeout).
-# Fail-safe: False AND None both route to skip — never install a script whose main-branch presence
-# is unverified. The failure this prevents (a dead absolute path in the GLOBAL ~/.claude/settings.json,
-# breaking every Bash call on the machine the moment the tree lands on a branch lacking the script)
-# is categorically worse than losing one hook's enforcement until the query can succeed again.
+# Pure: partition hook_scripts into (installable [(script, matcher)], skipped [(script, matcher, reason)]).
+# A script installs only when BOTH hold:
+#   1. git_query_fn(script) -> True (committed on main) — False (confirmed absent) and None (query
+#      could not be answered: no git, no main ref, subprocess error/timeout) both route to skip.
+#      Fail-safe: never install a script whose main-branch presence is unverified.
+#   2. tree_query_fn(script) -> True (present in the CURRENT working tree at the path that will
+#      actually be registered) — this is the mirror-image check: main-branch presence alone does not
+#      guarantee the working-tree path exists NOW (a branch could have deleted/renamed a script that
+#      is still committed on main and still listed in _HOOK_SCRIPTS).
+# Either failure produces the same class of outcome — a dead absolute path in the GLOBAL
+# ~/.claude/settings.json, breaking every Bash call on the machine — so both are gated before install,
+# not just one. Main-branch presence is checked first; a script failing it never reaches the tree
+# check, so "missing from BOTH" reports the main-branch reason.
 # Decision is cached per script filename — multiple matcher entries for the same script (e.g.
-# block_path_typo.py under Bash/Read/Write/Edit) query git once and share the verdict.
-def decide_entries(hook_scripts: list, git_query_fn) -> tuple:
+# block_path_typo.py under Bash/Read/Write/Edit) run each query once and share the verdict.
+def decide_entries(hook_scripts: list, git_query_fn, tree_query_fn) -> tuple:
     to_install, skipped, cache = [], [], {}
     for script, matcher in hook_scripts:
         if script not in cache:
-            cache[script] = git_query_fn(script)
-        present = cache[script]
-        if present is True:
+            cache[script] = _script_verdict(script, git_query_fn, tree_query_fn)
+        install, reason = cache[script]
+        if install:
             to_install.append((script, matcher))
-        elif present is False:
-            skipped.append((script, matcher,
-                f"{script} is not committed on '{_MAIN_BRANCH}' — not registered "
-                f"(would become a dead absolute path once the tree leaves this branch)"))
         else:
-            skipped.append((script, matcher,
-                f"{script}: could not verify '{_MAIN_BRANCH}'-branch presence (git query failed) "
-                f"— not registered (fail-safe: unverifiable presence is treated as absent)"))
+            skipped.append((script, matcher, reason))
     return to_install, skipped
+
+# Resolve one script's install verdict: (True, None) to install, or (False, reason) to skip.
+def _script_verdict(script: str, git_query_fn, tree_query_fn) -> tuple:
+    present = git_query_fn(script)
+    if present is False:
+        return False, (
+            f"{script} is not committed on '{_MAIN_BRANCH}' — not registered "
+            f"(would become a dead absolute path once the tree leaves this branch)")
+    if present is None:
+        return False, (
+            f"{script}: could not verify '{_MAIN_BRANCH}'-branch presence (git query failed) "
+            f"— not registered (fail-safe: unverifiable presence is treated as absent)")
+    if not tree_query_fn(script):
+        return False, (
+            f"{script} is committed on '{_MAIN_BRANCH}' but missing from the current working tree "
+            f"— not registered (would be a dead absolute path immediately)")
+    return True, None
 
 # Print one line per skipped script to stderr (deduped by script — one line even with multiple matchers)
 def _report_skipped(skipped: list) -> None:
@@ -149,6 +166,11 @@ def _script_on_main(script_filename: str):
         return result.returncode == 0
     except Exception:
         return None
+
+# Real tree-query for decide_entries: True if the script exists at the exact path that will be
+# registered (_HOOKS_DIR / script_filename) — i.e. the current working tree, right now.
+def _script_in_worktree(script_filename: str) -> bool:
+    return os.path.exists(_HOOKS_DIR / script_filename)
 
 # Refuse to run if this script is executing from inside a worktree path
 def _guard_not_worktree() -> None:
