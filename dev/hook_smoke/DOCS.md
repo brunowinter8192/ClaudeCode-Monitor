@@ -339,11 +339,24 @@ python3 dev/hook_smoke/test_block_rag_cli_document_repeat.py
 
 ### test_block_timer_no_worker_working.py (104 LOC)
 
-**Purpose:** 10-case smoke for `block_timer_no_worker_working.py`. Calls `decide()` directly with a stub `status_fn` (raw `worker-cli status --all` stdout text, or `raises` sentinel — no real workers). Verifies 3 BLOCK cases (empty worker set / `(no active workers)`; all-idle including `'idle 59%'` suffix form; bare `sleep N` background with no worker working) and 7 ALLOW cases (one `working` among idle; single `unknown`; `unknown` mixed with idle; `limit reached`; foreground call; non-sleep background command; `status_fn` raises — fail-open). Does NOT cover the `tmux`-unresolvable broken-probe guard in `_live_worker_statuses` — that check sits below the `status_fn` injection boundary; verified instead by a live PATH-stripped subprocess drive (see `process-docs/timer_guard/`).
+**Purpose:** 10-case smoke for `block_timer_no_worker_working.py`. Calls `decide()` directly with a stub `status_fn` (raw `worker-cli status --all` stdout text, or `raises` sentinel — no real workers). Verifies 3 BLOCK cases (empty worker set / `(no active workers)`; all-idle including `'idle 59%'` suffix form; bare `sleep N` background with no worker working) and 7 ALLOW cases (one `working` among idle; single `unknown`; `unknown` mixed with idle; `limit reached`; foreground call; non-sleep background command; `status_fn` raises — fail-open). Does NOT cover the `tmux`-unresolvable broken-probe guard in `_live_worker_statuses` — that check sits below the `status_fn` injection boundary; verified instead by a live PATH-stripped subprocess drive (see `process-docs/tool_use_safety/`).
 
 **Usage (from project root):**
 ```bash
 python3 dev/hook_smoke/test_block_timer_no_worker_working.py
+```
+
+**Expected output:** `10/10 passed` (exit 0).
+
+---
+
+### test_hook_setup_main_branch_gate.py (135 LOC)
+
+**Purpose:** 10-case smoke for the two-condition install gate in `hook_setup.py` (`decide_entries()`). Stub `git_query_fn` (script → `True`/`False`/`None`, on-`main` presence) and stub `tree_query_fn` (script → bool, working-tree presence), both defaulting to present so cases only name the interesting scripts — no real git or filesystem calls. Verifies: all-present → all installed; one absent from `main` → skipped, rest installed; `git_query_fn` returns `None` (query unanswerable) → fail-safe skip; mixed present/absent/query-error set resolved independently; a multi-matcher script (e.g. `block_path_typo.py`-shaped) absent from `main` has EVERY entry skipped; **on `main` but missing from the working tree → skipped** (the mirror-image condition — a script can be genuinely committed on `main` yet absent from the CURRENT tree if a branch deleted/renamed it while its `_HOOK_SCRIPTS` entry stayed); on `main` AND in the tree → installed (mirror-image positive); missing from BOTH → skipped, reporting the main-branch reason (checked first); skip-reason text distinguishes "not committed on main" from "missing from the current working tree" so a maintainer knows which condition failed.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_hook_setup_main_branch_gate.py
 ```
 
 **Expected output:** `10/10 passed` (exit 0).
