@@ -20,9 +20,13 @@ _SEGMENT_END_RE = re.compile(r'&&|\|\||[;)\n]|(?<!>)&(?![&>])')
 
 # Noise inside the segment: pipes (excluding `||`), redirects, `2>&1`.
 # First match position determines where to truncate to segment-end.
-# `scrape_url` output is bounded (15k cap) and meant to land directly in context —
-# any `> file` / `| head` / `| sed` truncates or hides the clean content, forcing
-# inspection of a redirected file instead of the page. Strip it.
+# `scrape_url` output is meant to land directly in context — any `> file` / `| head` / `| sed`
+# truncates or hides the clean content, forcing inspection of a redirected file instead of the
+# page. Strip it.
+# As of 2026-08, scrape_url returns the FULL page (its 15k character cap was removed, since a cap
+# means the agent reads a fragment while believing it read the page). That makes this hook more
+# load-bearing, not less: with no cap upstream, a redirect/pipe is the only remaining way a page
+# could get partially read, and it is exactly the way an agent would reach for on a long page.
 _NOISE_RE = re.compile(r'2>&1|2>|&>|>>|<<|>|<|(?<!\|)\|(?!\|)')
 
 
