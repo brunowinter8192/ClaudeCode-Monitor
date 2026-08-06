@@ -36,8 +36,10 @@ _SYS1_BOILERPLATE_TEXT = "You are Claude Code, Anthropic's official CLI for Clau
 
 # ORCHESTRATOR
 
-# Apply all proxy modification rules — returns (modified_payload, list_of_applied_rules, original_system2_text, stripped_msg_indices, stripped_msg_originals, stripped_msg_removed, injected_msg_added)
-def apply_modification_rules(payload: dict, model_family: str = "opus", project_path: str = "") -> tuple:
+# Apply all proxy modification rules — worker_context selects the bg-launch-ack replacement
+# wording ("main" -> sharper idle-until-notice wording, anything else -> unchanged default,
+# see strip_bg_launch_ack.py) — returns (modified_payload, list_of_applied_rules, original_system2_text, stripped_msg_indices, stripped_msg_originals, stripped_msg_removed, injected_msg_added)
+def apply_modification_rules(payload: dict, model_family: str = "opus", project_path: str = "", worker_context: str = "") -> tuple:
     system_rules = _load_system2_rules(model_family, project_path)
 
     messages_to_process = list(payload.get("messages", []))
@@ -49,6 +51,11 @@ def apply_modification_rules(payload: dict, model_family: str = "opus", project_
     injected_msg_added = {}
     _all_ops: dict = {}
 
+    is_main = worker_context == "main"
+    # Closure swapped in at the SAME position _apply_bg_launch_ack_strip always occupied — keeps
+    # pipeline order unchanged, only this one pass needs the extra is_main argument.
+    _bg_launch_ack_pass = lambda msgs: _apply_bg_launch_ack_strip(msgs, is_main=is_main)
+
     _passes = [
         _apply_role_system_strip,
         _apply_sn_notice_strip,
@@ -57,7 +64,7 @@ def apply_modification_rules(payload: dict, model_family: str = "opus", project_
         _apply_final_sr_pass,
         _apply_po_preview_strip,
         _apply_bg_exit_strip,
-        _apply_bg_launch_ack_strip,
+        _bg_launch_ack_pass,
         _apply_hook_prefix_strip,
         _apply_git_lock_strip,
         _apply_bd_noise_strip,

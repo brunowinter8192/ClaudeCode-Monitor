@@ -40,6 +40,7 @@ from .tools import _strip_unused_tools, _extract_deferred_tool_names
 from .tool_injection import inject_mcp_tools
 from .fixation import _capture_fixation, _apply_fixation
 from .bg_escape import _trigger_bg_escape
+from .pending_bg_state import _update_pending_bg_state
 ANTHROPIC_API_HOST = "api.anthropic.com"
 MESSAGES_PATH = "/v1/messages"
 
@@ -81,7 +82,7 @@ class ProxyAddon:
 
             _log_original_request(self.original_log_file, flow, payload)
 
-            modified_payload, modifications, original_system2, stripped_msg_indices, stripped_msg_originals, stripped_msg_removed, injected_msg_added, all_ops = apply_modification_rules(payload, model_family, project_path)
+            modified_payload, modifications, original_system2, stripped_msg_indices, stripped_msg_originals, stripped_msg_removed, injected_msg_added, all_ops = apply_modification_rules(payload, model_family, project_path, self._worker_context)
             deferred_tool_names = _extract_deferred_tool_names(payload)
 
             if model_family not in self.fixated:
@@ -106,6 +107,11 @@ class ProxyAddon:
                 _trigger_bg_escape(stripped_msg_removed, self._worker_context, project_path)
             except Exception as e:
                 print(f"[proxy_addon] bg_escape trigger failed: {e}", file=sys.stderr)
+
+            try:
+                _update_pending_bg_state(stripped_msg_removed, self._worker_context)
+            except Exception as e:
+                print(f"[proxy_addon] pending_bg_state update failed: {e}", file=sys.stderr)
 
             prev_mod_msgs = self.prev_messages_by_model.get(model_family)
             modified_payload = _strip_all_cache_control(modified_payload)

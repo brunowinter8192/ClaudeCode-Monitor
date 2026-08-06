@@ -22,6 +22,16 @@ _BG_LAUNCH_ACK_MSG = (
     'just wait until it finishes (you will get a completion notice).'
 )
 
+# Main (orchestrator) context version — sharper than the shared wording above: explicitly names
+# going idle and ties the wait to THIS exact task id, since main is the context the pending-
+# background-task tracking (src/proxy/pending_bg_state.py) is built for — a stacked/duplicate
+# timer is a main-context-only failure mode (workers don't arm the orchestrator's ceiling timer).
+_BG_LAUNCH_ACK_MSG_MAIN = (
+    'Command is running in the background. Do NOT check, poll, or read its output, and do NOT '
+    'arm another background timer — go idle now and wait; you will get a completion notice for '
+    'this exact task ID when it finishes.'
+)
+
 # Recover id/path FROM the ack text being replaced — shared by both wordings. Real recorded
 # shapes (dev/bg_wakeup_id_line/md/launch_ack_wordings_20260729.md, 2026-07-29):
 #   wording 1: "Command running in background with ID: <id>. Output is being written to: <path>.
@@ -65,13 +75,15 @@ def _is_bg_launch_ack(text):
 # — both wordings produce identical output shape. Anchored (not substring-anywhere): legitimate
 # content that merely contains either phrase is kept.
 # Covers all 4 content shapes: str, list[text], list[tool_result+str], list[tool_result+list].
+# is_main selects the replacement wording (_BG_LAUNCH_ACK_MSG_MAIN vs the shared default) —
+# False preserves the exact wording every existing caller already expects.
 # Returns (new_content, removed_chunks) — removed_chunks: original texts of replaced blocks.
-def _strip_bg_launch_ack(content):
+def _strip_bg_launch_ack(content, is_main=False):
     removed = []
     if isinstance(content, str):
         if _is_bg_launch_ack(content):
             removed.append(content)
-            return _build_launch_ack_replacement(content), removed
+            return _build_launch_ack_replacement(content, is_main), removed
         return content, removed
     if isinstance(content, list):
         result = []
@@ -84,7 +96,7 @@ def _strip_bg_launch_ack(content):
                 text = block.get('text', '')
                 if _is_bg_launch_ack(text):
                     removed.append(text)
-                    result.append({**block, 'text': _build_launch_ack_replacement(text)})
+                    result.append({**block, 'text': _build_launch_ack_replacement(text, is_main)})
                 else:
                     result.append(block)
             elif btype == 'tool_result':
@@ -92,7 +104,7 @@ def _strip_bg_launch_ack(content):
                 if isinstance(inner, str):
                     if _is_bg_launch_ack(inner):
                         removed.append(inner)
-                        result.append({**block, 'content': _build_launch_ack_replacement(inner)})
+                        result.append({**block, 'content': _build_launch_ack_replacement(inner, is_main)})
                     else:
                         result.append(block)
                 elif isinstance(inner, list):
@@ -103,7 +115,7 @@ def _strip_bg_launch_ack(content):
                             text = sub.get('text', '')
                             if _is_bg_launch_ack(text):
                                 removed.append(text)
-                                new_sub.append({**sub, 'text': _build_launch_ack_replacement(text)})
+                                new_sub.append({**sub, 'text': _build_launch_ack_replacement(text, is_main)})
                                 sub_changed = True
                             else:
                                 new_sub.append(sub)
@@ -124,12 +136,12 @@ def _strip_bg_launch_ack(content):
 # path was recovered), then ID: <id> (if the ack's id was recovered). A value that fails to extract
 # is OMITTED — never "ID: None", never a dangling "ID:" with nothing after it. Not observed in real
 # data (id+path present in every measured ack), defensive only.
-def _build_launch_ack_replacement(ack_text):
+def _build_launch_ack_replacement(ack_text, is_main=False):
     id_match = _ACK_ID_RE.search(ack_text)
     path_match = _ACK_PATH_RE.search(ack_text)
     task_id = id_match.group(1).strip() if id_match else ''
     path = path_match.group(1).strip() if path_match else ''
-    lines = [_BG_LAUNCH_ACK_MSG]
+    lines = [_BG_LAUNCH_ACK_MSG_MAIN if is_main else _BG_LAUNCH_ACK_MSG]
     if path:
         lines.append('Output: ' + path)
     if task_id:
