@@ -285,12 +285,12 @@ mitmproxy `http.HTTPFlow` (POST /v1/messages) → `addon.ProxyAddon.request()`
 
 ---
 
-### inject_helpers.py (81 LOC)
+### inject_helpers.py (123 LOC)
 
-**Purpose:** Three post-rules payload injections: model override (model/thinking/effort/max_tokens from `proxy_rules.json`), `context_management` block, and post-sleep cap. `_apply_post_sleep_cap` MUST be called after `_inject_model_override` — it re-applies effort=low/max_tokens=2000 for `capped_post_sleep` turns, overriding whatever model_override set.
-**Reads:** Payload dict, model_family string, modifications list; `proxy_rules.json` via `rules_config._load_config()`.
+**Purpose:** Two post-rules payload injections: model parameters (thinking/effort/max_tokens from `proxy_rules.json`) and the `context_management` block. `_inject_model_override(payload, model_family)` (2026-08-06 rework) is a two-path dispatcher on config key presence — `"model_params" in config` (presence, not truthiness; an empty `{}` still counts) routes to `_inject_model_params`: exact `payload["model"]` lookup against `config["model_params"]`, applies thinking/effort/max_tokens on a hit (each optional) and NEVER writes `model` — the session's model is chosen at start via `claude_proxy_start.sh`'s `--fable`/`--opus` flags (`src/claude_proxy_start.sh`), the proxy must not force it back. Config without a `model_params` key falls back unchanged to `_inject_legacy_model_override` — the pre-2026-08-06 family-bucketed behavior (`model_family=="opus"` → `model_override`, `"sonnet"` → `model_override_worker`, each gated by its own `enabled` flag), INCLUDING the `model`-field rewrite — byte-identical for an unmigrated config, the safe-rollout path. Legacy sections are ignored entirely once `model_params` is present, even if still in the file.
+**Reads:** Payload dict, model_family string; `proxy_rules.json` via `rules_config._load_config()`.
 **Writes:** Nothing — returns modified payload or `(modified_payload, injected_bool)`.
-**Called by:** `src/proxy/addon.py`
+**Called by:** `src/proxy/addon.py` (`_run_post_fixation_pipeline`) — no signature change from the 2026-08-06 rework: `model_family` is still required by the legacy branch, the exact model id the new branch needs is already available via `payload["model"]`.
 **Calls out:** —
 
 ---
