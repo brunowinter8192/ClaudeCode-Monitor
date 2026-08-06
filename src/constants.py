@@ -146,5 +146,7 @@ TOOL_BLOCKLIST = frozenset({
     "ScheduleWakeup", "Monitor",
     # Workflow tool (CC 2.1.176+ built-in, ~18.5k-char description, all noise)
     "Workflow",
+    # CC 2.1.223+ built-ins (Claude-facing artifact/finding-report/deferred-schema tools, unused)
+    "Artifact", "ReportFindings", "DeferredToolPlaceholder",
 })
 
