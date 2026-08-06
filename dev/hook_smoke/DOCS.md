@@ -35,14 +35,35 @@ python3 dev/hook_smoke/test_block_broad_grep.py
 
 ---
 
-### test_block_gh_cli_chained.py (89 LOC)
+### test_block_gh_cli_chained.py (101 LOC)
 
-**Purpose:** 18-case smoke for `block_gh_cli_chained.py`. Verifies 9 blocked cases (each of the 7 search/research tools piped/chained with a non-search command), 6 pass cases (two search tools chained together, standalone with tool-native args, redirect to file), 2 exempt issue-command passes (`list_issues` / `get_issue` piped to grep/head), and 2 shell-strip passes (pattern inside single-quotes, pattern inside heredoc body).
+**Purpose:** 21-case smoke for `block_gh_cli_chained.py`. Verifies 9 blocked cases (each of the 7 search/research tools piped/chained with a non-search command), 6 pass cases (two search tools chained together, standalone with tool-native args, redirect to file), 2 exempt issue-command passes (`list_issues` / `get_issue` piped to grep/head), 2 shell-strip passes (pattern inside single-quotes, pattern inside heredoc body), and 3 `repo_freshness`-as-legal-segment cases (2026-08, CC 2.1.223 websearch incident): `repo_freshness && index_issues && index_issues` PASS (the fixed retry), the same chain with `echo` segments interleaved still BLOCK (echo isn't a legal segment), `repo_freshness && git log` PASS (hook never triggers — `repo_freshness` alone is outside `_GH_SEARCH_RE`'s scope).
 
 **Usage:**
 ```bash
 python3 dev/hook_smoke/test_block_gh_cli_chained.py
 ```
+
+---
+
+### probe_gh_cli_repo_freshness_incident.py (121 LOC)
+
+**Purpose:** Replays the exact commands from the websearch-session `repo_freshness` incident
+(`src/logs/dual_log/api_requests_opus_websearch_1786052022_original.jsonl`, messages [118]-[129])
+through the real `block_gh_cli_chained.py` hook via subprocess — asserts exit code AND stderr
+shape (BLOCK cases carry stderr, PASS cases carry none), plus 3 content checks on the rewritten
+`_BLOCK_MESSAGE` (combine example present, "always full context" wording, "repo_freshness may
+join" wording). Distinct from the smoke suite above: pins the literal incident commands
+verbatim rather than minimal synthetic variants, and asserts message CONTENT, not just exit code.
+**Reads:** none (commands are inlined verbatim from the incident log, not re-read from disk).
+**Writes:** `md/gh_cli_repo_freshness_incident_probe_report.md`.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py
+```
+
+**Expected output:** `ALL PASS` (exit 0).
 
 ---
 
