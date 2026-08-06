@@ -344,16 +344,29 @@ def _build_report(findings, cmd_variant_counts, total_requests, total_parse_erro
     lines.append(f'Main session files with >=1 genuine completion/kill notice: {len(all_main)} of {n_main_files}.')
     lines.append(f'Worker session files with >=1 genuine completion/kill notice: {len(all_worker)} of {n_worker_files}.')
     lines.append('')
+    zero_hit_worker_files = sorted(s for s, w in session_is_worker.items() if w and s not in all_worker)
+    pass_lot_files = [s for s in zero_hit_worker_files if 'cbc9195b_pass-' in s]
+    other_worker_files = [s for s in zero_hit_worker_files if 'cbc9195b_pass-' not in s]
+    if other_worker_files:
+        breakdown = (
+            f'{len(zero_hit_worker_files)} zero-hit worker session files show zero genuine TN blocks — '
+            f'{len(pass_lot_files)} of them match `api_requests_worker_cbc9195b_pass-*`, the remaining '
+            f'{len(other_worker_files)} do not (`{"`, `".join(other_worker_files)}`).'
+        )
+    else:
+        breakdown = (
+            f'all {len(zero_hit_worker_files)} worker session files in this corpus '
+            '(`api_requests_worker_cbc9195b_pass-*`) show zero genuine TN blocks.'
+        )
     lines.append(
-        '**Observation about THIS corpus, not a structural guarantee:** all 18 remaining worker session '
-        'files (`api_requests_worker_cbc9195b_pass-*`) show zero genuine TN blocks. This does not mean '
-        'worker sessions structurally cannot receive a completion notice — the TN delivery mechanism is '
-        'a CC-side background-Bash feature independent of main/worker session role; it fires whenever a '
-        'session backgrounds a Bash call. These 18 worker sessions simply may not have backgrounded any '
-        'Bash call (or none of the ones they backgrounded completed/was killed) during the recorded '
-        'window. The excluded own-session file (`85d6f25b_timer-loop`) IS a worker session that DID '
-        'receive genuine notices (from its own backgrounded commands during this investigation) before '
-        'being excluded for contamination — direct proof worker sessions CAN receive them.'
+        f'**Observation about THIS corpus, not a structural guarantee:** {breakdown} '
+        'This does not mean worker sessions structurally cannot receive a completion notice — the TN '
+        'delivery mechanism is a CC-side background-Bash feature independent of main/worker session role; '
+        'it fires whenever a session backgrounds a Bash call. These worker sessions simply may not have '
+        'backgrounded any Bash call (or none of the ones they backgrounded completed/was killed) during '
+        'the recorded window. The excluded own-session file (`85d6f25b_timer-loop`) IS a worker session '
+        'that DID receive genuine notices (from its own backgrounded commands during this investigation) '
+        'before being excluded for contamination — direct proof worker sessions CAN receive them.'
     )
     lines.append('')
 

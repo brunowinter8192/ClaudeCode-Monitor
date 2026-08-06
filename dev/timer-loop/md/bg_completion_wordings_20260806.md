@@ -1,13 +1,13 @@
 # Milestone 1 — bg-completion/kill notice wording inventory (real corpus)
 
-Generated: 2026-08-06T20:10:28Z
+Generated: 2026-08-06T20:13:39Z
 
 Companion to `dev/bg_wakeup_id_line/md/launch_ack_wordings_20260729.md` (launch side); this is the completion side.
 
 ## Corpus
 
 63 files scanned (full per-line parse, not last-line-only — see Method).
-Total requests (lines) scanned: 7584. JSON parse errors skipped: 0.
+Total requests (lines) scanned: 7594. JSON parse errors skipped: 0.
 
 | Excluded file | Reason |
 |---|---|
@@ -29,7 +29,7 @@ Two sources found, both filtered by requiring the candidate block be **block-ini
 ### Wording 1 — status=`failed`, exit code=`143`
 
 - Normalized summary template: `Background command "<CMD>" failed with exit code 143`
-- Occurrences (deduped, real distinct events): **340**
+- Occurrences (deduped, real distinct events): **341**
 - Main sessions: ['api_requests_opus_linkedin_1785602756_original.jsonl', 'api_requests_opus_linkedin_1785624590_original.jsonl', 'api_requests_opus_monitor_cc_1785710981_original.jsonl', 'api_requests_opus_posts_1785610642_original.jsonl', 'api_requests_opus_posts_1785681532_original.jsonl', 'api_requests_opus_posts_1786038023_original.jsonl', 'api_requests_opus_rag_cli_1785962974_original.jsonl', 'api_requests_opus_reddit_cli_1785684166_original.jsonl', 'api_requests_opus_websearch_1785684907_original.jsonl', 'api_requests_opus_websearch_1785763383_original.jsonl', 'api_requests_opus_websearch_1785799231_original.jsonl', 'api_requests_opus_websearch_1785867754_original.jsonl', 'api_requests_opus_websearch_1785962482_original.jsonl', 'api_requests_opus_websearch_1786037437_original.jsonl', 'api_requests_opus_wise2627_1785459726_original.jsonl', 'api_requests_opus_wise2627_1785707812_original.jsonl', 'api_requests_opus_wise2627_1785763269_original.jsonl'] (17)
 - Worker sessions: [] (0)
 - Roles seen: ['user']
@@ -146,7 +146,7 @@ Corpus (post-exclusion): 31 main (`opus`) session files, 32 worker session files
 Main session files with >=1 genuine completion/kill notice: 18 of 31.
 Worker session files with >=1 genuine completion/kill notice: 0 of 32.
 
-**Observation about THIS corpus, not a structural guarantee:** all 18 remaining worker session files (`api_requests_worker_cbc9195b_pass-*`) show zero genuine TN blocks. This does not mean worker sessions structurally cannot receive a completion notice — the TN delivery mechanism is a CC-side background-Bash feature independent of main/worker session role; it fires whenever a session backgrounds a Bash call. These 18 worker sessions simply may not have backgrounded any Bash call (or none of the ones they backgrounded completed/was killed) during the recorded window. The excluded own-session file (`85d6f25b_timer-loop`) IS a worker session that DID receive genuine notices (from its own backgrounded commands during this investigation) before being excluded for contamination — direct proof worker sessions CAN receive them.
+**Observation about THIS corpus, not a structural guarantee:** 32 zero-hit worker session files show zero genuine TN blocks — 30 of them match `api_requests_worker_cbc9195b_pass-*`, the remaining 2 do not (`api_requests_worker_52fce57c_block-images_1786038782_original.jsonl`, `api_requests_worker_52fce57c_mode-flags_1786041817_original.jsonl`). This does not mean worker sessions structurally cannot receive a completion notice — the TN delivery mechanism is a CC-side background-Bash feature independent of main/worker session role; it fires whenever a session backgrounds a Bash call. These worker sessions simply may not have backgrounded any Bash call (or none of the ones they backgrounded completed/was killed) during the recorded window. The excluded own-session file (`85d6f25b_timer-loop`) IS a worker session that DID receive genuine notices (from its own backgrounded commands during this investigation) before being excluded for contamination — direct proof worker sessions CAN receive them.
 
 ## Q4 — Canonical timer vs other background tasks
 
@@ -155,7 +155,7 @@ Same `<task-notification>` template for every background task regardless of iden
 | status | exit code | canonical `sleep 3300 && echo done` (deduped events) | other command/description (deduped events) | example other |
 |---|---|---|---|---|
 | `completed` | `0` | 0 | 11 | `CC-Releases indexieren` |
-| `failed` | `143` | 33 | 307 | `Timer 55min` |
+| `failed` | `143` | 33 | 308 | `Timer 55min` |
 | `failed` | `144` | 0 | 1 | `Reindex` |
 
 Every 55-minute orchestrator ceiling timer is the same underlying `sleep 3300 && echo done` Bash call — the varying labels (`"Timer 55min"`, `"55min-Timer für Los-2-Implementierung"`, `"55min ceiling timer"`, ...) are `description` params different Opus sessions/prompts chose for the SAME command, not different commands. Non-timer background tasks (`"Index issues broad pass"`, `"RAG-Sync ausführen"`, ...) use the same TN template, status=`completed`, exit code `0`.
@@ -190,7 +190,7 @@ No human input has been received since the last genuine user message in this con
 | `api_requests_opus_monitor_cc_1785710981_original.jsonl` | 442 | 7 |
 | `api_requests_opus_posts_1785610642_original.jsonl` | 409 | 3 |
 | `api_requests_opus_posts_1785681532_original.jsonl` | 1735 | 8 |
-| `api_requests_opus_posts_1786038023_original.jsonl` | 32 | 3 |
+| `api_requests_opus_posts_1786038023_original.jsonl` | 60 | 4 |
 | `api_requests_opus_rag_cli_1785962974_original.jsonl` | 25219 | 110 |
 | `api_requests_opus_reddit_cli_1785684166_original.jsonl` | 166 | 4 |
 | `api_requests_opus_websearch_1785684907_original.jsonl` | 4558 | 28 |
@@ -198,7 +198,7 @@ No human input has been received since the last genuine user message in this con
 | `api_requests_opus_websearch_1785799231_original.jsonl` | 453 | 11 |
 | `api_requests_opus_websearch_1785867754_original.jsonl` | 4557 | 24 |
 | `api_requests_opus_websearch_1785962482_original.jsonl` | 3777 | 25 |
-| `api_requests_opus_websearch_1786037437_original.jsonl` | 711 | 6 |
+| `api_requests_opus_websearch_1786037437_original.jsonl` | 729 | 6 |
 | `api_requests_opus_wise2627_1785459726_original.jsonl` | 3303 | 26 |
 | `api_requests_opus_wise2627_1785586009_original.jsonl` | 39 | 1 |
 | `api_requests_opus_wise2627_1785707812_original.jsonl` | 384 | 3 |
