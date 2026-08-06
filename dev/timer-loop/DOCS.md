@@ -4,8 +4,10 @@
 
 Measurement + verification scripts for the proxy-side pending-background-task tracking design:
 what background-task completion/kill notices actually look like in the recorded corpus (`p1_`,
-feeding milestone-2's design), and the proxy-side state mechanism that arms/clears a pending
-tombstone from them (`p2_`, `src/proxy/pending_bg_state.py`). `md/` holds every script's report.
+feeding milestone-2's design), the proxy-side state mechanism that arms/clears a pending
+tombstone from them (`p2_`, `src/proxy/pending_bg_state.py`), and the 2026-08-07 project-scoping
+fix spanning both that writer and its enforcement hook, `src/hooks/block_timer_pending_bg.py`
+(`p3_`). `md/` holds every script's report.
 
 ## Modules
 
@@ -24,10 +26,10 @@ to the non-monotonic message-count resets observed in some worker sessions), eva
 
 ---
 
-### p2_pending_bg_state_probe.py (415 LOC)
+### p2_pending_bg_state_probe.py (465 LOC)
 
 **Purpose:** Verifies `src/proxy/pending_bg_state.py` and the main-context launch-ack wording
-sharpening in `src/proxy/strip_bg_launch_ack.py`. 12 test groups: main-context ack arms a pending
+sharpening in `src/proxy/strip_bg_launch_ack.py`. 13 test groups: main-context ack arms a pending
 entry with a timestamp, a genuine TN completion notice clears it (status/exit-code agnostic —
 exercised with the real corpus's exit-144 anomaly, not just 0/143/137), worker context never
 writes state, a resighted already-cleared id (resent-history duplication, simulated restart via
@@ -36,14 +38,40 @@ tombstone (not a no-op) and a later ack for that id still doesn't arm, ascending
 replay ordering (ack + TN in ONE call, dict constructed with DESCENDING key-insertion order
 specifically so a missing `sorted()` would be caught), 24h tombstone pruning on write with pending
 entries exempt, failure isolation (corrupt state-file JSON, through both a direct call and a real
-`ProxyAddon.request()`), real end-to-end arm/clear/worker-no-write via `ProxyAddon.request()`, and
-main-vs-worker wording split (worker/default text byte-identical to pre-2026-08-06).
+`ProxyAddon.request()`), real end-to-end arm/clear/worker-no-write via `ProxyAddon.request()`,
+main-vs-worker wording split (worker/default text byte-identical to pre-2026-08-06), and
+(**Test 13, 2026-08-07**) project scoping: a fresh arm records the normalized project slug from
+`project_path` (`Websearch`→`websearch`, `Monitor_CC`→`monitor_cc`), empty/absent `project_path`
+omits the `"project"` field entirely (backward-compat shape), and real `ProxyAddon.request()`
+end-to-end stamps it from `PROXY_PROJECT_PATH`.
 **Reads:** Nothing persistent — builds all fixtures in-process; every state-file test scopes
 `MONITOR_CC_ROOT` to a `tempfile.TemporaryDirectory()`, never the real `src/logs/`.
 **Writes:** `md/p2_pending_bg_state_probe_<timestamp>.md`.
 **Called by:** run manually — regression guard for `pending_bg_state.py`; re-run after any change
 to that module, `strip_bg_launch_ack.py`'s wording selection, or `addon.py`'s wiring of either.
 **Calls out:** `src/proxy/pending_bg_state.py`, `src/proxy/strip_bg_launch_ack.py`,
+`src/proxy/addon.py` (`ProxyAddon`, `_derive_worker_context`).
+
+---
+
+### p3_project_scope_incident_probe.py (236 LOC)
+
+**Purpose:** Replays the 2026-08-07 ~01:10 cross-project false-block incident verbatim — the
+websearch project's main session armed its canonical timer and was blocked by a POSTS-project
+pending entry (task `b4z5fzzao`) in the one global `pending_bg_tasks.json`. Drives the REAL
+`block_timer_pending_bg.py` hook via `subprocess` with a seeded state file and a real named cwd
+directory (`.../Websearch`, `.../Posts`) — not injected strings — so `_current_project_slug()`'s
+actual cwd-basename derivation runs end-to-end: foreign-project pending → now ALLOWS (the incident
+itself); same-project pending → still BLOCKS; legacy no-project entry → still BLOCKS regardless of
+cwd (backward compat); expired same-project entry → ALLOWS (expiry independent of project match).
+Also verifies the writer side directly — real `ProxyAddon.request()` stamps the project slug from
+`PROXY_PROJECT_PATH`.
+**Reads:** Nothing persistent — seeds its own state file per case under a `tempfile.TemporaryDirectory()`-scoped `MONITOR_CC_ROOT`.
+**Writes:** `md/p3_project_scope_incident_probe_report.md`.
+**Called by:** run manually — regression guard for the project-scoping fix specifically; re-run
+after any further change to `block_timer_pending_bg.py`'s project filter or
+`pending_bg_state.py`'s project stamping.
+**Calls out:** `src/hooks/block_timer_pending_bg.py` (subprocess), `src/proxy/pending_bg_state.py`,
 `src/proxy/addon.py` (`ProxyAddon`, `_derive_worker_context`).
 
 ---
