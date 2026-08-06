@@ -1,18 +1,41 @@
 #!/bin/bash
 # Start Claude Code with API request logging via mitmproxy
-# Usage: ./src/claude_proxy_start.sh [--project <path>] [claude args...]
+# Usage: ./src/claude_proxy_start.sh [--project <path>] [--fable | --opus] [claude args...]
+#
+# --fable maps to --model claude-fable-5; --opus maps to --model claude-opus-5.
+# Precedence: an explicit --model (anywhere in the args, before or after a shortcut) always wins
+# over --fable/--opus. If both --fable and --opus are given (no explicit --model), the LAST one
+# wins. No shortcut and no --model at all: no --model is injected — behavior is byte-identical to
+# before this flag existed (native CC default model).
+# Known limitation: the pinned claude-205 binary predates claude-opus-5 (introduced in CC 2.1.219)
+# — --opus's mapping is correct but not yet fully functional until the pin bump (monitor-cc #63).
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_CC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MITMPROXY_CA="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
 
-# Parse --project argument; remaining args passed to claude
+# Parse --project, --fable, --opus arguments; remaining args (incl. an explicit --model) passed to claude
 PROJECT=""
 CLAUDE_ARGS=()
+SHORTCUT_MODEL=""      # claude-fable-5 / claude-opus-5 — last of --fable/--opus wins
+HAS_EXPLICIT_MODEL=""  # set when the user passes --model directly, anywhere in the args
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --project)
             PROJECT="$2"
+            shift 2
+            ;;
+        --fable)
+            SHORTCUT_MODEL="claude-fable-5"
+            shift
+            ;;
+        --opus)
+            SHORTCUT_MODEL="claude-opus-5"
+            shift
+            ;;
+        --model)
+            HAS_EXPLICIT_MODEL=1
+            CLAUDE_ARGS+=("$1" "$2")
             shift 2
             ;;
         *)
@@ -22,6 +45,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 PROJECT="${PROJECT:-$(pwd)}"
+# Append the shortcut-derived --model only if the user didn't pass --model explicitly — explicit
+# always wins, regardless of whether it appeared before or after the shortcut in the arg list.
+if [ -z "$HAS_EXPLICIT_MODEL" ] && [ -n "$SHORTCUT_MODEL" ]; then
+    CLAUDE_ARGS+=("--model" "$SHORTCUT_MODEL")
+fi
 
 # Generate session_id from project path: first 8 chars of md5 (matches monitor.py hash logic)
 if command -v md5 &>/dev/null; then
