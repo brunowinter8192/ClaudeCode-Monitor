@@ -33,7 +33,7 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 
 | File | LOC | Why at root |
 |---|---|---|
-| `constants.py` | 150 | Imported by ~all subpackages — shallow path avoids deep `...constants` chains |
+| `constants.py` | 152 | Imported by ~all subpackages — shallow path avoids deep `...constants` chains |
 | `utils.py` | 114 | Same — `format_timestamp` + `visual_line_count` used everywhere; also `append_copy_symbol` (right-align a ⎘/✓ symbol, width-guarded — shared by `core.monitor_display`, `format.token_format`, `panes.warnings_render`, `workers.worker_format`, and `proxy_display`'s own reference implementation stays independent) and `compute_header_rule_len` (shrinking-decoration header layout, shared by `gpu_pane`/`news_pane`) |
 | `pane_error_log.py` | 35 | `log_pane_error(pane_name)` — shared exception-safe sink all 8 pane `run_*_loop()` functions call from their `except Exception:` guard (2026-07-31); imported by every pane module the same shallow-path way as `constants.py`, so it belongs at the same level |
 | `log_janitor.py` | 160 | `LogSpec` registry (11 entries) + `sweep_eligible_specs()` + `cleanup_old_jsonl(path)` — authoritative log inventory; 7-day JSONL sweep triggered from `core/monitor.py` every 24h |

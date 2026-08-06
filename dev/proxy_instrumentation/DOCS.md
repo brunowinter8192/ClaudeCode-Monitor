@@ -41,6 +41,21 @@ collapsed-header sweep (`⚠S` badge must never render).
 **Writes:** `md/badge_inline_probe_report.md`.
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn,render_messages,format}`.
 
+### p4_blocklist_223_probe.py (140 LOC)
+
+**Purpose:** Verifies the CC 2.1.223 `TOOL_BLOCKLIST` extension (Artifact, ReportFindings,
+DeferredToolPlaceholder) end-to-end — runs the real `proxy.tools._strip_unused_tools` on the
+session's actual original-log payload, asserts the post-strip set is exactly
+`{Bash, Edit, Read, Write, Skill}` + any MCP-injected names present in the forwarded log; sanity
+check for a live `tool_use` invocation of any newly-blocked name (would 400 the API if stripped);
+confirms `Agent` (pre-existing blocklist entry) is absent from the forwarded tools list — the
+drill-down's "Agent" sighting is the intentional whole-stripped yellow row
+(`render_sections.py`), not a strip-path bug.
+**Reads:** `src/logs/dual_log/api_requests_opus_websearch_1786052022_{original,forwarded}.jsonl`.
+**Writes:** `md/blocklist_223_probe_report.md`.
+**Calls out:** `proxy.tools` (`_strip_unused_tools`), `constants` (`TOOL_BLOCKLIST`),
+`src.proxy_display.forwarded_parser` (`_parse_forwarded_log`).
+
 ### p1_measure_full_replacement_blast_radius.py (536 LOC)
 
 **Purpose:** Measurement script (dev/ M1 "bg-ack-shapes" milestone, 2026-07-29) — drives real
