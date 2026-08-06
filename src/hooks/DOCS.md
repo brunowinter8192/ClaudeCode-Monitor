@@ -369,9 +369,9 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_gh_cli_chained.py (71 LOC)
+### block_gh_cli_chained.py (77 LOC)
 
-**Purpose:** PreToolUse hook (Bash) — blocks any of the 7 gh-cli search/research tools (`search_repos`, `search_code`, `get_repo_tree`, `get_file_content`, `index_issues`, `index_discussions`, `index_releases`) chained with any non-search command. These tools must run standalone so their full output reaches context — piping through grep/head/tail/sed/awk/wc forces Opus to reconstruct files from fragments instead of reading the complete result. Multiple gh-cli search/research calls combined in one Bash are allowed. The 5 issue-management commands (`list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`) are fully exempt. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — blocks any of the 7 gh-cli search/research tools (`search_repos`, `search_code`, `get_repo_tree`, `get_file_content`, `index_issues`, `index_discussions`, `index_releases`) chained with any non-search command. These tools must run standalone so their full output reaches context — piping through grep/head/tail/sed/awk/wc forces Opus to reconstruct files from fragments instead of reading the complete result. Multiple gh-cli search/research calls combined in one Bash are allowed, and (2026-08, CC 2.1.223 gh-cli-search skill incident) `repo_freshness` may join such a combined chain as an additional legal segment — it is NOT one of the 7 (never triggers the hook on its own or chained with arbitrary non-research commands: `_GH_SEARCH_RE`, the trigger gate, is unchanged), it only becomes relevant once the hook is already in scope because one of the 7 is present. The 5 issue-management commands (`list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`) are fully exempt. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
@@ -382,17 +382,22 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 - `gh-cli index_issues "q" o/r && rag-cli index docs` — chained with rag-cli
 - `gh-cli search_code "q" o/r && echo done` — chained with echo
 - `gh-cli get_file_content o/r path | head -10` — piped to head
+- `gh-cli repo_freshness o/r; echo "..."; gh-cli index_issues "q" o/r` — repo_freshness is legal but echo is not; the whole chain still blocks on the echo segment
 
 **Allowed patterns:**
 - `gh-cli index_issues "q" o/r --limit 30 --offset 0` — standalone with tool-native args
 - `gh-cli index_issues "a" o/r && gh-cli index_discussions "b" o/r` — multiple search/research calls combined
+- `gh-cli repo_freshness o/r && gh-cli index_issues "q1" o/r && gh-cli index_issues "q2" o/r` — repo_freshness joining a combined research chain
+- `gh-cli repo_freshness o/r && git log -1` — repo_freshness alone never matches the trigger gate; hook not triggered at all
 - `gh-cli get_file_content o/r path > /tmp/out.txt` — redirect is not a separator
 - `gh-cli list_issues o/r | grep open` — issue command, exempt
 - any command with none of the 7 search/research calls — not policed
 
-**Segment split.** `_SEPARATOR_RE` splits the (quote-stripped) command on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact (no whitespace before `&`). Every non-empty segment must start with one of the 7 gh-cli search/research tools, else block.
+**Segment split.** `_SEPARATOR_RE` splits the (quote-stripped) command on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact (no whitespace before `&`). Every non-empty segment must start with one of the 7 gh-cli search/research tools OR `repo_freshness` (`_GH_SEARCH_SEGMENT_RE`), else block. `_GH_SEARCH_RE` (the earlier trigger-gate check deciding whether the hook fires at all) intentionally does NOT include `repo_freshness` — keeps it a pure "may ride along once in scope" tool, never itself the reason the hook engages.
 
-**Smoke:** `dev/hook_smoke/test_block_gh_cli_chained.py` (18 cases: 9 block, 6 pass-standalone/two-chained/redirect, 2 exempt-issue-command, 1 single-quote strip, 1 heredoc strip).
+**`_BLOCK_MESSAGE` (2026-08 rewrite):** states three things explicitly that the pre-rewrite message left implicit — (1) one canonical combine example with separator syntax (`gh-cli index_issues "q1" owner/repo && gh-cli index_issues "q2" owner/repo`); (2) output always returns IN FULL to context, filtering/truncating via head/tail/grep/sed/awk/wc is not possible, narrowing is ONLY via the tool's own args (`--limit`, `--offset`, `--path`, `--metadata-only`, `--sort-by`); (3) `repo_freshness` may join the chain. Prompted by a live incident where the agent, blocked twice on a `repo_freshness && index_issues && index_issues` chain (repo_freshness wasn't a legal segment yet) and told only that calls "may be combined" with no example, overcorrected by concatenating two `index_issues` calls with NO separator at all — an argparse error downstream, not a hook block.
+
+**Smoke:** `dev/hook_smoke/test_block_gh_cli_chained.py` (21 cases: 9 block, 6 pass-standalone/two-chained/redirect, 2 exempt-issue-command, 1 single-quote strip, 1 heredoc strip, 3 repo_freshness cases — combined-chain pass, echo-variant block, repo_freshness+git pass). Incident replay probe (verbatim commands + stderr-content checks, not folded into the smoke suite): `dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py`.
 
 ---
 
