@@ -3,32 +3,74 @@ from .rules_config import _load_config
 
 # FUNCTIONS
 
-# Inject model override fields from proxy_rules.json config if enabled and model is opus or sonnet — returns (modified_payload, injected_bool)
+# Dispatch to the per-model 'model_params' path or the legacy family-bucketed path, based on
+# config precedence (2026-08-06): the session's model is now chosen at start via
+# claude_proxy_start.sh's --fable/--opus flags — the proxy must never force it back, only inject
+# thinking/effort/max_tokens for whichever model is actually running.
+#
+# Precedence: if 'model_params' is PRESENT in the config — presence of the KEY, not truthiness;
+# an empty {} still counts as present — it is the ONLY path consulted: payload["model"] is looked
+# up EXACTLY (no family bucketing, no normalization) in config["model_params"]; a hit applies
+# thinking/effort/max_tokens exactly as the legacy mechanics did (each key independently optional);
+# a miss leaves the payload untouched. The legacy 'model_override'/'model_override_worker' sections
+# are ignored entirely in this case, even if still present in the config file. If 'model_params' is
+# ABSENT, falls back unchanged to the legacy family-bucketed behavior (model_family == "opus" ->
+# model_override, "sonnet" -> model_override_worker, INCLUDING the model-field rewrite) — safe
+# rollout: an unmigrated config keeps behaving exactly as before this change.
+# Returns (modified_payload, injected_bool).
 def _inject_model_override(payload: dict, model_family: str) -> tuple:
     try:
         config = _load_config()
-        if model_family == "opus":
-            mo_config = config.get("model_override", {})
-        elif model_family == "sonnet":
-            mo_config = config.get("model_override_worker", {})
-        else:
-            return payload, False
-        if not mo_config.get("enabled", False):
-            return payload, False
-        result = dict(payload)
-        if "model" in mo_config:
-            result["model"] = mo_config["model"]
-        if "thinking" in mo_config:
-            result["thinking"] = mo_config["thinking"]
-        if "effort" in mo_config:
-            output_config = dict(result.get("output_config") or {})
-            output_config["effort"] = mo_config["effort"]
-            result["output_config"] = output_config
-        if "max_tokens" in mo_config:
-            result["max_tokens"] = mo_config["max_tokens"]
-        return result, True
+        if "model_params" in config:
+            return _inject_model_params(payload, config["model_params"])
+        return _inject_legacy_model_override(payload, model_family, config)
     except Exception:
         return payload, False
+
+
+# New per-model path: exact payload["model"] lookup, NEVER writes the model field itself. A miss
+# (model not in the table) or an empty per-model entry both leave the payload untouched.
+def _inject_model_params(payload: dict, model_params: dict) -> tuple:
+    model_id = payload.get("model", "")
+    params = model_params.get(model_id)
+    if not params:
+        return payload, False
+    result = dict(payload)
+    if "thinking" in params:
+        result["thinking"] = params["thinking"]
+    if "effort" in params:
+        output_config = dict(result.get("output_config") or {})
+        output_config["effort"] = params["effort"]
+        result["output_config"] = output_config
+    if "max_tokens" in params:
+        result["max_tokens"] = params["max_tokens"]
+    return result, True
+
+
+# Legacy family-bucketed path — unchanged mechanics, including the model-field rewrite. Kept
+# verbatim (moved, not rewritten) for safe rollout: an unmigrated proxy_rules.json (no
+# 'model_params' key) must behave byte-identically to before this change.
+def _inject_legacy_model_override(payload: dict, model_family: str, config: dict) -> tuple:
+    if model_family == "opus":
+        mo_config = config.get("model_override", {})
+    elif model_family == "sonnet":
+        mo_config = config.get("model_override_worker", {})
+    else:
+        return payload, False
+    if not mo_config.get("enabled", False):
+        return payload, False
+    result = dict(payload)
+    if "model" in mo_config:
+        result["model"] = mo_config["model"]
+    if "thinking" in mo_config:
+        result["thinking"] = mo_config["thinking"]
+    if "effort" in mo_config:
+        output_config = dict(result.get("output_config") or {})
+        output_config["effort"] = mo_config["effort"]
+        result["output_config"] = output_config
+    if "max_tokens" in mo_config:
+        result["max_tokens"] = mo_config["max_tokens"]
+    return result, True
 
 
 # Inject context_management block from proxy_rules.json config if enabled — returns (modified_payload, injected_bool)
