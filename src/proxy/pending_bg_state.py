@@ -1,6 +1,7 @@
 # INFRASTRUCTURE
 import json
 import os
+import re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,23 +55,46 @@ _clear_attempted_ids: set = set()
 # the arm path's "does ANY entry already exist for this id" check (not "is it currently pending")
 # means a stale re-sighting of an already-resolved id's ORIGINAL ack text — still sitting later in
 # the same growing history — can never re-arm it, regardless of restart timing or processing gaps.
-def _update_pending_bg_state(stripped_msg_removed: dict, worker_context: str) -> None:
+#
+# Project scoping (2026-08): project_path (addon.py's PROXY_PROJECT_PATH, already in scope at the
+# call site) is normalized to a "project" slug and stamped on freshly-armed entries only — clear
+# stays id-based (ids are globally unique across projects, no scoping needed there).
+def _update_pending_bg_state(stripped_msg_removed: dict, worker_context: str, project_path: str = "") -> None:
     if worker_context != "main":
         return
+    project_slug = _project_slug_from_path(project_path)
     for idx in sorted(stripped_msg_removed.keys()):
         for chunk in stripped_msg_removed[idx]:
             if not isinstance(chunk, str):
                 continue
             if _is_bg_launch_ack(chunk):
-                _handle_launch_ack_chunk(chunk, worker_context)
+                _handle_launch_ack_chunk(chunk, worker_context, project_slug)
             elif chunk.startswith(_TN_BLOCK_PREFIX):
                 _handle_tn_chunk(chunk, worker_context)
 
 
 # FUNCTIONS
 
+# Normalize a project name/basename to the same canonical slug claude_proxy_start.sh derives for
+# dual-log stems (PROJECT_BASENAME): lower-case, any run of non-[a-z0-9] chars (including existing
+# underscores/hyphens) collapsed to a single "_", leading/trailing "_" stripped. Duplicated in
+# block_timer_pending_bg.py (same convention as this module's other small helpers, e.g.
+# _resolve_pending_bg_state_file — the hook and the writer stay structurally independent).
+def _normalize_project_slug(name: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+
+
+# Derive the armed-entry "project" slug from PROXY_PROJECT_PATH (basename, normalized). Empty
+# string when project_path is falsy — callers must treat "" as "no project recorded" (omit the
+# field), never write it as a literal empty-string project.
+def _project_slug_from_path(project_path: str) -> str:
+    if not project_path:
+        return ""
+    return _normalize_project_slug(os.path.basename(project_path.rstrip('/')))
+
+
 # Recover the task id from a genuine ack chunk and attempt to arm it (once per id per process).
-def _handle_launch_ack_chunk(chunk: str, worker_context: str) -> None:
+def _handle_launch_ack_chunk(chunk: str, worker_context: str, project_slug: str) -> None:
     match = _ACK_ID_RE.search(chunk)
     task_id = match.group(1).strip() if match else ''
     if not task_id:
@@ -79,7 +103,7 @@ def _handle_launch_ack_chunk(chunk: str, worker_context: str) -> None:
     if task_id in _arm_attempted_ids:
         return
     _arm_attempted_ids.add(task_id)
-    _arm_pending(task_id, worker_context)
+    _arm_pending(task_id, worker_context, project_slug)
 
 
 # Recover the task id from a genuine TN chunk and attempt to clear it (once per id per process).
@@ -97,7 +121,11 @@ def _handle_tn_chunk(chunk: str, worker_context: str) -> None:
 # Record task_id as pending iff it has no existing state-file entry at all (any status) — an
 # existing entry (pending OR cleared) means this exact task id has already been through arm once
 # and must never be re-armed by a resighting of its ack text later in the same growing history.
-def _arm_pending(task_id: str, worker_context: str) -> None:
+# project_slug ("" when PROXY_PROJECT_PATH was absent/unresolvable) is stored as the "project"
+# field so block_timer_pending_bg.py can scope blocking to the arming project — omitted entirely
+# when empty, which keeps the entry in the pre-migration "blocks every project" shape rather than
+# writing a literal "" that would match nothing.
+def _arm_pending(task_id: str, worker_context: str, project_slug: str = "") -> None:
     try:
         state = _read_state_file()
         if state is None:
@@ -106,10 +134,13 @@ def _arm_pending(task_id: str, worker_context: str) -> None:
         if task_id in state:
             _log_pending_state_event("skipped", worker_context, task_id, reason="already_recorded")
             return
-        state[task_id] = {
+        entry = {
             "status": "pending",
             "armed_at": _now_iso(),
         }
+        if project_slug:
+            entry["project"] = project_slug
+        state[task_id] = entry
         if _write_state_file(state):
             _log_pending_state_event("armed", worker_context, task_id)
         else:

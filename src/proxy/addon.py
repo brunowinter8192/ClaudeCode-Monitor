@@ -109,7 +109,7 @@ class ProxyAddon:
                 print(f"[proxy_addon] bg_escape trigger failed: {e}", file=sys.stderr)
 
             try:
-                _update_pending_bg_state(stripped_msg_removed, self._worker_context)
+                _update_pending_bg_state(stripped_msg_removed, self._worker_context, project_path)
             except Exception as e:
                 print(f"[proxy_addon] pending_bg_state update failed: {e}", file=sys.stderr)
 
