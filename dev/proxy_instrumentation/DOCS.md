@@ -29,6 +29,18 @@ case (empty `fn_map`, non-empty `messages_delta`) that must still render `inject
 **Writes:** `md/badge_words_probe_report.md`.
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn}`.
 
+### p3_badge_inline_probe.py (244 LOC)
+
+**Purpose:** Verifies the per-flow msg-index tracking + inline out-of-window span rendering
+and the neighbor-bleed fix end-to-end — `accumulate_dual_log` -> pane-style entry attach ->
+`_build_req_header_line` + `render_messages` — against the CC 2.1.223 recorded session with
+mid-conversation system messages (deferred-tools notice, task-tools nag, bg-notification), plus
+a synthetic fields-only delta line (`fields_delta` must not badge) and a full-session
+collapsed-header sweep (`⚠S` badge must never render).
+**Reads:** `src/logs/dual_log/api_requests_opus_websearch_1786052022_{forwarded,stripped,injected}.jsonl`.
+**Writes:** `md/badge_inline_probe_report.md`.
+**Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn,render_messages,format}`.
+
 ### p1_measure_full_replacement_blast_radius.py (536 LOC)
 
 **Purpose:** Measurement script (dev/ M1 "bg-ack-shapes" milestone, 2026-07-29) — drives real
@@ -48,7 +60,7 @@ opus_wise2627_1785324012,worker_25c51a2e_tn-role-system_1785344818}_original.jso
 
 ## Gotchas
 
-- Both scripts import from `src/` — filename MUST carry the `pN_` prefix (project convention:
+- `pN_*.py` scripts import from `src/` — filename MUST carry the `pN_` prefix (project convention:
   only `pN_*.py` dev scripts may `from src...`/`import src...`; unprefixed dev scripts must copy
   the logic or import from an existing `pN_` module).
 - `proxy_display` has an internal `from ..constants` (2-level relative import in `pane.py`, pulled

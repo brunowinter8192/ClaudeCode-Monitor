@@ -119,11 +119,23 @@ def _render_span_content(full_text: str, i_blk: list, s_blk: list, indent: str, 
 
 # Look up the (injected, stripped) span lists recorded for one message/block coordinate.
 # Returns ([], []) when use_dual is False (legacy log — no dual-log spans available).
+# Scoped to THIS entry's own flow_id when the ownership lookups (_strip_msgs_lookup /
+# _inject_msgs_lookup, attached by pane.py/worker_proxy_pane.py) are present on the entry —
+# the acc dicts behind _stripped_spans/_injected_spans are shared-by-reference and cumulative
+# across all entries of a family, so without this an entry can render a later/neighbor
+# request's span at a coordinate it never touched itself. Entries without the ownership
+# lookups (e.g. synthetic test fixtures) fall back to the unscoped lookup.
 def _lookup_spans(entry: dict, msg_idx: int, bidx, use_dual: bool) -> tuple:
     if not use_dual:
         return [], []
-    i_blk = entry['_injected_spans']['messages'].get(str(msg_idx), {}).get(str(bidx)) or []
-    s_blk = entry['_stripped_spans']['messages'].get(str(msg_idx), {}).get(str(bidx)) or []
+    msg_key = str(msg_idx)
+    i_blk = entry['_injected_spans']['messages'].get(msg_key, {}).get(str(bidx)) or []
+    s_blk = entry['_stripped_spans']['messages'].get(msg_key, {}).get(str(bidx)) or []
+    fid = entry.get('flow_id', '')
+    if '_inject_msgs_lookup' in entry and msg_key not in entry['_inject_msgs_lookup'].get(fid, set()):
+        i_blk = []
+    if '_strip_msgs_lookup' in entry and msg_key not in entry['_strip_msgs_lookup'].get(fid, set()):
+        s_blk = []
     return i_blk, s_blk
 
 # Render block-header + span content for one block, returning (lines, keys)
@@ -184,7 +196,7 @@ def _render_new_messages(entry: dict, messages: list, prev_msg_count: int, fdi: 
             keys.extend(content_keys)
     return lines, keys
 
-# Branch-2 body: modified messages in range [diff_start, len(messages)) + removed tail, returning (lines, keys)
+# Branch-2 body: modified messages in range [diff_start, len(messages)) + removed tail, returning (lines, keys, diff_start)
 # Also pre-renders stripped messages from [fdi, diff_start) skipped by the main loop
 def _render_modified_messages(entry: dict, messages: list, prev_entry_for_delta, fdi: int, stripped_indices: set, use_dual: bool) -> tuple:
     lines = []
@@ -236,6 +248,41 @@ def _render_modified_messages(entry: dict, messages: list, prev_entry_for_delta,
         m_chars = msg.get('chars', 0)
         lines.append(f"    {RED}removed:{SOFT_RESET} {DIM}[{m_idx:3d}] {role:<4}  {m_type:<20} {m_chars:,}c{SOFT_RESET}")
         keys.append(None)
+    return lines, keys, diff_start
+
+# Render messages at indices THIS entry's own flow touched (stripped and/or injected) that sit
+# below covered_from — outside the normal new/modified window (e.g. a mid-conversation
+# system-role message CC overwrites in place, which the forwarded reconstruction sees no delta
+# for since post-strip content is unchanged). No-op when the entry carries no ownership lookups
+# (synthetic fixtures) or none of its own indices fall outside the window.
+def _render_flow_extra_messages(entry: dict, messages: list, covered_from: int) -> tuple:
+    lines = []
+    keys = []
+    fid = entry.get('flow_id', '')
+    s_msgs = entry.get('_strip_msgs_lookup', {}).get(fid, set())
+    i_msgs = entry.get('_inject_msgs_lookup', {}).get(fid, set())
+    extra = sorted({int(m) for m in (s_msgs | i_msgs) if int(m) < covered_from})
+    for msg_idx in extra:
+        if msg_idx >= len(messages):
+            continue
+        msg = messages[msg_idx]
+        role = msg.get('role', '?')[:4]
+        msg_type = msg.get('type', 'text')
+        blocks = msg.get('blocks', [])
+        type_label = f"{len(blocks)} blocks" if len(blocks) > 1 else msg_type
+        lines.append(f"    {WHITE}[{msg_idx:3d}] {role:<4}  {type_label:<20}{SOFT_RESET}")
+        keys.append(None)
+        if blocks:
+            for bidx, blk in enumerate(blocks):
+                b_lines, b_keys = _render_block_spans(msg_idx, bidx, blk, entry, True)
+                lines.extend(b_lines)
+                keys.extend(b_keys)
+        else:
+            preview = msg.get('content_tail', msg.get('content_preview', ''))
+            i_blk, s_blk = _lookup_spans(entry, msg_idx, 0, True)
+            content_lines, content_keys = _render_span_content(preview, i_blk, s_blk, "      ", highlight_suspect=False)
+            lines.extend(content_lines)
+            keys.extend(content_keys)
     return lines, keys
 
 # Render new/modified/removed messages for an expanded request entry, returning (lines, keys)
@@ -249,8 +296,15 @@ def render_messages(entry: dict, prev_entry_for_delta, entries: list, expand_sta
         fdi = 0
     use_dual = '_stripped_spans' in entry
     if prev_msg_count < len(messages):
-        return _render_new_messages(entry, messages, prev_msg_count, fdi, stripped_indices, use_dual)
-    return _render_modified_messages(entry, messages, prev_entry_for_delta, fdi, stripped_indices, use_dual)
+        lines, keys = _render_new_messages(entry, messages, prev_msg_count, fdi, stripped_indices, use_dual)
+        covered_from = prev_msg_count
+    else:
+        lines, keys, covered_from = _render_modified_messages(entry, messages, prev_entry_for_delta, fdi, stripped_indices, use_dual)
+    if use_dual:
+        extra_lines, extra_keys = _render_flow_extra_messages(entry, messages, covered_from)
+        lines = extra_lines + lines
+        keys = extra_keys + keys
+    return lines, keys
 
 
 # Compute aggregated strip bucket signals for an expanded REQ header (INERT/IDX/LEAK/SUS)

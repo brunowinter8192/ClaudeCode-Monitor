@@ -120,8 +120,6 @@ def render_turn_expanded(group: dict, entries: list, expand_states: dict, pane_w
         if prev_same is not None:
             if entry.get('tools_hash') and prev_same.get('tools_hash') and entry.get('tools_hash') != prev_same.get('tools_hash'):
                 warn_parts.append(f"{RED}⚠T{SOFT_RESET}")
-            if entry.get('system_total_chars') is not None and prev_same.get('system_total_chars') is not None and entry.get('system_total_chars') != prev_same.get('system_total_chars'):
-                warn_parts.append(f"{RED}⚠S{SOFT_RESET}")
         warn_str = f"  {'  '.join(warn_parts)}" if warn_parts else ''
         req_key = ('req', entry_idx)
         is_req_expanded = expand_states.get(req_key, False)
