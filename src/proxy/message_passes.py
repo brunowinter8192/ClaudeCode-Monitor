@@ -452,8 +452,9 @@ def _apply_git_lock_strip(messages: list) -> tuple:
     return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
 
 
-# BG-launch-ack pass — replaces content of background-command launch-ack blocks with '.' — returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
-def _apply_bg_launch_ack_strip(messages: list) -> tuple:
+# BG-launch-ack pass — replaces content of background-command launch-ack blocks with '.' —
+# is_main selects the replacement wording (see strip_bg_launch_ack.py) — returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
+def _apply_bg_launch_ack_strip(messages: list, is_main: bool = False) -> tuple:
     result = []
     pass_mods = []
     pass_removed_by_idx = {}
@@ -469,7 +470,7 @@ def _apply_bg_launch_ack_strip(messages: list) -> tuple:
                 or _content_contains(old_content, _BG_LAUNCH_ACK_MARKER_2)):
             result.append(msg)
             continue
-        new_content, ack_removed = _strip_bg_launch_ack(old_content)
+        new_content, ack_removed = _strip_bg_launch_ack(old_content, is_main)
         if ack_removed:
             result.append({**msg, "content": new_content})
             pass_mods.append("stripped_bg_launch_ack")
