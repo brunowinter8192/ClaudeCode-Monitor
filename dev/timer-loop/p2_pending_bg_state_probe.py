@@ -362,6 +362,55 @@ def test_wording_main_vs_worker():
     check("main wording still carries the recovered ID line", "ID: task_wording1" in main_text)
 
 
+# Test 13 — project scoping (2026-08, cross-project false-block incident): a fresh arm records the
+# normalized project slug from project_path; empty/absent project_path omits the field entirely
+# (backward-compat shape, block_timer_pending_bg.py treats a missing field as "blocks every
+# project"); real ProxyAddon.request() end-to-end also stamps it via PROXY_PROJECT_PATH.
+def test_arm_records_project():
+    print("\n[Test 13] Fresh arm records the normalized project slug")
+    _reset_module_state()
+    with tempfile.TemporaryDirectory() as tmp_root:
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root}, clear=False):
+            _update_pending_bg_state({0: [_ack_text("task_proj1")]}, "main", "/Users/x/Websearch")
+            state = _read_state_file()
+        check("project slug normalized from basename (Websearch -> websearch)",
+              state.get("task_proj1", {}).get("project") == "websearch")
+
+    _reset_module_state()
+    with tempfile.TemporaryDirectory() as tmp_root:
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root}, clear=False):
+            _update_pending_bg_state({0: [_ack_text("task_proj2")]}, "main", "/Users/x/Monitor_CC")
+            state = _read_state_file()
+        check("project slug normalized from basename (Monitor_CC -> monitor_cc)",
+              state.get("task_proj2", {}).get("project") == "monitor_cc")
+
+    _reset_module_state()
+    with tempfile.TemporaryDirectory() as tmp_root:
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root}, clear=False):
+            _update_pending_bg_state({0: [_ack_text("task_proj3")]}, "main", "")
+            state = _read_state_file()
+        check("empty project_path -> 'project' field omitted (backward-compat shape)",
+              "project" not in state.get("task_proj3", {}))
+
+    _reset_module_state()
+    with tempfile.TemporaryDirectory() as tmp_root:
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root}, clear=False):
+            _update_pending_bg_state({0: [_ack_text("task_proj4")]}, "main")  # no 3rd arg at all
+            state = _read_state_file()
+        check("project_path omitted entirely (default '') -> 'project' field also omitted",
+              "project" not in state.get("task_proj4", {}))
+
+    _reset_module_state()
+    with tempfile.TemporaryDirectory() as tmp_root:
+        addon = _make_main_addon(tmp_root)
+        flow = _FakeFlow(_payload_with_user_text(_ack_text("task_proj_e2e")))
+        with mock.patch.dict(os.environ, {"MONITOR_CC_ROOT": tmp_root, "PROXY_PROJECT_PATH": "/Users/x/websearch"}, clear=False):
+            addon.request(flow)
+            state = _read_state_file()
+        check("real ProxyAddon.request() end-to-end stamps project from PROXY_PROJECT_PATH",
+              state.get("task_proj_e2e", {}).get("project") == "websearch")
+
+
 # ORCHESTRATOR
 
 def run_probe_workflow():
@@ -380,6 +429,7 @@ def run_probe_workflow():
     test_real_request_clears_pending()
     test_real_request_worker_never_writes()
     test_wording_main_vs_worker()
+    test_arm_records_project()
 
     total = len(_RESULTS)
     passed = sum(1 for _, ok in _RESULTS if ok)

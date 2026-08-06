@@ -97,6 +97,34 @@ def test_decide_unit_cases():
     }))
     check("multiple entries -> only fresh-pending ones returned, sorted", multi == ["a1", "a4"])
 
+    # --- project scoping (2026-08, cross-project false-block incident) ---
+    check("foreign-project pending -> allow (task b4z5fzzao class)",
+          decide(_TARGET, True,
+                 _stub({"posts1": {"status": "pending", "armed_at": fresh_ts, "project": "posts"}}),
+                 "websearch") == [])
+    check("same-project pending -> block",
+          decide(_TARGET, True,
+                 _stub({"ws1": {"status": "pending", "armed_at": fresh_ts, "project": "websearch"}}),
+                 "websearch") == ["ws1"])
+    check("legacy entry with no 'project' field -> blocks every project (backward compat)",
+          decide(_TARGET, True,
+                 _stub({"legacy1": {"status": "pending", "armed_at": fresh_ts}}),
+                 "some_other_project") == ["legacy1"])
+    check("foreign-project pending, but expired -> allow (expiry checked before project)",
+          decide(_TARGET, True,
+                 _stub({"posts2": {"status": "pending", "armed_at": stale_ts, "project": "posts"}}),
+                 "websearch") == [])
+    check("same-project pending, but expired -> allow",
+          decide(_TARGET, True,
+                 _stub({"ws2": {"status": "pending", "armed_at": stale_ts, "project": "websearch"}}),
+                 "websearch") == [])
+    mixed = decide(_TARGET, True, _stub({
+        "own1": {"status": "pending", "armed_at": fresh_ts, "project": "websearch"},
+        "foreign1": {"status": "pending", "armed_at": fresh_ts, "project": "posts"},
+        "legacy2": {"status": "pending", "armed_at": fresh_ts},
+    }), "websearch")
+    check("mixed own/foreign/legacy -> only own + legacy block", mixed == ["legacy2", "own1"])
+
 
 # Run the real hook via stdin; env scopes MONITOR_CC_ROOT to tmp_root; cwd is caller-controlled
 # (outside a worktree unless the test explicitly wants the exemption to fire).
@@ -164,6 +192,31 @@ def test_real_entrypoint():
         code, stderr = _run_hook("rag-cli update_docs .", True, tmp_root, cwd)
         check("non-timer command, fresh pending present -> exit 0 (not gated by pending state)",
               code == 0 and stderr == "")
+
+    # --- project scoping (2026-08) via real cwd-basename derivation, subprocess entry-point ---
+    with tempfile.TemporaryDirectory() as tmp_root, tempfile.TemporaryDirectory() as outer:
+        ws_cwd = Path(outer) / "Websearch"
+        ws_cwd.mkdir()
+        _seed_state(tmp_root, {"posts_task": {"status": "pending", "armed_at": fresh_ts, "project": "posts"}})
+        code, stderr = _run_hook(_TARGET, True, tmp_root, str(ws_cwd))
+        check("real entry-point: foreign-project (posts) pending, cwd=Websearch -> exit 0 (allow)",
+              code == 0 and stderr == "")
+
+    with tempfile.TemporaryDirectory() as tmp_root, tempfile.TemporaryDirectory() as outer:
+        ws_cwd = Path(outer) / "Websearch"
+        ws_cwd.mkdir()
+        _seed_state(tmp_root, {"ws_task": {"status": "pending", "armed_at": fresh_ts, "project": "websearch"}})
+        code, stderr = _run_hook(_TARGET, True, tmp_root, str(ws_cwd))
+        check("real entry-point: same-project pending, cwd=Websearch normalizes to 'websearch' -> exit 2 (block)",
+              code == 2 and "ws_task" in stderr)
+
+    with tempfile.TemporaryDirectory() as tmp_root, tempfile.TemporaryDirectory() as outer:
+        ws_cwd = Path(outer) / "Websearch"
+        ws_cwd.mkdir()
+        _seed_state(tmp_root, {"legacy_task": {"status": "pending", "armed_at": fresh_ts}})
+        code, stderr = _run_hook(_TARGET, True, tmp_root, str(ws_cwd))
+        check("real entry-point: legacy no-project entry -> exit 2 (blocks regardless of cwd)",
+              code == 2 and "legacy_task" in stderr)
 
     with tempfile.TemporaryDirectory() as tmp_root, tempfile.TemporaryDirectory() as cwd:
         _seed_state(tmp_root, {"real1": {"status": "pending", "armed_at": fresh_ts}})

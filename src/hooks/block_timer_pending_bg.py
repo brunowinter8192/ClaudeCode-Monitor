@@ -55,7 +55,8 @@ def block_timer_pending_bg_workflow() -> None:
         command, run_in_background, session_id = _parse_input()
         if command is None:
             sys.exit(0)
-        pending_ids = decide(command, run_in_background, _read_pending_state)
+        current_project = _current_project_slug()
+        pending_ids = decide(command, run_in_background, _read_pending_state, current_project)
         if pending_ids:
             message = _build_block_message(pending_ids, _read_pending_state)
             print(message, file=sys.stderr, end="")
@@ -71,10 +72,12 @@ def block_timer_pending_bg_workflow() -> None:
 
 # Pure decision: gate on run_in_background + sleep-only regex, then check the pending-state file
 # via state_fn (injectable — real entrypoint wires _read_pending_state, smoke tests inject a
-# stub). Returns the sorted list of fresh (non-expired) pending task ids — empty means allow, a
-# non-empty list both signals block AND carries what the caller needs to name in the message.
-# state_fn exceptions (missing file, corrupt JSON) or a non-dict result → allow (fail-open).
-def decide(command: str, run_in_background: bool, state_fn) -> list:
+# stub). current_project ("" when the caller couldn't determine it) scopes which entries count as
+# blocking — see _fresh_pending_ids. Returns the sorted list of fresh (non-expired), same-project
+# pending task ids — empty means allow, a non-empty list both signals block AND carries what the
+# caller needs to name in the message. state_fn exceptions (missing file, corrupt JSON) or a
+# non-dict result → allow (fail-open).
+def decide(command: str, run_in_background: bool, state_fn, current_project: str = "") -> list:
     if not run_in_background:
         return []
     if command is None or not _SLEEP_ONLY_BG.match(command):
@@ -85,14 +88,19 @@ def decide(command: str, run_in_background: bool, state_fn) -> list:
         return []
     if not isinstance(state, dict):
         return []
-    return _fresh_pending_ids(state)
+    return _fresh_pending_ids(state, current_project)
 
 
-# Filter state entries to fresh-pending task ids: status=='pending', armed_at parses, and age is
-# STRICTLY younger than _PENDING_EXPIRY_SECS (see constant comment for the boundary rationale). An
-# entry with an unparseable armed_at is skipped, not counted — fail-open per-entry, same spirit as
-# the file-level fail-open.
-def _fresh_pending_ids(state: dict) -> list:
+# Filter state entries to fresh-pending, SAME-PROJECT task ids: status=='pending', armed_at
+# parses, age STRICTLY younger than _PENDING_EXPIRY_SECS (see constant comment for the boundary
+# rationale), and project match. Project scoping (2026-08, cross-project false-block incident —
+# see block_timer_pending_bg.py's project-scoping design note above _current_project_slug): an
+# entry with NO "project" field (pre-migration state, or project_path was unresolvable at arm
+# time) still blocks unconditionally — backward-compat default, and such entries age out via the
+# normal expiry anyway. An entry WITH a "project" field only blocks when it matches
+# current_project. An entry with an unparseable armed_at is skipped, not counted — fail-open
+# per-entry, same spirit as the file-level fail-open.
+def _fresh_pending_ids(state: dict, current_project: str) -> list:
     now = datetime.now(timezone.utc)
     fresh = []
     for task_id, entry in state.items():
@@ -100,6 +108,9 @@ def _fresh_pending_ids(state: dict) -> list:
             continue
         age = _entry_age_secs(entry, now)
         if age is None or age >= _PENDING_EXPIRY_SECS:
+            continue
+        entry_project = entry.get("project")
+        if entry_project is not None and entry_project != current_project:
             continue
         fresh.append(task_id)
     return sorted(fresh)
@@ -150,6 +161,24 @@ def _format_age(secs) -> str:
         return f"{mins}m"
     hrs, rem_mins = divmod(mins, 60)
     return f"{hrs}h {rem_mins}m" if rem_mins else f"{hrs}h"
+
+
+# Normalize a project name/basename to the same canonical slug claude_proxy_start.sh derives for
+# dual-log stems and src/proxy/pending_bg_state.py stamps on armed entries (PROJECT_BASENAME):
+# lower-case, any run of non-[a-z0-9] chars (including existing underscores/hyphens) collapsed to
+# a single "_", leading/trailing "_" stripped. Duplicated in pending_bg_state.py rather than
+# shared — this hook and the proxy writer stay structurally independent (src/hooks/ has no import
+# path into src/proxy/, same convention as the file-path helpers already duplicated between them).
+def _normalize_project_slug(name: str) -> str:
+    return re.sub(r'[^a-z0-9]+', '_', name.lower()).strip('_')
+
+
+# This hook's own project, derived from cwd's basename. Main-session cwd IS the project root (the
+# same assumption the _WORKTREE_FRAGMENT check above makes), so basename(cwd) is the raw project
+# name to normalize — e.g. cwd "/Users/x/Monitor_CC" -> "monitor_cc", matching the "monitor_cc"
+# slug pending_bg_state.py would have stamped from PROXY_PROJECT_PATH="/Users/x/Monitor_CC".
+def _current_project_slug() -> str:
+    return _normalize_project_slug(os.path.basename(os.getcwd().rstrip('/')))
 
 
 # Real state reader — same MONITOR_CC_ROOT/tmp-fallback convention as src/proxy/pending_bg_state.py.
