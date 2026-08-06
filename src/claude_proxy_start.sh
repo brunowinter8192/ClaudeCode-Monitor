@@ -7,8 +7,8 @@
 # over --fable/--opus. If both --fable and --opus are given (no explicit --model), the LAST one
 # wins. No shortcut and no --model at all: no --model is injected — behavior is byte-identical to
 # before this flag existed (native CC default model).
-# Known limitation: the pinned claude-205 binary predates claude-opus-5 (introduced in CC 2.1.219)
-# — --opus's mapping is correct but not yet fully functional until the pin bump (monitor-cc #63).
+# --opus requires claude-opus-5 (introduced in CC 2.1.219) — the pinned binary is CC 2.1.223
+# (bumped 2026-08-06, monitor-cc #63), so --opus is fully functional as of this pin.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_CC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -383,8 +383,9 @@ trap cleanup EXIT INT TERM
 sleep 1
 echo "Proxy for $PROJECT on port $PROXY_PORT, log: api_requests_${LOG_ID}.jsonl"
 
-# Pinned to v2.1.205 via ~/.local/bin/claude-205 wrapper. Override with CLAUDE_BIN env var if needed.
-CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude-205}"
+# Pinned to v2.1.223 via ~/.local/bin/claude-223 wrapper (bumped 2026-08-06, monitor-cc #63 —
+# claude-opus-5 needs >=2.1.219). Override with CLAUDE_BIN env var if needed.
+CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude-223}"
 if [ ! -x "$CLAUDE_BIN" ]; then
     echo "ERROR: $CLAUDE_BIN not found or not executable" >&2
     exit 1
