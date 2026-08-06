@@ -350,6 +350,19 @@ python3 dev/hook_smoke/test_block_timer_no_worker_working.py
 
 ---
 
+### test_block_timer_pending_bg.py (230 LOC, 2026-08-06 milestone-3)
+
+**Purpose:** 27-check, 4-layer smoke for `block_timer_pending_bg.py`. **Layer 1 (12 cases):** `decide()` called directly with a stub `state_fn` returning a crafted `pending_bg_tasks.json`-shaped dict — fresh pending → block; cleared-only (incl. the "no prior arm" orphan tombstone shape) → allow; stale (2h) pending → allow; the exact-3600s boundary → allow (strictly-younger-than semantics); 3599s (1s under) → block; `state_fn` raising / non-dict / non-timer command / `run_in_background=False` / unparseable `armed_at` → allow; multiple entries → only fresh-pending ones returned, sorted. **Layer 2 (10 cases):** real stdin entry-point via `subprocess`, a genuine `pending_bg_tasks.json` seeded under a `MONITOR_CC_ROOT`-scoped `tempfile.TemporaryDirectory()`, `cwd` forced to a SEPARATE tempdir outside any `.claude/worktrees/` path — this worktree's own filesystem path contains that fragment, so a subprocess launched with the default cwd would always hit the hook's own worktree exemption and mask every block/allow case; asserts exit code, that the block message names the id and states an age (`"ago"`) and an idle instruction, and exit-0-no-stderr for every allow path (cleared, stale, missing file, corrupt file, non-timer command, foreground). **Layer 3 (1 case):** dedicated worktree-exemption check — `cwd` deliberately INSIDE a `.claude/worktrees/`-fragment path WITH a fresh-pending state file that would block if not exempted — asserts exit 0, proving the exemption itself fires (not just that it's never triggered by accident in Layer 2). **Layer 4 (4 cases):** static `hook_setup._HOOK_SCRIPTS` check — entry present exactly once, immediately after `block_timer_no_worker_working.py`, immediately before `rewrite_background_sleep.py`, registered under the `Bash` matcher — same verification method used to confirm the 2026-07-21 `block_concurrent_timer.py` removal, applied in reverse for an addition.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_block_timer_pending_bg.py
+```
+
+**Expected output:** `27/27 passed` (exit 0).
+
+---
+
 ### test_hook_setup_main_branch_gate.py (135 LOC)
 
 **Purpose:** 10-case smoke for the two-condition install gate in `hook_setup.py` (`decide_entries()`). Stub `git_query_fn` (script → `True`/`False`/`None`, on-`main` presence) and stub `tree_query_fn` (script → bool, working-tree presence), both defaulting to present so cases only name the interesting scripts — no real git or filesystem calls. Verifies: all-present → all installed; one absent from `main` → skipped, rest installed; `git_query_fn` returns `None` (query unanswerable) → fail-safe skip; mixed present/absent/query-error set resolved independently; a multi-matcher script (e.g. `block_path_typo.py`-shaped) absent from `main` has EVERY entry skipped; **on `main` but missing from the working tree → skipped** (the mirror-image condition — a script can be genuinely committed on `main` yet absent from the CURRENT tree if a branch deleted/renamed it while its `_HOOK_SCRIPTS` entry stayed); on `main` AND in the tree → installed (mirror-image positive); missing from BOTH → skipped, reporting the main-branch reason (checked first); skip-reason text distinguishes "not committed on main" from "missing from the current working tree" so a maintainer knows which condition failed.

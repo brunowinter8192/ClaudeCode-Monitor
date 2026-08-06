@@ -287,6 +287,31 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
+### block_timer_pending_bg.py (185 LOC, 2026-08-06 milestone-3)
+
+**Purpose:** PreToolUse hook (Bash) — blocks the canonical background sleep-timer (same `_SLEEP_ONLY_BG` shape as `rewrite_background_sleep.py`/`block_unauthorized_background.py`/`block_timer_no_worker_working.py`, order-independent) while a background task launched by THIS orchestrator is still pending (`src/logs/pending_bg_tasks.json`, written by `src/proxy/pending_bg_state.py`). Prevents the exact failure the design doc opens with: the orchestrator arms a new timer while an earlier backgrounded task hasn't completed yet, producing stacked timers and duplicate wakeups. Blocks iff `state[task_id].status == "pending"` for at least one id AND that entry's `armed_at` age is STRICTLY younger than `_PENDING_EXPIRY_SECS = 3600` (3300s canonical timer + margin for proxy/TN delivery lag — an entry armed EXACTLY at 3600s is already treated as stale and does NOT block, boundary chosen so the margin tolerates lag without extending the blocking window by one more second). Fail-open on everything: missing/corrupt state file, non-dict state, unparseable `armed_at` (per-entry, not file-level — one bad entry doesn't sink the whole check), any other exception. Skipped entirely when the hook's own cwd is inside a worktree (`.claude/worktrees/` fragment) — orchestrator-only, same convention as `block_timer_no_worker_working.py`. **Does NOT repeat the false-block failure of the removed `block_concurrent_timer.py`** (`process-docs/tool_use_safety/2026-07-20_timer_guard_concurrent_redesign.md`, `2026-07-21_concurrent_timer_hook_removed.md`) — that hook computed `expiry = armed_time + 600s` as pure hook-local arithmetic, blind to whether the underlying sleep actually finished early (worker went idle before timeout, or the turn was aborted); it kept blocking a legitimate new timer until its own clock ran out. This hook instead reads state the proxy writes from DIRECTLY OBSERVED events — `pending` only because the proxy genuinely saw a launch-ack, `cleared` only because it genuinely saw a completion/kill notice for that id, exit-code-agnostic (`dev/timer-loop/md/bg_completion_wordings_20260806.md`: the dominant real wording is exit 143, i.e. exactly the SIGTERM a menubar abort/turn-interrupt produces) — an abort itself generates the clearing signal before the orchestrator's next timer attempt. `_PENDING_EXPIRY_SECS` only guards the narrower case of the completion notice never reaching the proxy at all (proxy crashed/restarted and the session also ended), not the primary signal.
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`); `src/logs/pending_bg_tasks.json` (`MONITOR_CC_ROOT`/`/tmp`-fallback, same convention as `src/proxy/pending_bg_state.py`'s writer — read-only here, this hook never writes the state file); `os.getcwd()` (worktree exemption).
+**Writes:** stderr (block message naming every fresh-pending task id + the youngest one's age, e.g. `"...pending (ID: abc123, youngest armed 4m ago)..."`) on block only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_fire_log.log_fire` (same-dir import via `sys.path` insert); stdlib only otherwise (`json`, `re`, `datetime`, `pathlib`).
+
+**`decide(command, run_in_background, state_fn) -> list[str]`** — returns the sorted list of fresh-pending task ids rather than a bare bool (empty list is the falsy/allow case) so the workflow can name them in the block message without a second decision computation; the workflow DOES still re-read state independently via `_build_block_message` to compute the youngest entry's age (message-building is a separate concern from the block/allow decision, and is itself wrapped so it can never raise — a raise there must never flip an intended BLOCK into an accidental ALLOW via the workflow's outer fail-open `except`).
+
+**Block condition (ALL must hold):**
+1. `run_in_background == True` AND command matches `_SLEEP_ONLY_BG`.
+2. `src/logs/pending_bg_tasks.json` parses to a dict with at least one entry whose `status == "pending"` and whose `armed_at` age is `< 3600s`.
+
+**Passthrough (no block):**
+- No entries, or every entry `status == "cleared"` (including the "no prior arm" tombstone `pending_bg_state.py` writes for an orphan TN sighting)
+- Every pending entry's `armed_at` age is `>= 3600s` (stale — the proxy's clearing signal never arrived)
+- Missing state file, corrupt JSON, non-dict state, or an unparseable `armed_at` on the only pending entry
+- `run_in_background=false`/absent, or a non-sleep-only command
+- Hook cwd inside `.claude/worktrees/` — orchestrator-only guard
+
+**Smoke:** `dev/hook_smoke/test_block_timer_pending_bg.py` (27 checks, 4 layers: 12 `decide()` unit cases incl. the exact-3600s boundary; 10 real-stdin-entrypoint subprocess cases with `cwd` forced OUTSIDE any `.claude/worktrees/` path — this repo's own worktrees live under a path containing that fragment, so an entrypoint test run from inside one would always hit the exemption and mask every case under test; 1 dedicated worktree-exemption case with `cwd` INSIDE a `.claude/worktrees/` path and a fresh-pending state that would otherwise block; 4 static `hook_setup._HOOK_SCRIPTS` registration checks).
+
+---
+
 ### block_broad_grep.py (104 LOC)
 
 **Purpose:** PreToolUse hook (Bash) — blocks recursive `grep -r`/`-R` calls on directories when no `--include=` scope is present. Unrestricted recursive grep matches JSONL logs, node_modules, and vendored content, producing 10MB+ output that floods the context window. Exits 2 + stderr with fix options. Exits 0 on any parse/internal error (fail-open).
