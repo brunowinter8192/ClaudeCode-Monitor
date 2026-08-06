@@ -13,10 +13,12 @@ _GH_SEARCH_RE = re.compile(
     r'\bgh-cli\s+(?:search_repos|search_code|get_repo_tree|get_file_content'
     r'|index_issues|index_discussions|index_releases)\b'
 )
-# A segment is allowed only if it starts with one of the 7 search/research tools
+# A segment is allowed if it starts with one of the 7 search/research tools OR repo_freshness —
+# repo_freshness alone never triggers this hook (absent from _GH_SEARCH_RE above), but once a
+# combined chain is already in scope (>=1 of the 7 present) it may join as a segment.
 _GH_SEARCH_SEGMENT_RE = re.compile(
     r'^gh-cli\s+(?:search_repos|search_code|get_repo_tree|get_file_content'
-    r'|index_issues|index_discussions|index_releases)\b'
+    r'|index_issues|index_discussions|index_releases|repo_freshness)\b'
 )
 # Shell command separators: && || ; newline | (single, after ||) and space-bounded &.
 # Order matters — && before single &, || before |. `2>&1` / `>&` not matched
@@ -25,10 +27,14 @@ _SEPARATOR_RE = re.compile(r'&&|\|\||;|\n|\||\s&(?=\s|$)')
 
 _BLOCK_MESSAGE = (
     "gh-cli search/research tools (search_repos, search_code, get_repo_tree, get_file_content, "
-    "index_issues, index_discussions, index_releases) must run STANDALONE — only multiple gh-cli "
-    "search/research calls may be combined in one Bash command. Do NOT pipe to grep/head/tail/sed/"
-    "awk/wc or chain with other commands. Narrow results via the tool's own --offset, --limit, "
-    "--path, --metadata-only, --sort-by args instead.\n"
+    "index_issues, index_discussions, index_releases) must run STANDALONE — do NOT pipe to grep/"
+    "head/tail/sed/awk/wc, do NOT chain with any other command. Output ALWAYS returns IN FULL to "
+    "the context; there is no way to filter or truncate it after the call. Narrow results ONLY "
+    "via the tool's own args: --limit, --offset, --path, --metadata-only, --sort-by.\n"
+    "Multiple gh-cli calls MAY be combined in one Bash command — search/research calls with each "
+    "other, and repo_freshness may join the chain too. Separate each call with a shell operator "
+    "(&&, ;, or a newline), e.g.:\n"
+    "  gh-cli index_issues \"q1\" owner/repo && gh-cli index_issues \"q2\" owner/repo\n"
 )
 
 

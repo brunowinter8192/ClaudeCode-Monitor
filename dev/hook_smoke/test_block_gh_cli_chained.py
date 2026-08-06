@@ -47,6 +47,18 @@ CASES = [
      "echo 'gh-cli index_issues \"q\" o/r | grep foo'", 0),
     ("pattern inside heredoc body PASS shell-stripped",
      "cat <<'EOF'\ngh-cli search_code \"q\" | grep x\nEOF", 0),
+    # --- repo_freshness as a legal chain segment (2026-08, websearch incident) ---
+    ("repo_freshness + two index_issues via && PASS (incident msg121)",
+     "gh-cli repo_freshness unclecode crawl4ai && "
+     "gh-cli index_issues \"Invalid IPv6 URL\" unclecode/crawl4ai --limit 30 && "
+     "gh-cli index_issues \"raw markdown conversion\" unclecode/crawl4ai --limit 30", 0),
+    ("repo_freshness + index_issues with echo segments BLOCK (incident msg118)",
+     "gh-cli repo_freshness unclecode crawl4ai; echo \"=== PASS 1 ===\"; "
+     "gh-cli index_issues \"Invalid IPv6 URL\" unclecode/crawl4ai --limit 30; "
+     "echo \"=== PASS 2 ===\"; "
+     "gh-cli index_issues \"raw markdown conversion\" unclecode/crawl4ai --limit 30", 2),
+    ("repo_freshness chained with git (non-research) PASS — hook not triggered",
+     "gh-cli repo_freshness unclecode crawl4ai && git log -1", 0),
 ]
 
 
