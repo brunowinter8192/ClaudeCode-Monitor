@@ -46,6 +46,25 @@ python3 dev/hook_smoke/test_block_gh_cli_chained.py
 
 ---
 
+### test_block_gh_cli_local_path.py (83 LOC)
+
+**Purpose:** 15-case smoke for `block_gh_cli_local_path.py` (2026-08-07). Verifies 5 blocked cases
+(`get_file_content` with `/Users/...` or `~/...` path, `download_files` with an absolute
+positional or a `~/...` path among several, local path preceded by a `--limit` flag), 4 pass cases
+(repo-relative path, **the `--dest` false-positive trap in both flag positions** — before and
+after the repo-path positionals, `--metadata-only` flag present), 4 untouched-command cases
+(`get_repo_tree`/`index_issues`/`repo_freshness`/non-gh-cli), and 2 shell-strip passes (pattern
+inside single-quotes, pattern inside heredoc body).
+
+**Usage:**
+```bash
+python3 dev/hook_smoke/test_block_gh_cli_local_path.py
+```
+
+**Report:** `md/block_gh_cli_local_path_smoke_report.md`.
+
+---
+
 ### probe_gh_cli_repo_freshness_incident.py (121 LOC)
 
 **Purpose:** Replays the exact commands from the websearch-session `repo_freshness` incident
