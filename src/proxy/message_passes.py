@@ -35,6 +35,17 @@ from .rule_ops import _ops_from_content_change
 # and must be preserved — the agent needs to know a Read was partial, not silently nuked.
 _TRUNCATION_NOTICE_MARKER = "[Truncated:"
 
+# role=system messages starting with this marker are CC 2.1.223+'s mid-turn user message
+# delivery (a user typing while the session is working, or worker-cli send to a working worker —
+# same mechanism) and must be preserved whole — pre-223 this content arrived as a role='user'
+# <system-reminder> ('user-interrupt' template in strip_sr.py, PARTIAL mode: IMPORTANT line
+# stripped, user body preserved); the 223 role=system form bypasses that SR-based guard entirely
+# and was falling through to this pass's unconditional '.' replacement, silently dropping the
+# user's message before it ever reached the model (issue #61). Whole-message preserve, not a
+# partial trim like the SR-era guard — losing the user's text is the failure mode this closes,
+# the few extra lines of CC's own boilerplate explainer are harmless noise by comparison.
+_MID_TURN_USER_MSG_MARKER = "The user sent a new message while you were working:"
+
 # FUNCTIONS
 
 # Role=system pass — strips entire content of every role='system' message by replacing with '.',
@@ -42,6 +53,7 @@ _TRUNCATION_NOTICE_MARKER = "[Truncated:"
 # a plain-str role='system' message on some paths, alongside the known role='user' path) — those
 # are left untouched here and fall through to `_apply_sn_notice_strip` + `_apply_first_pass`'s TN
 # branch (both widened to accept role='system'), which own TN wake-up construction exclusively —
+# and EXCEPT mid-turn user messages (_MID_TURN_USER_MSG_MARKER, CC 2.1.223+), preserved whole —
 # returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
 def _apply_role_system_strip(messages: list) -> tuple:
     result = []
@@ -59,6 +71,9 @@ def _apply_role_system_strip(messages: list) -> tuple:
             result.append(msg)
             continue
         if isinstance(old_content, str) and old_content.startswith(_TRUNCATION_NOTICE_MARKER):
+            result.append(msg)
+            continue
+        if isinstance(old_content, str) and old_content.lstrip().startswith(_MID_TURN_USER_MSG_MARKER):
             result.append(msg)
             continue
         if _top_level_content_contains(old_content, "<task-notification>"):

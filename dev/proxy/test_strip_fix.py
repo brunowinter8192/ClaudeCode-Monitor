@@ -625,6 +625,37 @@ def w14_role_system_noise_still_nuked_through_full_chain():
     check('W14_mod_recorded', 'stripped_role_system_msg' in mods1, f'mods1: {mods1}')
 
 
+# W30 — CC 2.1.223 mid-turn user message (role='system') preserved whole (issue #61). Pre-223 this
+# arrived as a role='user' <system-reminder> ('user-interrupt' template, PARTIAL mode in
+# strip_sr.py — IMPORTANT line stripped, user body kept). The 223 role=system form bypasses that
+# SR-based guard entirely and was falling through to _apply_role_system_strip's unconditional '.'
+# replacement, silently dropping the user's text before it reached the model. Real body (recorded
+# session api_requests_opus_posts_1786051932, msg 274): 'jetzt' + CC's own boilerplate explainer.
+def w30_role_system_mid_turn_user_msg_preserved_whole():
+    real_body = (
+        'The user sent a new message while you were working:\njetzt\n\n'
+        'This is how Claude Code surfaces messages the user sends mid-turn — within the running '
+        'turn, often alongside the next tool result, rather than as a separate conversation turn. '
+        'Address the message above as you continue this turn.'
+    )
+    messages = [{'role': 'system', 'content': real_body}]
+    new_messages, mods, removed, changed_idxs, injected, ops = _apply_role_system_strip(messages)
+    check('W30_content_untouched', new_messages[0]['content'] == real_body, repr(new_messages[0]['content']))
+    check('W30_user_text_present', 'jetzt' in new_messages[0]['content'])
+    check('W30_role_preserved', new_messages[0]['role'] == 'system')
+    check('W30_mod_not_fired', 'stripped_role_system_msg' not in mods, f'mods: {mods}')
+    check('W30_no_changed_index', changed_idxs == [], f'changed_idxs: {changed_idxs}')
+    check('W30_no_removed_recorded', removed == {}, f'removed: {removed}')
+    check('W30_no_ops_recorded', ops == {}, f'ops: {ops}')
+
+    # Leading whitespace before the marker — guard checks lstrip()'d text, not exact prefix.
+    padded = '  \n' + real_body
+    messages2 = [{'role': 'system', 'content': padded}]
+    new_messages2, mods2, _, _, _, _ = _apply_role_system_strip(messages2)
+    check('W30_leading_whitespace_still_preserved', new_messages2[0]['content'] == padded, repr(new_messages2[0]['content']))
+    check('W30_leading_whitespace_mod_not_fired', 'stripped_role_system_msg' not in mods2)
+
+
 # ── LAUNCH-ACK ID + PATH RECOVERY, TN ID LINE (2026-07-29 milestone) ──────────
 # Both bg-launch-ack (strip_bg_launch_ack.py) and TN termination (_apply_first_pass) now emit a
 # 3-line message: <line1>, then 'Output: <path>' (if extracted), then 'ID: <id>' (if extracted) —
@@ -923,6 +954,7 @@ if __name__ == '__main__':
         w26b_interrupt_marker_tool_use_wording,
         w27_interrupt_marker_embedded_in_longer_text_untouched, w28_interrupt_marker_pass_role_gate_and_mod,
         w29_interrupt_marker_pass_tool_use_wording,
+        w30_role_system_mid_turn_user_msg_preserved_whole,
     ]
 
     print(f'Running {len(tests)} tests...\n')
