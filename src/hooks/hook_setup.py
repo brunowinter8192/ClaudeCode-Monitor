@@ -33,6 +33,7 @@ _HOOK_SCRIPTS = [
     ("rewrite_background_sleep.py",        "Bash"),
     ("block_search_subreddits_limit.py", "Bash"),
     ("block_gh_cli_chained.py",          "Bash"),
+    ("block_gh_cli_local_path.py",       "Bash"),
     ("rewrite_gh_cli_read_noise.py",     "Bash"),
     ("block_broad_grep.py",              "Bash"),
     ("block_broad_find.py",              "Bash"),
