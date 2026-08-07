@@ -1,0 +1,237 @@
+"""
+Issue #63 live-verify, surface 2 — dual_log integrity over ALL recorded requests of both CC
+2.1.223 sessions (api_requests_opus_posts_1786051932, api_requests_opus_websearch_1786052022).
+
+Part A — composition invariant, driven over REAL sessions (not the fixture corpus
+dev/proxy_dual_log/test_composition_invariant.py uses). Calls the REAL
+src/proxy/rules.py::apply_modification_rules on every recorded ORIGINAL payload (independent
+per-request — the message-passes pipeline itself carries no cross-request state; only the
+dual-log's cache-hash bookkeeping in ProxyAddon does, irrelevant to composition), and validates
+its own returned `all_ops` (the real per-block edit-op list every op-recording pass appends to,
+merged via `_merge_ops`) against the REAL `compose_block` (`src/proxy/diff_engine.py`, the same
+function `strip_inject_delta.py` uses to build the dual-log's span data):
+
+  Inv1: "".join(t for tag,t in spans if tag in ("equal","stripped")) == C0_block_text
+  Inv2: "".join(t for tag,t in spans if tag in ("equal","injected")) == Cfwd_block_text
+
+Part B — schema-drift scan: every top-level payload key, system-block key-set, and content-block
+`type` value observed across BOTH sessions' original payloads, diffed against the sets this
+pipeline's own code explicitly names/handles (found by reading message_summary.py /
+_extract_forwarded_fields / diff_engine.py) — flags anything new CC 2.1.223 might have introduced
+that the pipeline does not model.
+
+Usage (from project root, real venv — imports mitmproxy transitively via src.proxy.rules):
+    ./venv/bin/python dev/native-model-start/p4_dual_log_integrity_probe.py
+"""
+
+# INFRASTRUCTURE
+import json
+import sys
+from pathlib import Path
+
+WORKTREE_ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(WORKTREE_ROOT / 'src'))
+
+MAIN_REPO_ROOT = Path('/Users/brunowinter2000/Documents/ai/monitor-cc')
+LOG_DIR = MAIN_REPO_ROOT / 'src' / 'logs' / 'dual_log'
+
+REPORT_DIR = Path(__file__).parent / 'md'
+REPORT_PATH = REPORT_DIR / 'p4_dual_log_integrity_probe_report.md'
+
+SESSIONS = [
+    ('posts', 'api_requests_opus_posts_1786051932'),
+    ('websearch', 'api_requests_opus_websearch_1786052022'),
+]
+
+# Types this pipeline's own code explicitly branches on (message_summary.py::_summarize_message)
+KNOWN_CONTENT_BLOCK_TYPES = {'text', 'tool_use', 'tool_result', 'thinking'}
+# Top-level payload keys _extract_forwarded_fields / apply_modification_rules explicitly read
+KNOWN_PAYLOAD_KEYS = {
+    'model', 'max_tokens', 'system', 'tools', 'messages', 'output_config',
+    'anthropic_beta', 'context_management', 'diagnostics', 'metadata', 'stream',
+    'temperature', 'top_p', 'top_k', 'stop_sequences',
+}
+
+# FUNCTIONS
+
+def _load_session_requests(stem: str) -> list:
+    path = LOG_DIR / f'{stem}_original.jsonl'
+    out = []
+    with open(path, encoding='utf-8') as f:
+        for line in f:
+            e = json.loads(line)
+            out.append((e.get('flow_id', ''), e.get('payload', {})))
+    return out
+
+
+# Part A — composition invariant over one request's real all_ops against the real compose_block
+def _check_composition(payload: dict) -> tuple:
+    from proxy.rules import apply_modification_rules
+    from proxy.diff_engine import compose_block, _get_inner_text
+
+    result = apply_modification_rules(payload, 'opus', '', 'main')
+    modified_payload, _mods, _os2, _smi, _smo, _smr, _ima, all_ops = result
+    orig_messages = payload.get('messages', [])
+    fwd_messages = modified_payload.get('messages', [])
+
+    checks = []
+    for msg_idx, blk_map in (all_ops or {}).items():
+        for blk_idx, block_ops in blk_map.items():
+            om = orig_messages[msg_idx] if msg_idx < len(orig_messages) else {}
+            fm = fwd_messages[msg_idx] if msg_idx < len(fwd_messages) else {}
+            oc = om.get('content', '') if isinstance(om, dict) else ''
+            fc = fm.get('content', '') if isinstance(fm, dict) else ''
+            if isinstance(oc, list):
+                ob = oc[blk_idx] if blk_idx < len(oc) else None
+                c0 = _get_inner_text(ob) if ob is not None else ''
+            else:
+                c0 = oc if isinstance(oc, str) and blk_idx == 0 else ''
+            if isinstance(fc, list):
+                fb = fc[blk_idx] if blk_idx < len(fc) else None
+                cfwd = _get_inner_text(fb) if fb is not None else ''
+            else:
+                cfwd = fc if isinstance(fc, str) and blk_idx == 0 else ''
+            spans = compose_block(c0, block_ops)
+            recon_c0 = ''.join(t for tag, t in spans if tag in ('equal', 'stripped'))
+            recon_fwd = ''.join(t for tag, t in spans if tag in ('equal', 'injected'))
+            ok1 = recon_c0 == c0
+            ok2 = recon_fwd == cfwd
+            checks.append((msg_idx, blk_idx, ok1, ok2))
+    return checks, all_ops
+
+
+# Part B — schema-drift scan over one payload
+def _scan_schema(payload: dict, keys_seen: set, sys_shapes_seen: set, block_types_seen: set) -> None:
+    keys_seen.update(payload.keys())
+    for b in payload.get('system', []) or []:
+        if isinstance(b, dict):
+            sys_shapes_seen.add(tuple(sorted(b.keys())))
+    for msg in payload.get('messages', []) or []:
+        content = msg.get('content') if isinstance(msg, dict) else None
+        if isinstance(content, list):
+            for blk in content:
+                if isinstance(blk, dict):
+                    block_types_seen.add(blk.get('type', '<no-type>'))
+
+
+# For each unmodeled top-level key, confirm the real pipeline forwards it byte-identical
+# (dict(payload) shallow-copy pattern used throughout apply_modification_rules/cache.py) rather
+# than silently dropping it — the difference between "not specially modeled" (fine, forward-
+# compatible by construction) and "silently lost" (a real functional bug: e.g. dropping the
+# top-level `thinking` config would disable extended thinking without any visible error).
+def _verify_unknown_keys_pass_through(new_keys: set, requests_by_key: dict) -> dict:
+    from proxy.rules import apply_modification_rules
+    results = {}
+    for key in new_keys:
+        payload = requests_by_key.get(key)
+        if payload is None:
+            results[key] = (None, 'never found isolated')
+            continue
+        modified, *_ = apply_modification_rules(payload, 'opus', '', 'main')
+        results[key] = (modified.get(key) == payload.get(key), repr(payload.get(key))[:150])
+    return results
+
+
+# ORCHESTRATOR
+def main() -> None:
+    REPORT_DIR.mkdir(parents=True, exist_ok=True)
+    lines = ['# Surface 2 — dual_log integrity + schema drift (issue #63, CC 2.1.223)', '']
+
+    total_checks = 0
+    total_fail_inv1 = 0
+    total_fail_inv2 = 0
+    failures = []
+    keys_seen, sys_shapes_seen, block_types_seen = set(), set(), set()
+    sample_payload_by_key: dict = {}
+
+    for tag, stem in SESSIONS:
+        requests = _load_session_requests(stem)
+        lines.append(f'## Session: {tag} (`{stem}`, {len(requests)} requests)')
+        lines.append('')
+        session_checks = 0
+        session_fail = 0
+        for seq, (flow_id, payload) in enumerate(requests):
+            checks, _all_ops = _check_composition(payload)
+            _scan_schema(payload, keys_seen, sys_shapes_seen, block_types_seen)
+            for k in payload.keys():
+                if k not in KNOWN_PAYLOAD_KEYS and k not in sample_payload_by_key:
+                    sample_payload_by_key[k] = payload
+            for msg_idx, blk_idx, ok1, ok2 in checks:
+                total_checks += 1
+                session_checks += 1
+                if not ok1:
+                    total_fail_inv1 += 1
+                    session_fail += 1
+                    failures.append((tag, seq, flow_id, msg_idx, blk_idx, 'Inv1'))
+                if not ok2:
+                    total_fail_inv2 += 1
+                    session_fail += 1
+                    failures.append((tag, seq, flow_id, msg_idx, blk_idx, 'Inv2'))
+        lines.append(f'- Composition checks (blocks with recorded ops): {session_checks}')
+        lines.append(f'- Failures: {session_fail}')
+        lines.append('')
+
+    lines.append('## Part A verdict — composition invariant')
+    lines.append('')
+    lines.append(f'Total blocks checked across both sessions: {total_checks}')
+    lines.append(f'Inv1 (C0 reconstruction) failures: {total_fail_inv1}')
+    lines.append(f'Inv2 (Cfwd reconstruction) failures: {total_fail_inv2}')
+    if failures:
+        lines.append('')
+        lines.append('| session | seq | flow_id | msg_idx | blk_idx | invariant |')
+        lines.append('|---|---|---|---|---|---|')
+        for tag, seq, flow_id, msg_idx, blk_idx, inv in failures[:30]:
+            lines.append(f'| {tag} | {seq} | {flow_id} | {msg_idx} | {blk_idx} | {inv} |')
+    lines.append('')
+
+    lines.append('## Part B — schema drift')
+    lines.append('')
+    new_keys = keys_seen - KNOWN_PAYLOAD_KEYS
+    new_block_types = block_types_seen - KNOWN_CONTENT_BLOCK_TYPES
+    lines.append(f'- Top-level payload keys observed: {sorted(keys_seen)}')
+    lines.append(f'  - NOT in the pipeline\'s explicitly-named set: {sorted(new_keys) or "(none)"}')
+    lines.append(f'- System-block key-shapes observed: {sorted(sys_shapes_seen)}')
+    lines.append(f'- Content-block `type` values observed: {sorted(block_types_seen)}')
+    lines.append(f'  - NOT in message_summary.py\'s known set: {sorted(new_block_types) or "(none)"}')
+    lines.append('')
+
+    pass_through_results = {}
+    if new_keys:
+        pass_through_results = _verify_unknown_keys_pass_through(new_keys, sample_payload_by_key)
+        lines.append('### Pass-through verification for unmodeled top-level keys')
+        lines.append('')
+        lines.append('`apply_modification_rules`/`cache.py` build the modified payload via '
+                      '`dict(payload)` (shallow copy) + selective overwrite of `system`/`messages`/'
+                      '`tools` — any key not explicitly touched forwards byte-identical by '
+                      'construction. Verified directly per key below (not assumed):')
+        lines.append('')
+        lines.append('| key | forwarded unchanged | sample value |')
+        lines.append('|---|---|---|')
+        for key, (match, sample) in pass_through_results.items():
+            lines.append(f'| `{key}` | {match} | `{sample}` |')
+        lines.append('')
+
+    keys_dropped = [k for k, (match, _s) in pass_through_results.items() if match is False]
+    composition_clean = total_fail_inv1 == 0 and total_fail_inv2 == 0
+    schema_clean = not new_block_types and not keys_dropped
+    verdict = 'CLEAN' if (composition_clean and schema_clean) else 'FINDING'
+    lines.append('## Verdict')
+    lines.append('')
+    lines.append(f'**{verdict}**')
+    lines.append(f'- Composition invariant: {"CLEAN" if composition_clean else "FINDING"} '
+                 f'({total_fail_inv1 + total_fail_inv2} failures / {total_checks} checks)')
+    lines.append(f'- New top-level keys (`{sorted(new_keys)}`): CLEAN — not specially modeled, but '
+                 f'verified byte-identical pass-through, not dropped'
+                 if new_keys and not keys_dropped else
+                 f'- New top-level keys: {sorted(new_keys) or "(none)"}'
+                 + (f' — **DROPPED, real finding**: {keys_dropped}' if keys_dropped else ''))
+    lines.append(f'- New content-block types: {"CLEAN (none)" if not new_block_types else f"FINDING: {sorted(new_block_types)} not in message_summary.py\'s handled set (falls through to its generic json.dumps summary — display-only gap, not a strip-pipeline correctness issue; composition invariant above already confirms no pass mishandles these blocks)"}')
+
+    REPORT_PATH.write_text('\n'.join(lines))
+    print(f'Report written: {REPORT_PATH}')
+    print(f'Verdict: {verdict}  (composition_failures={total_fail_inv1 + total_fail_inv2}/{total_checks}, '
+          f'new_keys={sorted(new_keys)}, keys_dropped={keys_dropped}, new_block_types={sorted(new_block_types)})')
+
+
+if __name__ == '__main__':
+    main()
