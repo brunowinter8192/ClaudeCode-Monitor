@@ -56,6 +56,19 @@ drill-down's "Agent" sighting is the intentional whole-stripped yellow row
 **Calls out:** `proxy.tools` (`_strip_unused_tools`), `constants` (`TOOL_BLOCKLIST`),
 `src.proxy_display.forwarded_parser` (`_parse_forwarded_log`).
 
+### p5_mid_turn_user_msg_preserve_probe.py (132 LOC)
+
+**Purpose:** Verifies the CC 2.1.223 mid-turn-user-message preserve-guard in
+`src/proxy/message_passes.py::_apply_role_system_strip` (issue #61) — drives the REAL function on
+the REAL recorded message list, not a synthetic fixture. Preserve case: session
+`api_requests_opus_posts_1786051932`, flow `4b4d396b...`, msg 274 — the live incident itself (a
+role='system' mid-turn user message body "jetzt") must survive byte-for-byte. Regression: session
+`api_requests_opus_websearch_1786052022`, three unrelated role='system' noise messages
+(deferred-tools, task-tools-nag, date-changed) must still strip to `"."` exactly as before.
+**Reads:** `src/logs/dual_log/api_requests_opus_{posts_1786051932,websearch_1786052022}_original.jsonl`.
+**Writes:** `md/mid_turn_user_msg_preserve_probe_report.md`.
+**Calls out:** `src.proxy.message_passes` (`_apply_role_system_strip`).
+
 ### p1_measure_full_replacement_blast_radius.py (536 LOC)
 
 **Purpose:** Measurement script (dev/ M1 "bg-ack-shapes" milestone, 2026-07-29) — drives real
