@@ -196,9 +196,11 @@ python3 dev/session_analysis/06_char_token_ratio.py --batch src/logs/
 
 ## 07_quartet_prefix_diff.py
 
-**Purpose:** Forensic per-segment prefix-diff for cache rebuilds. Reconstructs full payload state (system/tools/messages) at each opus-family request by replaying the `_forwarded` dual-log delta chain, aligns it to session-JSONL ground-truth usage (CR/CC/D) by timestamp, and diffs consecutive requests segment-by-segment (system[0..3] individually / tools / messages, per-index) to find WHERE a cache-rebuild's byte divergence sits and WHAT changed there (chars added/removed, image blocks mutated, cache_control breakpoint markers gained/lost). Also auto-scans the whole log for CR-collapse points (CC > CR and CR < 0.2 x prior max CR).
+**Purpose:** Forensic per-segment prefix-diff for cache rebuilds. Reconstructs full payload state (system/tools/messages) at each opus-family request by replaying the `_forwarded` dual-log delta chain, aligns it to session-JSONL ground-truth usage (CR/CC/D) by timestamp, and diffs consecutive requests segment-by-segment (system[0..3] individually / tools / messages, per-index) to find WHERE a cache-rebuild's byte divergence sits and WHAT changed there (chars added/removed, image blocks mutated — including images nested inside `tool_result.content` — per-row auto-classification note). Also auto-scans the whole log for CR-collapse points (CC > CR and CR < 0.2 x prior max CR). Optionally cross-checks each modified message index against the `_original` dual-log (full non-delta incoming payloads, matched by `flow_id`) to attribute a diff as CLIENT-SIDE (already present in the incoming request, before our proxy) vs PROXY-SIDE (introduced by our own modification pass) — the fix-vs-document decision.
 
-**Input:** `--forwarded-log` — a `_forwarded` dual-log JSONL (delta-encoded: `system_delta`/`tools_delta`/`messages_delta` per request, NOT the eliminated single-main-log `raw_payload` format read by 04/05/06). `--session-jsonl` — session JSONL for ground-truth CR/CC/D. `--req-range A-B` and/or `--auto-detect`.
+Cache-control breakpoint markers are intentionally NOT reported: the forwarded delta chain hashes elements with `cache_control` stripped (`src/proxy/logging.py: _delta_hash` -> `_strip_cache_control`), so a marker-only change never enters the delta and a replayed message's `cache_control` can be stale. True sent breakpoint positions are not derivable from this reconstruction.
+
+**Input:** `--forwarded-log` — a `_forwarded` dual-log JSONL (delta-encoded: `system_delta`/`tools_delta`/`messages_delta` per request, NOT the eliminated single-main-log `raw_payload` format read by 04/05/06). `--session-jsonl` — session JSONL for ground-truth CR/CC/D. `--req-range A-B` and/or `--auto-detect`. `--original-log` (optional) — the matching `_original` dual-log for client-vs-proxy attribution.
 
 **Output:** `md/<YYYYMMDD_HHMMSS>_quartet_prefix_diff.md` — report path printed to stdout.
 
@@ -207,6 +209,7 @@ python3 dev/session_analysis/06_char_token_ratio.py --batch src/logs/
 ./venv/bin/python dev/session_analysis/07_quartet_prefix_diff.py \
   --forwarded-log src/logs/dual_log/api_requests_opus_<id>_forwarded.jsonl \
   --session-jsonl ~/.claude/projects/<encoded>/session.jsonl \
+  --original-log src/logs/dual_log/api_requests_opus_<id>_original.jsonl \
   --req-range 133-137 --auto-detect
 ```
 
@@ -216,8 +219,11 @@ python3 dev/session_analysis/06_char_token_ratio.py --batch src/logs/
 | `--session-jsonl` | *(required)* Session JSONL for ground-truth CR/CC/D |
 | `--req-range` | Consecutive REQ pair range to analyze, e.g. `133-137` |
 | `--auto-detect` | Also scan the whole log for CR-collapse points |
+| `--original-log` | `_original` dual-log JSONL (full non-delta incoming payloads) for CLIENT-SIDE vs PROXY-SIDE attribution |
 
 **REQ numbering:** ground-truth requests are grouped from session-JSONL `type=assistant` lines by identical `(cr, cc, inp, out)` usage tuple (one physical request can emit several content-block lines interleaved with `type=user` tool_result lines from mid-stream tool execution). Forwarded-log entries are aligned to these groups by timestamp (two-pointer, monotonic) — NOT a fixed line-position offset; retried/aborted forwarded sends are silently absorbed into the next group's match.
+
+**Original-log matching:** the `_original` log (one line per request, full non-delta `payload`) is matched to a forwarded/ground-truth request via `flow_id` (shared field on both logs). Only lines whose `flow_id` is in the target set are fully JSON-parsed — a cheap regex peek at the first 300 chars of each raw line extracts `flow_id` first, avoiding a full parse of the ~9MB-average irrelevant lines in a 1.4GB file.
 
 ---
 

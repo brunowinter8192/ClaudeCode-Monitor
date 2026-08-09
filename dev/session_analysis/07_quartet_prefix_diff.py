@@ -21,10 +21,14 @@ Usage (from project root):
 # INFRASTRUCTURE
 import argparse
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 
 import tiktoken
+
+FLOW_ID_PEEK_RE = re.compile(r'"flow_id":\s*"([^"]*)"')
+FLOW_ID_PEEK_CHARS = 300
 
 REPORTS_DIR = Path(__file__).parent / "md"
 ENC = tiktoken.get_encoding("cl100k_base")
@@ -36,6 +40,7 @@ def main():
     args = parse_args()
     fwd_path = Path(args.forwarded_log)
     session_path = Path(args.session_jsonl).expanduser()
+    original_path = Path(args.original_log).expanduser() if args.original_log else None
 
     ground_truth = load_ground_truth(session_path)
     fwd_states = load_forwarded_opus_states(fwd_path)
@@ -45,11 +50,17 @@ def main():
     range_pairs = build_range_pairs(args.req_range) if args.req_range else []
     auto_pairs = [(c - 1, c) for c in collapse_points] if args.auto_detect else []
     pairs = sorted(set(range_pairs) | set(auto_pairs))
+    pairs = [(p1, p2) for p1, p2 in pairs if pair_available(mapped, p1, p2)]
 
-    pair_results = [analyze_pair(mapped, p1, p2) for p1, p2 in pairs if pair_available(mapped, p1, p2)]
+    orig_by_flow = None
+    if original_path:
+        target_flow_ids = collect_target_flow_ids(mapped, pairs)
+        orig_by_flow = load_original_payloads(original_path, target_flow_ids)
+
+    pair_results = [analyze_pair(mapped, p1, p2, orig_by_flow) for p1, p2 in pairs]
 
     report = build_report(
-        fwd_path, session_path, ground_truth, mapped, mapping_notes,
+        fwd_path, session_path, original_path, ground_truth, mapped, mapping_notes,
         collapse_points, range_pairs, auto_pairs, pair_results,
     )
 
@@ -68,6 +79,8 @@ def parse_args():
     parser.add_argument("--session-jsonl", required=True, help="Session JSONL for ground-truth CR/CC/D")
     parser.add_argument("--req-range", help="Consecutive REQ pair range to analyze, e.g. 133-137")
     parser.add_argument("--auto-detect", action="store_true", help="Also scan the whole log for CR-collapse points")
+    parser.add_argument("--original-log", help="_original dual-log JSONL (full non-delta incoming payloads) "
+                                                "for client-side-vs-proxy-side attribution of message diffs")
     return parser.parse_args()
 
 # Infer model family (mirrors src/proxy_display/forwarded_parser.py: _infer_model_family)
@@ -175,11 +188,52 @@ def load_forwarded_opus_states(fwd_path):
             states.append({
                 "fwd_line_idx": line_idx,
                 "timestamp": d.get("timestamp", ""),
+                "flow_id": d.get("flow_id", ""),
                 "system": list(acc["system"]),
                 "tools": list(acc["tools"]),
                 "messages": list(acc["messages"]),
             })
     return states
+
+# Peek the flow_id out of the first FLOW_ID_PEEK_CHARS of a raw JSONL line without a full JSON parse —
+# avoids decoding ~9MB average lines in the _original log (158 lines, 1.4GB) for the ~150 irrelevant ones.
+def peek_flow_id(raw_line):
+    m = FLOW_ID_PEEK_RE.search(raw_line[:FLOW_ID_PEEK_CHARS])
+    return m.group(1) if m else None
+
+# Gather the flow_ids of every prev/curr request involved in the analyzed pairs
+def collect_target_flow_ids(mapped, pairs):
+    by_req = {m["req"]: m for m in mapped}
+    flow_ids = set()
+    for p1, p2 in pairs:
+        flow_ids.add(by_req[p1]["state"]["flow_id"])
+        flow_ids.add(by_req[p2]["state"]["flow_id"])
+    return {f for f in flow_ids if f}
+
+# Stream the _original dual-log (full non-delta payloads, one line per request) and collect the
+# payload (system/tools/messages) for each target flow_id. Read-only, line-by-line — never loads the
+# 1.4GB file whole. Full JSON parse only happens for lines whose peeked flow_id is in the target set.
+def load_original_payloads(original_path, target_flow_ids):
+    found = {}
+    remaining = set(target_flow_ids)
+    if not remaining:
+        return found
+    with open(original_path) as f:
+        for raw_line in f:
+            if not remaining:
+                break
+            fid = peek_flow_id(raw_line)
+            if fid is None or fid not in remaining:
+                continue
+            d = json.loads(raw_line)
+            payload = d.get("payload", {})
+            found[fid] = {
+                "system": payload.get("system", []) or [],
+                "tools": payload.get("tools", []) or [],
+                "messages": payload.get("messages", []) or [],
+            }
+            remaining.discard(fid)
+    return found
 
 # Align session-JSONL ground-truth requests to forwarded-log opus states by timestamp.
 # forwarded_delta.timestamp = when the request was SENT (before response streams back), so the
@@ -240,32 +294,50 @@ def diff_system_block(prev_blk, curr_blk):
         "delta_chars": len(curr_txt) - len(prev_txt),
     }
 
-# Count content blocks by type in a message (top-level string content = no blocks)
+# Count content blocks by type in a message, recursing one level into tool_result.content — images are
+# frequently nested inside a tool_result wrapper (e.g. Read-tool output), not just top-level blocks.
 def block_type_counts(msg):
     content = (msg or {}).get("content", "")
     if not isinstance(content, list):
         return {}
     counts = {}
     for b in content:
-        if isinstance(b, dict):
-            t = b.get("type", "?")
-            counts[t] = counts.get(t, 0) + 1
+        if not isinstance(b, dict):
+            continue
+        t = b.get("type", "?")
+        counts[t] = counts.get(t, 0) + 1
+        if t == "tool_result":
+            nested = b.get("content")
+            if isinstance(nested, list):
+                for nb in nested:
+                    if isinstance(nb, dict):
+                        nt = nb.get("type", "?")
+                        counts[nt] = counts.get(nt, 0) + 1
     return counts
 
-# Find message indices (and block index) carrying a cache_control marker
-def find_breakpoints(messages):
-    bps = set()
-    for i, m in enumerate(messages):
-        if not isinstance(m, dict):
-            continue
-        if m.get("cache_control"):
-            bps.add((i, "top"))
-        content = m.get("content")
-        if isinstance(content, list):
-            for j, b in enumerate(content):
-                if isinstance(b, dict) and b.get("cache_control"):
-                    bps.add((i, j))
-    return bps
+# Collapse a message's content to a plain comparable string when it is either already a bare string,
+# or a single {"type":"text","text":...} block (cache_control ignored) — else None (not comparable).
+def normalize_content_shape(msg):
+    content = (msg or {}).get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list) and len(content) == 1:
+        b = content[0]
+        if isinstance(b, dict) and b.get("type") == "text" and set(b.keys()) <= {"type", "text", "cache_control"}:
+            return b.get("text", "")
+    return None
+
+# One-sentence auto-classification of a modified message row, for the report table
+def classify_message_change(prev, curr):
+    prev_types, curr_types = block_type_counts(prev), block_type_counts(curr)
+    prev_img, curr_img = prev_types.get("image", 0), curr_types.get("image", 0)
+    if curr_img < prev_img:
+        return f"image(s) evicted: {prev_img - curr_img} removed (incl. nested tool_result images)"
+    if prev.get("role") == curr.get("role"):
+        norm_prev, norm_curr = normalize_content_shape(prev), normalize_content_shape(curr)
+        if norm_prev is not None and norm_prev == norm_curr:
+            return "format normalization only (list-of-one-text-block <-> bare string, same text)"
+    return "content modified (non-image)"
 
 # Diff messages segment: per-index status (unchanged/modified/added/removed), image involvement,
 # first diverging index (earliest index where content differs — the rolling-hash-chain break point).
@@ -289,6 +361,7 @@ def diff_messages(prev_msgs, curr_msgs):
             "delta_chars": len(c_json) - len(p_json),
             "prev_image_count": p_types.get("image", 0), "curr_image_count": c_types.get("image", 0),
             "prev_types": p_types, "curr_types": c_types,
+            "note": classify_message_change(p, c),
         })
     for i in range(n_common, n_curr):
         if first_diff is None:
@@ -300,7 +373,7 @@ def diff_messages(prev_msgs, curr_msgs):
             "idx": i, "status": "added",
             "prev_chars": 0, "curr_chars": len(c_json), "delta_chars": len(c_json),
             "prev_image_count": 0, "curr_image_count": c_types.get("image", 0),
-            "prev_types": {}, "curr_types": c_types,
+            "prev_types": {}, "curr_types": c_types, "note": "-",
         })
     for i in range(n_common, n_prev):
         if first_diff is None:
@@ -312,13 +385,14 @@ def diff_messages(prev_msgs, curr_msgs):
             "idx": i, "status": "removed",
             "prev_chars": len(p_json), "curr_chars": 0, "delta_chars": -len(p_json),
             "prev_image_count": p_types.get("image", 0), "curr_image_count": 0,
-            "prev_types": p_types, "curr_types": {},
+            "prev_types": p_types, "curr_types": {}, "note": "-",
         })
     rows.sort(key=lambda r: r["idx"])
     return rows, first_diff
 
-# Full per-pair analysis: segment-by-segment diff + breakpoint diff + CR/CC reconciliation
-def analyze_pair(mapped, req_prev, req_curr):
+# Full per-pair analysis: segment-by-segment diff + CR/CC reconciliation + optional original-log
+# client-side-vs-proxy-side attribution
+def analyze_pair(mapped, req_prev, req_curr, orig_by_flow=None):
     by_req = {m["req"]: m for m in mapped}
     p, c = by_req[req_prev], by_req[req_curr]
     p_state, c_state = p["state"], c["state"]
@@ -338,9 +412,6 @@ def analyze_pair(mapped, req_prev, req_curr):
 
     msg_rows, first_msg_diff = diff_messages(p_state["messages"], c_state["messages"])
 
-    bps_prev = find_breakpoints(p_state["messages"])
-    bps_curr = find_breakpoints(c_state["messages"])
-
     order = []
     for i in range(n_sys):
         order.append(("system", i, sys_rows[i]["changed"]))
@@ -354,6 +425,11 @@ def analyze_pair(mapped, req_prev, req_curr):
     )
 
     reconciliation = reconcile(p_state, p, c)
+    original_attribution = None
+    if orig_by_flow is not None:
+        original_attribution = diff_original_vs_forwarded(
+            msg_rows, p_state["flow_id"], c_state["flow_id"], orig_by_flow,
+        )
 
     return {
         "req_prev": req_prev, "req_curr": req_curr,
@@ -363,10 +439,48 @@ def analyze_pair(mapped, req_prev, req_curr):
         "tools_names_prev": tools_names_prev, "tools_names_curr": tools_names_curr,
         "msg_rows": msg_rows, "first_msg_diff": first_msg_diff,
         "n_msg_prev": len(p_state["messages"]), "n_msg_curr": len(c_state["messages"]),
-        "bps_removed": sorted(bps_prev - bps_curr), "bps_added": sorted(bps_curr - bps_prev),
         "first_diverge_any": first_diverge_any, "first_diverge_no_sys0": first_diverge_no_sys0,
         "reconciliation": reconciliation,
+        "original_attribution": original_attribution,
     }
+
+# For each modified message row, compare the SAME index in the ORIGINAL (pre-proxy, incoming) payloads
+# of req_prev and req_curr. Client-side: original already shows the same shrink at that index (proxy
+# innocent). Proxy-side: original is byte-identical prev->curr at that index while forwarded differs
+# (our modification pass introduced the change). Inconclusive: index out of range in original (structural
+# drift between original and forwarded message-array shape).
+def diff_original_vs_forwarded(msg_rows, flow_id_prev, flow_id_curr, orig_by_flow):
+    orig_prev = orig_by_flow.get(flow_id_prev)
+    orig_curr = orig_by_flow.get(flow_id_curr)
+    if orig_prev is None or orig_curr is None:
+        return {"available": False, "rows": []}
+
+    op_msgs, oc_msgs = orig_prev["messages"], orig_curr["messages"]
+    rows = []
+    for row in msg_rows:
+        if row["status"] != "modified":
+            continue
+        idx = row["idx"]
+        op = op_msgs[idx] if idx < len(op_msgs) else None
+        oc = oc_msgs[idx] if idx < len(oc_msgs) else None
+        if op is None or oc is None:
+            verdict = "INCONCLUSIVE (index out of range in original — structural drift vs forwarded)"
+            op_chars = len(json.dumps(op, sort_keys=True)) if op else 0
+            oc_chars = len(json.dumps(oc, sort_keys=True)) if oc else 0
+        else:
+            op_json = json.dumps(op, sort_keys=True)
+            oc_json = json.dumps(oc, sort_keys=True)
+            op_chars, oc_chars = len(op_json), len(oc_json)
+            if op_json == oc_json:
+                verdict = "PROXY-SIDE (original identical prev->curr at this index — forwarded diff is ours)"
+            elif oc_chars < op_chars and row["delta_chars"] < 0:
+                verdict = "CLIENT-SIDE (original already shrinks prev->curr at this index)"
+            else:
+                verdict = f"AMBIGUOUS (original prev={op_chars:,} curr={oc_chars:,} chars)"
+        rows.append({
+            "idx": idx, "orig_prev_chars": op_chars, "orig_curr_chars": oc_chars, "verdict": verdict,
+        })
+    return {"available": True, "rows": rows}
 
 # CR/CC reconciliation: tiktoken-estimate BP1 (system[0:3]) and BP1+tools segments (fast — small
 # segments only; message content includes multi-MB base64 image blobs, deliberately NOT tokenized:
@@ -387,13 +501,14 @@ def reconcile(p_state, gt_prev, gt_curr):
     }
 
 # Build the full markdown report
-def build_report(fwd_path, session_path, ground_truth, mapped, mapping_notes,
+def build_report(fwd_path, session_path, original_path, ground_truth, mapped, mapping_notes,
                   collapse_points, range_pairs, auto_pairs, pair_results):
     lines = [
         "# Quartet Prefix-Diff Forensic Report",
         "",
         f"**Forwarded log:** `{fwd_path}`",
         f"**Session JSONL:** `{session_path}`",
+        f"**Original log:** `{original_path}`" if original_path else "**Original log:** _not provided — no client-vs-proxy attribution_",
         f"**Generated:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
         "",
         "## Methodology — REQ Number Mapping",
@@ -418,6 +533,15 @@ def build_report(fwd_path, session_path, ground_truth, mapped, mapping_notes,
         f"| Ground-truth requests with no forwarded match | {mapping_notes['unmatched_ground_truth']} |",
         f"| Forwarded entries absorbed (retries, no distinct response) | "
         f"{mapping_notes['opus_fwd_entries'] - mapping_notes['opus_gt_groups'] + mapping_notes['unmatched_ground_truth']} |",
+        "",
+        "**Cache-control breakpoint markers are NOT reported below** (known prior finding): the forwarded "
+        "delta chain hashes each element with `cache_control` STRIPPED before comparing "
+        "(`logging._delta_hash` -> `_strip_cache_control`), so a marker-only change (breakpoint moved, no "
+        "content change) never enters `messages_delta` and is invisible to this reconstruction. A "
+        "replayed message's `cache_control` can be stale — carried over from an earlier request's delta "
+        "even when the actually-sent marker position for the CURRENT request differs. The true sent "
+        "breakpoint positions are not derivable from the quartet reconstruction; use `04_cache_validation.py` "
+        "against the single-log format, or the live proxy pane, for breakpoint placement.",
         "",
         "## Auto-Detected CR-Collapse Points",
         "",
@@ -492,15 +616,15 @@ def build_pair_section(r):
         f"- First diverging message index: **{r['first_msg_diff']}**",
         f"- Modified/added/removed rows: {len(r['msg_rows'])}",
         "",
-        "| idx | status | prev_chars | curr_chars | delta_chars | prev_img | curr_img | prev_types | curr_types |",
-        "|---|---|---|---|---|---|---|---|---|",
+        "| idx | status | prev_chars | curr_chars | delta_chars | prev_img | curr_img | prev_types | curr_types | note |",
+        "|---|---|---|---|---|---|---|---|---|---|",
     ])
     for m in r["msg_rows"]:
         img_flag = " <-IMG" if m["prev_image_count"] != m["curr_image_count"] else ""
         lines.append(
             f"| {m['idx']} | {m['status']}{img_flag} | {m['prev_chars']:,} | {m['curr_chars']:,} | "
             f"{m['delta_chars']:+,} | {m['prev_image_count']} | {m['curr_image_count']} | "
-            f"{m['prev_types']} | {m['curr_types']} |"
+            f"{m['prev_types']} | {m['curr_types']} | {m['note']} |"
         )
 
     img_involved_rows = [m for m in r["msg_rows"] if m["prev_image_count"] != m["curr_image_count"]]
@@ -512,11 +636,31 @@ def build_pair_section(r):
         f"({len(img_involved_rows)} message(s), {total_img_removed} image block(s) removed, "
         f"{total_img_added} added)",
         "",
-        "### Cache-Control Breakpoint Markers",
-        "",
-        f"- Removed (present in REQ#{r['req_prev']}, gone in REQ#{r['req_curr']}): {r['bps_removed'] or '-'}",
-        f"- Added: {r['bps_added'] or '-'}",
-        "",
+    ])
+
+    oa = r["original_attribution"]
+    if oa is not None:
+        lines.extend([
+            "### Original-vs-Forwarded Attribution (client-side vs proxy-side)",
+            "",
+        ])
+        if not oa["available"]:
+            lines.append(f"_No original-log entry found for REQ#{r['req_prev']} and/or REQ#{r['req_curr']}'s flow_id._")
+        elif not oa["rows"]:
+            lines.append("_No `modified`-status message rows to cross-check for this pair._")
+        else:
+            lines.append("| idx | fwd delta_chars | orig prev_chars | orig curr_chars | verdict |")
+            lines.append("|---|---|---|---|---|")
+            fwd_by_idx = {m["idx"]: m for m in r["msg_rows"]}
+            for row in oa["rows"]:
+                fwd_delta = fwd_by_idx[row["idx"]]["delta_chars"]
+                lines.append(
+                    f"| {row['idx']} | {fwd_delta:+,} | {row['orig_prev_chars']:,} | "
+                    f"{row['orig_curr_chars']:,} | {row['verdict']} |"
+                )
+        lines.append("")
+
+    lines.extend([
         "### Segment Attribution",
         "",
         f"- First diverging segment (raw, includes per-request system[0] churn): "
@@ -541,6 +685,10 @@ def build_pair_section(r):
     ])
     return lines
 
+# Whether --original-log was provided (any pair carries a non-None original_attribution dict)
+def original_log_used(pair_results):
+    return any(r["original_attribution"] is not None for r in pair_results)
+
 # Build the closing proven-vs-hypothesis findings summary
 def build_findings_summary(pair_results):
     lines = [
@@ -563,9 +711,10 @@ def build_findings_summary(pair_results):
 
     if any_img:
         lines.append(
-            "- Image content blocks inside historical `tool_result` messages are removed "
-            "(byte-for-byte, not just re-encoded) between some consecutive requests — "
-            "see `<-IMG` flagged rows per pair above."
+            "- Image content blocks — both top-level message blocks and images nested inside a "
+            "`tool_result` wrapper's own `content` array — are removed (byte-for-byte, not re-encoded, "
+            "`content` truncated to `[]` in the tool_result case) from historical messages between some "
+            "consecutive requests — see `<-IMG` flagged rows per pair above."
         )
     if sys123_stable:
         lines.append(
@@ -580,6 +729,54 @@ def build_findings_summary(pair_results):
         "- Per pair, the first diverging message index (excluding the constant `system[0]` churn) "
         "is reported above with exact index and char magnitude — see \"Segment Attribution\" per pair."
     )
+
+    all_orig_rows = []
+    for r in pair_results:
+        oa = r["original_attribution"]
+        if not (oa and oa["available"]):
+            continue
+        notes_by_idx = {m["idx"]: m["note"] for m in r["msg_rows"]}
+        for row in oa["rows"]:
+            all_orig_rows.append({**row, "note": notes_by_idx.get(row["idx"], "")})
+
+    if all_orig_rows:
+        img_rows = [row for row in all_orig_rows if row["note"].startswith("image(s) evicted")]
+        other_rows = [row for row in all_orig_rows if not row["note"].startswith("image(s) evicted")]
+        img_client = sum(1 for row in img_rows if row["verdict"].startswith("CLIENT-SIDE"))
+        img_proxy = sum(1 for row in img_rows if row["verdict"].startswith("PROXY-SIDE"))
+        other_client = sum(1 for row in other_rows if row["verdict"].startswith("CLIENT-SIDE"))
+        other_proxy = sum(1 for row in other_rows if row["verdict"].startswith("PROXY-SIDE"))
+        if img_rows:
+            lines.append(
+                f"- **Image-eviction rows ({len(img_rows)} cross-checked): {img_client} CLIENT-SIDE, "
+                f"{img_proxy} PROXY-SIDE.** " + (
+                    "ALL image-eviction rows are CLIENT-SIDE — the incoming (original, pre-proxy) payload "
+                    "already shows the same shrink at the same index; the image eviction happens BEFORE our "
+                    "proxy ever sees the request. **Fix-vs-document verdict: DOCUMENT — this is upstream/client "
+                    "behavior, not a proxy bug; do not chase a proxy-side fix for the image eviction.**"
+                    if img_client == len(img_rows) and img_proxy == 0
+                    else "Mixed — see per-pair verdicts above, do not generalize a single verdict."
+                )
+            )
+        if other_rows:
+            fmt_norm = [row for row in other_rows if row["note"].startswith("format normalization")]
+            lines.append(
+                f"- **Non-image rows ({len(other_rows)} cross-checked, {len(fmt_norm)} of them "
+                f"format-normalization-only): {other_client} CLIENT-SIDE, {other_proxy} PROXY-SIDE.** "
+                + (
+                    "ALL are PROXY-SIDE — the original payload is byte-identical prev->curr at this index "
+                    "while forwarded differs. Where the note is \"format normalization only\", the identical "
+                    "original text is our own cache_control-stripping / message-shape normalization "
+                    "collapsing a single-text-block list to a bare string during forwarding — a benign proxy "
+                    "transform, unrelated to images and not a factor in the CR/CC collapse (single-digit char "
+                    "magnitude, see per-pair tables)."
+                    if other_client == 0 and other_proxy == len(other_rows)
+                    else "Mixed — see per-pair verdicts above, do not generalize a single verdict."
+                )
+            )
+    elif original_log_used(pair_results):
+        lines.append("- Original-log cross-check was requested but found no matching flow_id entries for the analyzed pairs.")
+
     for rp, rc, holds in recoveries:
         lines.append(
             f"- REQ#{rp}->REQ#{rc}: recovery identity CR[curr]==CR[prev]+CC[prev] "
@@ -601,10 +798,10 @@ def build_findings_summary(pair_results):
         "propagation latency (a large `CC` write may not be immediately readable moments later) — "
         "this is a plausible explanation for requests spaced tens of seconds apart, not something "
         "provable from the sent bytes.",
-        "- Whether the image eviction is a deliberate context-budget mechanism (client-side, "
-        "triggered once a size/token threshold is crossed) versus an incidental side effect of some "
-        "other pass is not determinable from these logs alone — only the byte-level EFFECT (images "
-        "disappear from many historical messages within one or a few consecutive requests) is proven.",
+        "- WHERE the eviction happens (client vs proxy) is settled by the original-vs-forwarded "
+        "cross-check above where available. WHY it triggers on this specific turn (a deliberate "
+        "size/token-budget threshold vs. some other condition) is not determinable from these logs "
+        "alone — only the byte-level EFFECT and its origin side are proven.",
         "",
     ])
     return lines
