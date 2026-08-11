@@ -59,7 +59,7 @@ Buffer: `monitor_display._buffer_append()` appends each event to `main_event_buf
 
 ---
 
-### monitor_display.py (405 LOC)
+### monitor_display.py (414 LOC)
 
 **Purpose:** Terminal output + event buffer for the main streaming pane. Buffers all events (tool calls, user prompts, system messages, etc.) in `main_event_buffer`. On each render cycle: applies proxy strip highlights (tool_call output replaced with pre-strip content + `highlight_stripped()`; user prompts get `[~]` badge); renders the persistent search bar on row 1; injects ⎘ copy-buttons on REQUEST and RESPONSE header lines of tool_calls with click-region tracking via `_main_copy_rows: dict[phys_row → (event_idx, 'request'|'response')]`; applies per-line substring highlight for search matches via `_highlight_query_in_line` (ANSI-safe split-and-inject pattern from `highlight_stripped`); buffer renders from row 2 (row 1 reserved for search bar). `serialize_main_event(event_idx, part='all'|'request'|'response')` converts a buffer entry to clipboard text for the y-hotkey ('all') or ⎘ click ('request' / 'response'). **(2026-07-30) ⎘ copy-button on every OTHER event type's first line:** the pre-existing tool_call branch (request/response split, unconditional `_main_copy_rows` registration even when the symbol doesn't fit — a pre-existing width-guard gap, left as-is, out of scope) is followed by a new `elif eidx >= 0 and eidx != prev_eidx:` branch (first-line-of-event detection via a `prev_eidx` tracker) that appends a `⎘`/`✓` symbol via `utils.append_copy_symbol` and registers `_main_copy_rows[phys_row] = (eidx, 'all')` — but ONLY when the symbol actually fit (`padded != line`), so a too-narrow pane never leaves an invisible hit zone for these rows. `'all'` matches exactly what the pre-existing `y`-key branch in `monitor.py` already produces for every non-tool_call event (`serialize_main_event(key)`, default `part='all'`) — `_handle_main_mouse` needed NO changes, its `_main_copy_rows.get(row)` dispatch was already generic over any `part` string.
 
@@ -97,7 +97,7 @@ Buffer: `monitor_display._buffer_append()` appends each event to `main_event_buf
 | Variable | Type | Mutated by |
 |---|---|---|
 | `main_event_buffer` | `list` | `_buffer_append` (via all `display_*` fns) |
-| `main_scroll_offset` | `int` | `run_main_loop` (wheel events), `ensure_match_visible` |
+| `main_scroll_offset` | `int` | `run_main_loop` (wheel events), `ensure_match_visible`, `render_main_buffer` (upper-bound write-back clamp) |
 | `main_hover_row` | `int \| None` | `run_main_loop` (mouse motion events) |
 | `main_line_map` | `Dict[int, int]` | `render_main_buffer` each render cycle |
 | `_main_copy_rows` | `Dict[int, Tuple[int,str]]` | `render_main_buffer` (phys_row → (event_idx, 'request'\|'response'\|'all')) |
@@ -121,3 +121,4 @@ All pane modules read monitor.py state via `from ..core import monitor as _monit
 - `monitor_session.py` lazy-imports `monitor` (`from . import monitor as _monitor`) to avoid circular import at module level — both live in the same package so `.` is correct.
 - Session scoping: `_get_session_start_ts()` reads the newest main session JSONL and subtracts 60s as the cutoff. Changing this affects what history gets replayed on startup.
 - `is_agent_file()` in `monitor.py` filters out subagent JSONLs by path pattern — logic must stay in sync with `session_finder.py` which indexes them.
+- `_handle_main_mouse` wheel-up (`monitor.py`) only lower-bounds `main_scroll_offset` at 0 — the upper bound lives solely in `render_main_buffer`'s write-back clamp (`max_scroll = max(0, total - buffer_height)`), not in the handler. Any new code path that mutates `main_scroll_offset` without going through a subsequent `render_main_buffer` call can overshoot for one frame; it self-corrects on the next render, same pattern as `proxy_display/pane.py`.
