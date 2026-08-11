@@ -267,6 +267,7 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
     global main_line_map, _main_copy_rows, _main_pane_width
     global _search_current_idx
     global _search_all_line_offsets, _search_total_lines
+    global main_scroll_offset
 
     _main_pane_width = pane_width
     buffer_height = pane_height - 1  # row 1 reserved for search bar
@@ -284,6 +285,14 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
         all_event_indices.append(-1)  # blank separator
 
     _search_total_lines = len(all_lines)
+
+    # Clamp scroll_offset to the real max the renderer can display, and write back to the
+    # global — otherwise an over-scroll tick keeps inflating state past what's ever shown,
+    # and scroll-down needs to unwind the phantom offset before the display reacts.
+    max_scroll = max(0, _search_total_lines - buffer_height)
+    if scroll_offset > max_scroll:
+        scroll_offset = max_scroll
+        main_scroll_offset = max_scroll
 
     # Clamp current_idx on buffer shrink (matches only populated on Enter commit)
     if _search_matches:
