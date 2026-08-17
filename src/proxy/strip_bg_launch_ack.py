@@ -23,9 +23,9 @@ _BG_LAUNCH_ACK_MSG = (
 )
 
 # Main (orchestrator) context version — sharper than the shared wording above: explicitly names
-# going idle and ties the wait to THIS exact task id, since main is the context the pending-
-# background-task tracking (src/proxy/pending_bg_state.py) is built for — a stacked/duplicate
-# timer is a main-context-only failure mode (workers don't arm the orchestrator's ceiling timer).
+# going idle and ties the wait to THIS exact task id, since main is the context that arms the
+# orchestrator's wake-up command (worker-cli wait) — a stacked/duplicate arm is a main-context-only
+# failure mode (workers don't arm the orchestrator's own wake-up).
 _BG_LAUNCH_ACK_MSG_MAIN = (
     'Command is running in the background. Do NOT check, poll, or read its output, and do NOT '
     'arm another background timer — go idle now and wait; you will get a completion notice for '
