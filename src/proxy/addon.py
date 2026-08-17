@@ -40,7 +40,6 @@ from .tools import _strip_unused_tools, _extract_deferred_tool_names
 from .tool_injection import inject_mcp_tools
 from .fixation import _capture_fixation, _apply_fixation
 from .bg_escape import _trigger_bg_escape
-from .pending_bg_state import _update_pending_bg_state
 ANTHROPIC_API_HOST = "api.anthropic.com"
 MESSAGES_PATH = "/v1/messages"
 
@@ -107,11 +106,6 @@ class ProxyAddon:
                 _trigger_bg_escape(stripped_msg_removed, self._worker_context, project_path)
             except Exception as e:
                 print(f"[proxy_addon] bg_escape trigger failed: {e}", file=sys.stderr)
-
-            try:
-                _update_pending_bg_state(stripped_msg_removed, self._worker_context, project_path)
-            except Exception as e:
-                print(f"[proxy_addon] pending_bg_state update failed: {e}", file=sys.stderr)
 
             prev_mod_msgs = self.prev_messages_by_model.get(model_family)
             modified_payload = _strip_all_cache_control(modified_payload)

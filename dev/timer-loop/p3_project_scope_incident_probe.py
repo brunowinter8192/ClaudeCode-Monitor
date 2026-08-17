@@ -1,7 +1,10 @@
 """
-SUPERSEDED (Milestone 2, hook family rework): src/hooks/block_timer_pending_bg.py was removed —
-this probe's hook-subprocess sections (all but the writer-side src/proxy/pending_bg_state.py
-checks) are no longer runnable. Left as-is, historical record of the resolved incident.
+SUPERSEDED (Milestone 2, hook family rework — updated Milestone 3): src/hooks/
+block_timer_pending_bg.py was removed in Milestone 2 (hook-subprocess sections stopped running);
+src/proxy/pending_bg_state.py itself was then removed in Milestone 3, so the writer-side checks
+this docstring used to say "still run" no longer do either — the whole script is non-runnable now
+(the `from proxy.pending_bg_state import ...` below is a dead import). Left as-is, historical
+record of the resolved incident.
 
 P3 — replays the 2026-08-07 ~01:10 cross-project false-block incident: the websearch project's
 MAIN session armed its canonical worker timer and was blocked by block_timer_pending_bg.py because

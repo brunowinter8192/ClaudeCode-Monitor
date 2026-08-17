@@ -16,6 +16,7 @@ from proxy.diff_engine import _diff_messages, compose_block
 from proxy.logging import _normalize_msg_shape_for_hash
 from proxy.rule_ops import _ops_from_content_change
 from proxy.strip_vocab import attribute_chunk
+from proxy.strip_bg_launch_ack import _BG_LAUNCH_ACK_MSG, _BG_LAUNCH_ACK_MSG_MAIN
 
 _PASS = "\033[32mPASS\033[0m"
 _FAIL = "\033[31mFAIL\033[0m"
@@ -382,6 +383,33 @@ def test_full_replace_span_is_one_contiguous_block():
     print()
 
 
+# ── MAIN-CONTEXT WORDING SHARPENING (2026-08-06 milestone-2) ──────────────────
+# Folded in from dev/timer-loop/p2_pending_bg_state_probe.py (Test 12) when that probe was
+# deleted (Milestone 3, 2026-08 — its subject module src/proxy/pending_bg_state.py was removed
+# and this was the one still-relevant, otherwise-uncovered case in it: is_main is unrelated to
+# pending_bg_state, it selects strip_bg_launch_ack.py's replacement wording via
+# _apply_bg_launch_ack_strip's own is_main param). See process-docs/timer-loop/ for the removal.
+def test_wording_main_vs_worker():
+    print("Item 4r — replacement wording: is_main=True sharpens vs the default/worker wording")
+    messages = [{
+        "role": "user",
+        "content": [
+            {"type": "tool_result", "tool_use_id": "toolu_main", "content": _LAUNCH_ACK},
+        ],
+    }]
+    default_result, _, _, _, _, _ = _apply_bg_launch_ack_strip(messages)
+    main_result, _, _, _, _, _ = _apply_bg_launch_ack_strip(messages, is_main=True)
+    default_text = default_result[0]["content"][0]["content"]
+    main_text = main_result[0]["content"][0]["content"]
+    check("default (is_main=False) wording unchanged", default_text.startswith(_BG_LAUNCH_ACK_MSG))
+    check("main wording starts with the sharpened message", main_text.startswith(_BG_LAUNCH_ACK_MSG_MAIN))
+    check("main wording differs from default wording", main_text != default_text)
+    check("main wording explicitly mentions going idle", "idle" in _BG_LAUNCH_ACK_MSG_MAIN.lower())
+    check("main wording explicitly mentions this task's ID", "task ID" in _BG_LAUNCH_ACK_MSG_MAIN)
+    check("main wording still carries the recovered ID line", "ID: bg_01ABC" in main_text)
+    print()
+
+
 if __name__ == "__main__":
     test_tool_result_str_content()
     test_text_block_content()
@@ -400,4 +428,5 @@ if __name__ == "__main__":
     test_wording2_attribution_bl_code()
     test_wording1_and_wording2_same_msg_line()
     test_full_replace_span_is_one_contiguous_block()
+    test_wording_main_vs_worker()
     print("Done.")
