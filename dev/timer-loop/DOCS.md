@@ -29,7 +29,7 @@ to the non-monotonic message-count resets observed in some worker sessions), eva
 
 ---
 
-### p3_project_scope_incident_probe.py (240 LOC)
+### p3_project_scope_incident_probe.py (243 LOC)
 
 **SUPERSEDED (Milestone 2, 2026-08, hook family rework — updated Milestone 3):**
 `src/hooks/block_timer_pending_bg.py` was removed in Milestone 2 (hook-subprocess sections
