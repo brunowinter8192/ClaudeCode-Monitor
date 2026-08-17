@@ -220,98 +220,46 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_unauthorized_background.py (67 LOC)
+### block_unauthorized_background.py (78 LOC, Milestone 2 worker-cli wait exemption 2026-08)
 
-**Purpose:** PreToolUse hook — **silently rewrites** any Bash command dispatched with `run_in_background=true` that is NOT a sleep-only timer, flipping `run_in_background` to `false` via `hookSpecificOutput.updatedInput`. Sleep-only commands (bare `sleep N` OR `sleep N && echo <anything>`) are always exempt — both the raw form and the normalized `sleep 3300 && echo done` — so a sleep timer is never foreground-forced regardless of hook execution order. All other background commands are foreground-forced without exception. Exits 0 in all cases (fail-open rewrite hook — never blocks). Logs `decision="rewrite"` with `rewritten="run_in_background: true → false"`.
+**Purpose:** PreToolUse hook — **silently rewrites** any Bash command dispatched with `run_in_background=true` that is neither a sleep-only timer habit NOR the canonical `worker-cli wait`, flipping `run_in_background` to `false` via `hookSpecificOutput.updatedInput`. Two exempt shapes: (1) sleep-only commands (bare `sleep N` OR `sleep N && echo <anything>`) — kept exempt even though `rewrite_background_sleep.py` normalizes them, so this hook stays correct regardless of hook execution order; (2) `worker-cli wait` with optional `project_path`/`--timeout N` args in any combination — the canonical pull-based wake-up command (iterative-dev plugin `worker-cli wait`) that raw sleep-timer habits get rewritten to. All other background commands are foreground-forced without exception. Exits 0 in all cases (fail-open rewrite hook — never blocks). Logs `decision="rewrite"` with `rewritten="run_in_background: true → false"`.
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`).
 **Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.{command, run_in_background: false}`) on non-canonical bg; nothing on passthrough.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
 **Calls out:** stdlib only (`json`, `re`).
 
-**Rewrite condition:** `run_in_background=true` AND command does NOT match `_CANONICAL` (any sleep-only form: bare `sleep N` OR `sleep N && echo <anything>`, regex `^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$`).
+**Rewrite condition:** `run_in_background=true` AND command matches NEITHER `_SLEEP_ONLY_BG` (`^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$`) NOR `_WAIT_FORM` (`^\s*worker-cli\s+wait\b[^;&|\n]*$` — `\b` word-boundary after `wait` rejects `waitfoo`-shaped tokens; `[^;&|\n]*` tail-guard rejects a chained `worker-cli wait && other_cmd`).
 
 **Passthrough (no output):**
-- Any sleep-only command (`sleep N`, `sleep N && echo done`, `sleep N && echo "custom text"`) with `run_in_background=true` — `_CANONICAL` matches all sleep-only forms
+- Any sleep-only command (`sleep N`, `sleep N && echo done`, `sleep N && echo "custom text"`) with `run_in_background=true`
+- Any `worker-cli wait` form (bare, with `project_path`, with `--timeout N`, with both) with `run_in_background=true`
 - Any command with `run_in_background=false` or field absent (foreground — no restriction)
 - Parse errors (fail-open)
 
-**No quote-stripping.** Checks the `run_in_background` bool field and `_CANONICAL` only — no general command-text scanning.
+**No quote-stripping.** Checks the `run_in_background` bool field and the two canonical regexes only — no general command-text scanning.
+
+**Smoke:** `dev/hook_smoke/test_block_unauthorized_background.py` (14 cases: 3 sleep-only ALLOW, 4 `worker-cli wait` ALLOW, 6 FORCE incl. chained-wait and word-boundary, 1 foreground PASS).
 
 ---
 
-### rewrite_background_sleep.py (62 LOC)
+### rewrite_background_sleep.py (65 LOC, Milestone 2 rewrite target change 2026-08)
 
-**Purpose:** PreToolUse hook (Bash) — **rewrites** ANY sleep-only background command to the canonical `sleep 3300 && echo done`. Matches bare `sleep N` OR `sleep N && echo <anything>` (regex `_SLEEP_ONLY_BG`). Already-canonical guard: `command.strip() == _TARGET` (exact string match, not N comparison). Pairs with `block_unauthorized_background.py` which exempts all sleep-only background commands from foreground-forcing; this hook normalizes all of them to the canonical 55-minute timer. Exits 0 in all cases (fail-open rewrite hook — never blocks).
+**Purpose:** PreToolUse hook (Bash) — **rewrites** ANY sleep-only background command to the canonical `worker-cli wait` (iterative-dev plugin — blocks in-process until all workers of the project go stably idle, or `--timeout`; its own exit IS the wake-up, replacing the old push-based raw-sleep + menubar-kill mechanism). Matches bare `sleep N` OR `sleep N && echo <anything>` (regex `_SLEEP_ONLY_BG`). No "already canonical" exemption needed: `_SLEEP_ONLY_BG` requires a literal `sleep` token, which can never match the target string `"worker-cli wait"` — every sleep-only match, including the OLD canonical `sleep 3300 && echo done`, is now a stale habit and gets rewritten. Pairs with `block_unauthorized_background.py`, which exempts both sleep-only commands AND `worker-cli wait` forms from foreground-forcing. Exits 0 in all cases (fail-open rewrite hook — never blocks).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`).
-**Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when command is a non-canonical sleep-only form; nothing on passthrough.
+**Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when command is a sleep-only form; nothing on passthrough.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
 **Calls out:** stdlib only (`json`, `os`, `re`, `sys`).
 
 **Rewrite condition (ALL must hold):**
 1. `run_in_background == True`
 2. Command matches `_SLEEP_ONLY_BG`: `^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$`
-3. `command.strip() != "sleep 3300 && echo done"`
 
 **Passthrough (no output):**
 - `run_in_background=false` or field absent — foreground, any sleep form allowed
-- `command.strip() == "sleep 3300 && echo done"` — already the canonical target
-- Any non-sleep-only command — `_SLEEP_ONLY_BG` fails to match; `block_unauthorized_background.py` handles these
+- Any non-sleep-only command (including `worker-cli wait` itself, already canonical) — `_SLEEP_ONLY_BG` fails to match; `block_unauthorized_background.py` handles the allow/force decision for these
 - Parse errors (fail-open)
 
-**Smoke:** `dev/hook_smoke/test_rewrite_background_sleep.py` (11 cases: 5 positive rewrite, 6 negative no-op).
-
----
-
-### block_timer_no_worker_working.py (129 LOC)
-
-**Purpose:** PreToolUse hook (Bash) — blocks the canonical background sleep-timer (`sleep 3300 && echo done`, or any sleep-only form matching `_SLEEP_ONLY_BG`) when no worker of the current project is working. That timer exists only to wake the orchestrator when an active worker finishes; arming it with no worker actively working idles the session for nothing. Runs `worker-cli status --all <project>` (3s timeout, resolved via `_resolve_worker_cli()`) and parses each `<name>: <status>` line. Blocks iff the worker set is empty OR every worker's first status token (`status.split()[0]`, so `'idle 59%'` counts as `idle`) is exactly `idle`. `unknown`, `working`, and `limit reached` never contribute to a block — `unknown` in particular covers the fresh-spawn window right after `worker-cli spawn` returns, before the new worker's CC instance has written its first status. Skipped entirely when the hook's own cwd is inside a worktree (`.claude/worktrees/` fragment) — this hook is orchestrator-only. Exits 2 + stderr `"Go idle immediately. No worker of this project is working — this timer may not be armed."` on block. Fail-open on everything else: parse errors, unresolved `worker-cli` binary, unresolved `tmux`, subprocess error, non-zero exit, timeout, or any other exception.
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`); `worker-cli status --all <project_path>` output (subprocess); `os.getcwd()` (worktree exemption + project path).
-**Writes:** stderr (block message) on block only.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_fire_log.log_fire` (same-dir import via `sys.path` insert); `subprocess` (`worker-cli status --all` by absolute path via `_resolve_worker_cli()`: `shutil.which` first, then glob `~/.claude/plugins/cache/brunowinter-plugins/iterative-dev/*/bin/worker-cli` newest — CC hook env PATH does not include plugin-cache bins); `shutil`, `glob` (stdlib).
-
-**Block condition (BOTH must hold):**
-1. `run_in_background == True` AND command matches `_SLEEP_ONLY_BG` (identical shape to `rewrite_background_sleep.py`/`block_unauthorized_background.py` — order-independent relative to those two hooks).
-2. Project's worker set is empty, OR every worker's first status token == `idle`.
-
-**Passthrough (no block):**
-- Any worker reporting `working` (normal case) — blocks the all-idle condition
-- Any worker reporting `unknown` — fresh-spawn window; must never contribute to a block
-- Any worker reporting `limit reached`
-- `run_in_background=false`/absent, or a non-sleep-only command
-- Hook cwd inside `.claude/worktrees/` — orchestrator-only guard
-- `worker-cli` unresolvable, subprocess error, non-zero exit, timeout, or parse error — `_live_worker_statuses` raises in all these cases so `decide()`'s status_fn try/except routes to allow, never to the empty-worker-set block path
-- `tmux` unresolvable on the hook's PATH — `worker-cli` shells out to bare `tmux` internally and silently degrades to `(no active workers)` with exit 0 when tmux is missing, which would otherwise be misread as a genuine empty worker set even with real working workers registered; `_live_worker_statuses` explicitly checks `shutil.which('tmux')` and raises before calling `worker-cli` so this broken-probe class routes to allow, same as the unresolved-`worker-cli` case. Live-verified: same payload, same project dir with a real registered worker, PATH stripped of the tmux-containing dir — before this guard: exit 2 (false block); after: exit 0 (correct allow).
-
-**Smoke:** `dev/hook_smoke/test_block_timer_no_worker_working.py` (10 cases: 3 block, 7 allow). The tmux-guard raise path is not covered by the stub suite (the check lives inside `_live_worker_statuses`, below the injectable `status_fn` boundary `decide()` tests against) — verified instead by the live PATH-stripped drive above.
-
----
-
-### block_timer_pending_bg.py (214 LOC, 2026-08-06 milestone-3; project-scoped 2026-08-07)
-
-**Purpose:** PreToolUse hook (Bash) — blocks the canonical background sleep-timer (same `_SLEEP_ONLY_BG` shape as `rewrite_background_sleep.py`/`block_unauthorized_background.py`/`block_timer_no_worker_working.py`, order-independent) while a background task launched by THIS orchestrator, in THIS project, is still pending (`src/logs/pending_bg_tasks.json`, written by `src/proxy/pending_bg_state.py` — ONE global file across all projects). Prevents the exact failure the design doc opens with: the orchestrator arms a new timer while an earlier backgrounded task hasn't completed yet, producing stacked timers and duplicate wakeups. Blocks iff `state[task_id].status == "pending"` for at least one id, that entry's `armed_at` age is STRICTLY younger than `_PENDING_EXPIRY_SECS = 3600` (3300s canonical timer + margin for proxy/TN delivery lag — an entry armed EXACTLY at 3600s is already treated as stale and does NOT block), AND the entry's `project` field (if present) matches this hook's own project. Fail-open on everything: missing/corrupt state file, non-dict state, unparseable `armed_at` (per-entry, not file-level — one bad entry doesn't sink the whole check), any other exception. Skipped entirely when the hook's own cwd is inside a worktree (`.claude/worktrees/` fragment) — orchestrator-only, same convention as `block_timer_no_worker_working.py`. **Does NOT repeat the false-block failure of the removed `block_concurrent_timer.py`** (`process-docs/tool_use_safety/2026-07-20_timer_guard_concurrent_redesign.md`, `2026-07-21_concurrent_timer_hook_removed.md`) — that hook computed `expiry = armed_time + 600s` as pure hook-local arithmetic, blind to whether the underlying sleep actually finished early (worker went idle before timeout, or the turn was aborted); it kept blocking a legitimate new timer until its own clock ran out. This hook instead reads state the proxy writes from DIRECTLY OBSERVED events — `pending` only because the proxy genuinely saw a launch-ack, `cleared` only because it genuinely saw a completion/kill notice for that id, exit-code-agnostic (`dev/timer-loop/md/bg_completion_wordings_20260806.md`: the dominant real wording is exit 143, i.e. exactly the SIGTERM a menubar abort/turn-interrupt produces) — an abort itself generates the clearing signal before the orchestrator's next timer attempt. `_PENDING_EXPIRY_SECS` only guards the narrower case of the completion notice never reaching the proxy at all (proxy crashed/restarted and the session also ended), not the primary signal.
-
-**Project scoping (2026-08-07, live incident — two parallel main sessions, websearch blocked by a stale POSTS pending entry):** the state file has NO project identifier of its own until this fix — `pending_bg_state.py` now stamps a `"project"` field on freshly-armed entries (see that module's DOCS entry). This hook derives ITS OWN project via `_current_project_slug()` = `basename(os.getcwd())` normalized (main-session cwd IS the project root, same assumption the worktree-fragment check makes), and only counts a pending entry as blocking when `entry.get("project")` is either ABSENT (pre-migration entry — backward compat, blocks every project, ages out via the normal 3600s expiry regardless) or equal to the hook's own project. `_normalize_project_slug` (lower-case, non-`[a-z0-9]` runs collapsed to one `_`, `_` stripped at the ends) mirrors `claude_proxy_start.sh`'s `PROJECT_BASENAME` exactly — pinned by tests: `Websearch`→`websearch`, `Monitor_CC`→`monitor_cc`. Duplicated (not imported) in `pending_bg_state.py` — the two modules stay structurally independent, same convention as their already-duplicated path-resolution helpers.
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`); `src/logs/pending_bg_tasks.json` (`MONITOR_CC_ROOT`/`/tmp`-fallback, same convention as `src/proxy/pending_bg_state.py`'s writer — read-only here, this hook never writes the state file); `os.getcwd()` (worktree exemption AND, as of 2026-08-07, `_current_project_slug()`).
-**Writes:** stderr (block message naming every fresh-pending, same-project task id + the youngest one's age, e.g. `"...pending (ID: abc123, youngest armed 4m ago)..."`) on block only.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_fire_log.log_fire` (same-dir import via `sys.path` insert); stdlib only otherwise (`json`, `re`, `datetime`, `pathlib`).
-
-**`decide(command, run_in_background, state_fn, current_project="") -> list[str]`** — returns the sorted list of fresh-pending, same-project task ids rather than a bare bool (empty list is the falsy/allow case) so the workflow can name them in the block message without a second decision computation; the workflow DOES still re-read state independently via `_build_block_message` to compute the youngest entry's age (message-building is a separate concern from the block/allow decision, and is itself wrapped so it can never raise — a raise there must never flip an intended BLOCK into an accidental ALLOW via the workflow's outer fail-open `except`).
-
-**Block condition (ALL must hold):**
-1. `run_in_background == True` AND command matches `_SLEEP_ONLY_BG`.
-2. `src/logs/pending_bg_tasks.json` parses to a dict with at least one entry whose `status == "pending"`, whose `armed_at` age is `< 3600s`, AND whose `project` field is either absent or equal to this hook's own project.
-
-**Passthrough (no block):**
-- No entries, or every entry `status == "cleared"` (including the "no prior arm" tombstone `pending_bg_state.py` writes for an orphan TN sighting)
-- Every pending entry's `armed_at` age is `>= 3600s` (stale — the proxy's clearing signal never arrived)
-- Every pending, non-expired entry belongs to a DIFFERENT project (2026-08-07 fix — the incident case)
-- Missing state file, corrupt JSON, non-dict state, or an unparseable `armed_at` on the only pending entry
-- `run_in_background=false`/absent, or a non-sleep-only command
-- Hook cwd inside `.claude/worktrees/` — orchestrator-only guard
-
-**Smoke:** `dev/hook_smoke/test_block_timer_pending_bg.py` (36 checks, 4 layers: 18 `decide()` unit cases incl. the exact-3600s boundary and 6 project-scoping cases (foreign/same/legacy/expired/mixed); 12 real-stdin-entrypoint subprocess cases with `cwd` forced OUTSIDE any `.claude/worktrees/` path — this repo's own worktrees live under a path containing that fragment, so an entrypoint test run from inside one would always hit the exemption and mask every case under test — including 3 real cwd-basename-normalization cases (`cwd=.../Websearch` → project `websearch`); 1 dedicated worktree-exemption case with `cwd` INSIDE a `.claude/worktrees/` path and a fresh-pending state that would otherwise block; 4 static `hook_setup._HOOK_SCRIPTS` registration checks). Incident replay (verbatim cross-project scenario, own md report): `dev/timer-loop/p3_project_scope_incident_probe.py`.
+**Smoke:** `dev/hook_smoke/test_rewrite_background_sleep.py` (11 cases: 6 positive rewrite incl. the old canonical target, 5 negative no-op incl. `worker-cli wait` passthrough).
 
 ---
 
@@ -752,7 +700,7 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ### block_worker_send_background.py (54 LOC)
 
-**Purpose:** PreToolUse hook (Bash) — blocks `worker-cli send` commands dispatched with `run_in_background=true`. `worker-cli send` is a fire-once, must-confirm action; backgrounding risks SIGTERM-kill before delivery (exit 143, silent message loss) or the orchestrator's next action running before the send completes. Canonical pattern: send in a standalone foreground Bash call; any timer dispatched as a separate `sleep 3300 && echo done` call. Exits 2 + stderr. Exits 0 when `run_in_background` is absent or false, or on any parse error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — blocks `worker-cli send` commands dispatched with `run_in_background=true`. `worker-cli send` is a fire-once, must-confirm action; backgrounding risks SIGTERM-kill before delivery (exit 143, silent message loss) or the orchestrator's next action running before the send completes. Canonical pattern: send in a standalone foreground Bash call; any wake-up timer dispatched as a separate `worker-cli wait` call (Milestone 2, 2026-08 — message text updated, block condition unchanged). Exits 2 + stderr. Exits 0 when `run_in_background` is absent or false, or on any parse error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`).
 **Writes:** stderr (block message with fix) on match only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.

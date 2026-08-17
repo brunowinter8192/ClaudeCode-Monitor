@@ -10,12 +10,17 @@ from _fire_log import log_fire
 # Matches any sleep-only background command: bare "sleep N" or "sleep N && echo <anything>".
 # [^;&|\n]* stops at shell separators — prevents matching "sleep N && echo x && other_cmd".
 _SLEEP_ONLY_BG = re.compile(r'^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$')
-_TARGET = "sleep 3300 && echo done"
+# Canonical background wake-up command (worker-cli wait, iterative-dev plugin) — replaces the
+# old raw sleep-timer + menubar-kill push mechanism with a pull: the command blocks in-process
+# until all workers of the project go stably idle (or --timeout), and its own exit IS the
+# wake-up. No "already canonical" exemption needed here: _SLEEP_ONLY_BG requires a literal
+# "sleep" token, so it can never match _TARGET — every sleep-only match is a stale habit.
+_TARGET = "worker-cli wait"
 
 
 # ORCHESTRATOR
 
-# Read Bash tool_input from stdin; rewrite any sleep-only background command → canonical "sleep 3300 && echo done"
+# Read Bash tool_input from stdin; rewrite any sleep-only background command → canonical "worker-cli wait"
 def rewrite_background_sleep_workflow() -> None:
     command, run_in_background, session_id = _parse_input()
     if not run_in_background:
@@ -23,8 +28,6 @@ def rewrite_background_sleep_workflow() -> None:
     if command is None:
         sys.exit(0)
     if not _SLEEP_ONLY_BG.match(command):
-        sys.exit(0)
-    if command.strip() == _TARGET:
         sys.exit(0)
     output = _emit_rewrite()
     log_fire("rewrite_background_sleep", "rewrite", "Bash", command, rewritten=_TARGET, session_id=session_id)
@@ -47,7 +50,7 @@ def _parse_input():
     except Exception:
         return None, False, None
 
-# Build allow+updatedInput dict rewriting command to canonical 3300s timer; return it (caller handles print)
+# Build allow+updatedInput dict rewriting command to canonical "worker-cli wait"; return it (caller handles print)
 def _emit_rewrite() -> dict:
     return {
         "hookSpecificOutput": {

@@ -10,15 +10,23 @@ HOOK = "src/hooks/block_unauthorized_background.py"
 #   None  = hook emits no output (pass-through, command stays background or already foreground)
 #   False = hook emits rewrite flipping run_in_background to false (foreground-forced)
 CASES = [
-    # --- ALLOW: sleep-only forms — must NOT be foreground-forced ---
-    ("sleep N && echo done — original canonical ALLOW",
+    # --- ALLOW: sleep-only forms — must NOT be foreground-forced (order-independence vs rewrite hook) ---
+    ("sleep N && echo done — sleep-only form ALLOW",
      "sleep 300 && echo done", True, None),
-    ("sleep N bare — now exempt ALLOW",
+    ("sleep N bare — sleep-only form ALLOW",
      "sleep 300", True, None),
     ("sleep N with custom echo text (fire-log actual) ALLOW",
      'sleep 45 && echo "bg-ack-probe done"', True, None),
-    ("sleep 3300 && echo done — normalized form, hook-order independent ALLOW",
-     "sleep 3300 && echo done", True, None),
+
+    # --- ALLOW: worker-cli wait forms — canonical pull-based wake-up command ---
+    ("worker-cli wait bare ALLOW",
+     "worker-cli wait", True, None),
+    ("worker-cli wait with project_path ALLOW",
+     "worker-cli wait /path/to/project", True, None),
+    ("worker-cli wait with --timeout ALLOW",
+     "worker-cli wait --timeout 600", True, None),
+    ("worker-cli wait with project_path + --timeout ALLOW",
+     "worker-cli wait /path/to/project --timeout 600", True, None),
 
     # --- FORCE: former pipeline whitelists — no whitelist, must be foreground-forced ---
     ("reddit-cli index_subreddits — foreground-forced FORCE",
@@ -26,11 +34,15 @@ CASES = [
     ("workflow.py index-dir — foreground-forced FORCE",
      "workflow.py index-dir", True, False),
 
-    # --- FORCE: genuine non-sleep background commands — must be foreground-forced ---
-    ("./venv/bin/python script.py — non-sleep background FORCE",
+    # --- FORCE: genuine non-canonical background commands — must be foreground-forced ---
+    ("./venv/bin/python script.py — non-canonical background FORCE",
      "./venv/bin/python script.py", True, False),
     ("rag-cli update_docs — original triggering incident FORCE",
      "rag-cli update_docs .", True, False),
+    ("worker-cli wait && rag-cli index — chained, tail-guard rejects it FORCE",
+     "worker-cli wait && rag-cli index docs", True, False),
+    ("worker-cli waitfoo — not a word-boundary match on 'wait' FORCE",
+     "worker-cli waitfoo", True, False),
 
     # --- PASS: already foreground — hook is no-op ---
     ("./venv/bin/python script.py foreground — no output PASS",
