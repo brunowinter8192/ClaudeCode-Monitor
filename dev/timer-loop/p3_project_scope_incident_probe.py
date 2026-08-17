@@ -1,4 +1,8 @@
 """
+SUPERSEDED (Milestone 2, hook family rework): src/hooks/block_timer_pending_bg.py was removed —
+this probe's hook-subprocess sections (all but the writer-side src/proxy/pending_bg_state.py
+checks) are no longer runnable. Left as-is, historical record of the resolved incident.
+
 P3 — replays the 2026-08-07 ~01:10 cross-project false-block incident: the websearch project's
 MAIN session armed its canonical worker timer and was blocked by block_timer_pending_bg.py because
 src/logs/pending_bg_tasks.json is one global file and a pending entry (task b4z5fzzao) belonged to

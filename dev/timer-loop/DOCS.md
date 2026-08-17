@@ -54,7 +54,11 @@ to that module, `strip_bg_launch_ack.py`'s wording selection, or `addon.py`'s wi
 
 ---
 
-### p3_project_scope_incident_probe.py (236 LOC)
+### p3_project_scope_incident_probe.py (240 LOC)
+
+**SUPERSEDED (Milestone 2, 2026-08, hook family rework):** `src/hooks/block_timer_pending_bg.py`
+was removed — this probe's hook-subprocess sections are no longer runnable; the writer-side
+`ProxyAddon`/`pending_bg_state.py` sections still run. Left as-is, historical record only.
 
 **Purpose:** Replays the 2026-08-07 ~01:10 cross-project false-block incident verbatim — the
 websearch project's main session armed its canonical timer and was blocked by a POSTS-project
@@ -68,11 +72,11 @@ Also verifies the writer side directly — real `ProxyAddon.request()` stamps th
 `PROXY_PROJECT_PATH`.
 **Reads:** Nothing persistent — seeds its own state file per case under a `tempfile.TemporaryDirectory()`-scoped `MONITOR_CC_ROOT`.
 **Writes:** `md/p3_project_scope_incident_probe_report.md`.
-**Called by:** run manually — regression guard for the project-scoping fix specifically; re-run
-after any further change to `block_timer_pending_bg.py`'s project filter or
-`pending_bg_state.py`'s project stamping.
-**Calls out:** `src/hooks/block_timer_pending_bg.py` (subprocess), `src/proxy/pending_bg_state.py`,
-`src/proxy/addon.py` (`ProxyAddon`, `_derive_worker_context`).
+**Called by:** run manually — historical incident record; the hook-subprocess sections no longer
+run (target file removed, see SUPERSEDED note above). The writer-side sections remain a valid
+regression guard for `pending_bg_state.py`'s project stamping.
+**Calls out:** `src/hooks/block_timer_pending_bg.py` (subprocess — removed, path now dead),
+`src/proxy/pending_bg_state.py`, `src/proxy/addon.py` (`ProxyAddon`, `_derive_worker_context`).
 
 ---
 

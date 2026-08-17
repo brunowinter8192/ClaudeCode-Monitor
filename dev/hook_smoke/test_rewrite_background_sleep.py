@@ -8,24 +8,42 @@ HOOK = "src/hooks/rewrite_background_sleep.py"
 # (description, command, run_in_background, expected_rewrite_or_None)
 # None = no rewrite expected (hook should emit nothing and exit 0)
 CASES = [
-    # --- positive: background timer with N ≠ 3300 → rewrite to sleep 3300 && echo done ---
+    # --- positive: any sleep-only background command → rewrite to worker-cli wait ---
     (
-        "sleep 300 background timer → normalize to 3300",
+        "sleep 300 background timer → rewrite to worker-cli wait",
         "sleep 300 && echo done",
         True,
-        "sleep 3300 && echo done",
+        "worker-cli wait",
     ),
     (
-        "sleep 5 background timer → normalize to 3300",
+        "sleep 5 background timer → rewrite to worker-cli wait",
         "sleep 5 && echo done",
         True,
-        "sleep 3300 && echo done",
+        "worker-cli wait",
     ),
     (
-        "sleep 1200 background timer → normalize to 3300",
+        "sleep 1200 background timer → rewrite to worker-cli wait",
         "sleep 1200 && echo done",
         True,
+        "worker-cli wait",
+    ),
+    (
+        "old canonical sleep 3300 && echo done — also a stale habit now, rewrite",
         "sleep 3300 && echo done",
+        True,
+        "worker-cli wait",
+    ),
+    (
+        "bare sleep 300 — bare sleep, rewrite to worker-cli wait",
+        "sleep 300",
+        True,
+        "worker-cli wait",
+    ),
+    (
+        "sleep 45 with custom echo text (fire-log actual incident) → rewrite",
+        'sleep 45 && echo "bg-ack-probe done"',
+        True,
+        "worker-cli wait",
     ),
     # --- negative A: foreground (run_in_background=false) → no rewrite ---
     (
@@ -34,10 +52,16 @@ CASES = [
         False,
         None,
     ),
-    # --- negative B: already 3300 → no rewrite ---
+    # --- negative B: already the canonical worker-cli wait — no rewrite (not a sleep pattern) ---
     (
-        "sleep 3300 already canonical — no rewrite",
-        "sleep 3300 && echo done",
+        "worker-cli wait bare — already canonical, no rewrite",
+        "worker-cli wait",
+        True,
+        None,
+    ),
+    (
+        "worker-cli wait with project_path + --timeout — already canonical, no rewrite",
+        "worker-cli wait /path/to/project --timeout 600",
         True,
         None,
     ),
@@ -52,34 +76,6 @@ CASES = [
     (
         "sleep 300 && rag-cli — not echo done form, no rewrite",
         "sleep 300 && rag-cli server list",
-        True,
-        None,
-    ),
-    # --- negative E (updated): bare sleep → now normalized to canonical 3300s timer ---
-    (
-        "sleep 300 alone — bare sleep, normalize to sleep 3300 && echo done",
-        "sleep 300",
-        True,
-        "sleep 3300 && echo done",
-    ),
-    # --- positive: custom echo text (fire-log actual incident) → normalize ---
-    (
-        "sleep 45 with custom echo text → normalize to 3300",
-        'sleep 45 && echo "bg-ack-probe done"',
-        True,
-        "sleep 3300 && echo done",
-    ),
-    # --- positive: N=3300 but non-canonical echo → normalize ---
-    (
-        "sleep 3300 with custom echo — not the target string, normalize",
-        'sleep 3300 && echo "custom text"',
-        True,
-        "sleep 3300 && echo done",
-    ),
-    # --- negative: sleep 3300 && echo done — exact target, no rewrite ---
-    (
-        "sleep 3300 && echo done — exact target, no rewrite",
-        "sleep 3300 && echo done",
         True,
         None,
     ),

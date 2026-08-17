@@ -14,7 +14,7 @@ _BLOCK_MESSAGE = (
     "BLOCKED: `worker-cli send` with run_in_background=true.\n"
     "Send is a fire-once, must-confirm action — backgrounding means it is not awaited and can be\n"
     "SIGTERM-killed before delivering (exit 143, silent message loss). Issue the send as its own\n"
-    "foreground Bash call; dispatch any timer separately as `sleep N && echo done`.\n"
+    "foreground Bash call; dispatch any wake-up timer separately as `worker-cli wait`.\n"
 )
 
 

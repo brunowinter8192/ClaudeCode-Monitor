@@ -230,33 +230,34 @@ python3 dev/hook_smoke/test_rewrite_websearch_scrape_noise.py
 
 ---
 
-### test_rewrite_background_sleep.py (138 LOC)
+### test_rewrite_background_sleep.py (134 LOC, Milestone 2 rewrite target change 2026-08)
 
-**Purpose:** 11-case smoke for `rewrite_background_sleep.py`. Verifies 5 positive-rewrite cases
-(`sleep 300`, `sleep 5`, `sleep 1200` with `run_in_background=true`; bare `sleep 300` alone;
-`sleep 45 && echo "bg-ack-probe done"` custom echo; `sleep 3300 && echo "custom text"` N=3300 non-canonical
-→ all rewritten to `sleep 3300 && echo done`) and 6 negative no-op cases (foreground flag; exact target
-`sleep 3300 && echo done`; non-canonical non-sleep command; wrong chain target `&& rag-cli`).
+**Purpose:** 11-case smoke for `rewrite_background_sleep.py`. Verifies 6 positive-rewrite cases
+(`sleep 300`, `sleep 5`, `sleep 1200`, the OLD canonical `sleep 3300 && echo done` (now also a stale
+habit), bare `sleep 300` alone, `sleep 45 && echo "bg-ack-probe done"` custom echo — all rewritten to
+the new canonical `worker-cli wait`) and 5 negative no-op cases (foreground flag; `worker-cli wait`
+bare already canonical; `worker-cli wait /path --timeout 600` already canonical; non-canonical
+non-sleep command; wrong chain target `&& rag-cli`).
 
 **Usage (from project root):**
 ```bash
 python3 dev/hook_smoke/test_rewrite_background_sleep.py
 ```
 
-**Expected output:** `All 8 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** `All 11 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
 
 ---
 
-### test_block_unauthorized_background.py (84 LOC)
+### test_block_unauthorized_background.py (96 LOC, Milestone 2 worker-cli wait exemption 2026-08)
 
-**Purpose:** 9-case smoke for `block_unauthorized_background.py`. Verifies 4 ALLOW cases (no foreground-force): original `sleep N && echo done`, bare `sleep N`, custom echo `sleep 45 && echo "bg-ack-probe done"` (fire-log actual), normalized `sleep 3300 && echo done`. Verifies 4 FORCE cases (foreground-forced): `reddit-cli index_subreddits`, `workflow.py index-dir` (former whitelisted, now forced), `./venv/bin/python script.py`, `rag-cli update_docs .` (original triggering incident). Verifies 1 PASS case (already foreground → no output): `./venv/bin/python script.py` with `run_in_background=false`.
+**Purpose:** 14-case smoke for `block_unauthorized_background.py`. Verifies 3 sleep-only ALLOW cases (no foreground-force): `sleep N && echo done`, bare `sleep N`, custom echo `sleep 45 && echo "bg-ack-probe done"` (fire-log actual) — kept exempt for order-independence vs `rewrite_background_sleep.py`. Verifies 4 `worker-cli wait` ALLOW cases: bare, with `project_path`, with `--timeout`, with both. Verifies 6 FORCE cases (foreground-forced): `reddit-cli index_subreddits`, `workflow.py index-dir` (former whitelisted, now forced), `./venv/bin/python script.py`, `rag-cli update_docs .` (original triggering incident), `worker-cli wait && rag-cli index docs` (chained — tail-guard rejects it), `worker-cli waitfoo` (word-boundary rejects a non-`wait` token). Verifies 1 PASS case (already foreground → no output): `./venv/bin/python script.py` with `run_in_background=false`.
 
 **Usage (from project root):**
 ```bash
 ./venv/bin/python dev/hook_smoke/test_block_unauthorized_background.py
 ```
 
-**Expected output:** `All 9 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** `All 14 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
 
 ---
 
@@ -374,32 +375,6 @@ python3 dev/hook_smoke/test_block_rag_cli_document_repeat.py
 ```
 
 **Expected output:** `All rag-cli document-repeat tests passed.` (exit 0). HOOK path is relative — must be run from project root.
-
----
-
-### test_block_timer_no_worker_working.py (104 LOC)
-
-**Purpose:** 10-case smoke for `block_timer_no_worker_working.py`. Calls `decide()` directly with a stub `status_fn` (raw `worker-cli status --all` stdout text, or `raises` sentinel — no real workers). Verifies 3 BLOCK cases (empty worker set / `(no active workers)`; all-idle including `'idle 59%'` suffix form; bare `sleep N` background with no worker working) and 7 ALLOW cases (one `working` among idle; single `unknown`; `unknown` mixed with idle; `limit reached`; foreground call; non-sleep background command; `status_fn` raises — fail-open). Does NOT cover the `tmux`-unresolvable broken-probe guard in `_live_worker_statuses` — that check sits below the `status_fn` injection boundary; verified instead by a live PATH-stripped subprocess drive (see `process-docs/tool_use_safety/`).
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/test_block_timer_no_worker_working.py
-```
-
-**Expected output:** `10/10 passed` (exit 0).
-
----
-
-### test_block_timer_pending_bg.py (283 LOC, 2026-08-06 milestone-3; project-scoping cases added 2026-08-07)
-
-**Purpose:** 36-check, 4-layer smoke for `block_timer_pending_bg.py`. **Layer 1 (18 cases):** `decide()` called directly with a stub `state_fn` returning a crafted `pending_bg_tasks.json`-shaped dict — fresh pending → block; cleared-only (incl. the "no prior arm" orphan tombstone shape) → allow; stale (2h) pending → allow; the exact-3600s boundary → allow (strictly-younger-than semantics); 3599s (1s under) → block; `state_fn` raising / non-dict / non-timer command / `run_in_background=False` / unparseable `armed_at` → allow; multiple entries → only fresh-pending ones returned, sorted; **project scoping (6 cases, 2026-08-07):** foreign-project pending → allow (the incident class), same-project pending → block, legacy no-project entry → blocks regardless of `current_project` (backward compat), foreign/same-project pending but EXPIRED → allow either way (expiry checked independently), mixed own+foreign+legacy entries → only own+legacy returned. **Layer 2 (12 cases):** real stdin entry-point via `subprocess`, a genuine `pending_bg_tasks.json` seeded under a `MONITOR_CC_ROOT`-scoped `tempfile.TemporaryDirectory()`, `cwd` forced to a SEPARATE tempdir outside any `.claude/worktrees/` path — this worktree's own filesystem path contains that fragment, so a subprocess launched with the default cwd would always hit the hook's own worktree exemption and mask every block/allow case; asserts exit code, that the block message names the id and states an age (`"ago"`) and an idle instruction, and exit-0-no-stderr for every allow path (cleared, stale, missing file, corrupt file, non-timer command, foreground); **3 project-scoping cases via a REAL named cwd directory** (`Path(outer) / "Websearch"`, not a random tempdir basename) — foreign-project (posts) pending + cwd=Websearch → exit 0; same-project pending + cwd=Websearch (normalizes to `"websearch"`) → exit 2; legacy no-project entry → exit 2 regardless of cwd — exercises the REAL `_current_project_slug()` cwd-basename derivation end-to-end, not just the injected `current_project` string Layer 1 uses. **Layer 3 (1 case):** dedicated worktree-exemption check — `cwd` deliberately INSIDE a `.claude/worktrees/`-fragment path WITH a fresh-pending state file that would block if not exempted — asserts exit 0, proving the exemption itself fires (not just that it's never triggered by accident in Layer 2). **Layer 4 (4 cases):** static `hook_setup._HOOK_SCRIPTS` check — entry present exactly once, immediately after `block_timer_no_worker_working.py`, immediately before `rewrite_background_sleep.py`, registered under the `Bash` matcher — same verification method used to confirm the 2026-07-21 `block_concurrent_timer.py` removal, applied in reverse for an addition.
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/test_block_timer_pending_bg.py
-```
-
-**Expected output:** `36/36 passed` (exit 0).
 
 ---
 
