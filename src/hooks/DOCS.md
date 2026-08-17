@@ -242,24 +242,26 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### rewrite_background_sleep.py (65 LOC, Milestone 2 rewrite target change 2026-08)
+### rewrite_background_sleep.py (88 LOC, Milestone 2 rewrite target change 2026-08; orchestrator-only guard 2026-08 Milestone 3b)
 
-**Purpose:** PreToolUse hook (Bash) — **rewrites** ANY sleep-only background command to the canonical `worker-cli wait` (iterative-dev plugin — blocks in-process until all workers of the project go stably idle, or `--timeout`; its own exit IS the wake-up, replacing the old push-based raw-sleep + menubar-kill mechanism). Matches bare `sleep N` OR `sleep N && echo <anything>` (regex `_SLEEP_ONLY_BG`). No "already canonical" exemption needed: `_SLEEP_ONLY_BG` requires a literal `sleep` token, which can never match the target string `"worker-cli wait"` — every sleep-only match, including the OLD canonical `sleep 3300 && echo done`, is now a stale habit and gets rewritten. Pairs with `block_unauthorized_background.py`, which exempts both sleep-only commands AND `worker-cli wait` forms from foreground-forcing. Exits 0 in all cases (fail-open rewrite hook — never blocks).
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`).
+**Purpose:** PreToolUse hook (Bash) — **rewrites** ANY sleep-only background command to the canonical `worker-cli wait` (iterative-dev plugin — blocks in-process until all workers of the project go stably idle, or `--timeout`; its own exit IS the wake-up, replacing the old push-based raw-sleep + menubar-kill mechanism). Matches bare `sleep N` OR `sleep N && echo <anything>` (regex `_SLEEP_ONLY_BG`). No "already canonical" exemption needed: `_SLEEP_ONLY_BG` requires a literal `sleep` token, which can never match the target string `"worker-cli wait"` — every sleep-only match, including the OLD canonical `sleep 3300 && echo done`, is now a stale habit and gets rewritten. Pairs with `block_unauthorized_background.py`, which exempts both sleep-only commands AND `worker-cli wait` forms from foreground-forcing (that hook stays global — it only ever flips `run_in_background`, never the command text, so a worker's `sleep N` staying `sleep N` in the background is already harmless there). **Orchestrator-only (2026-08, live incident, `_in_worktree()`/`_WORKTREE_FRAGMENT`, same convention the removed `block_timer_*` hooks used):** skipped entirely when the hook's own cwd is inside a worktree — a worker's own background sleep (e.g. waiting on its own long test run) must never get promoted to `worker-cli wait`, since run from the worker's worktree cwd that command resolves the worktree path as the project, finds no workers there, and blocks up to the full default timeout; that stray wait becomes a live child under the worker's own `claude` process, which then makes the ORCHESTRATOR's own `worker-cli wait` see a live background task and refuse to finish too — one misfire cascading into two stuck waits. `_in_worktree()` fails open TOWARD "skip rewrite" on any `os.getcwd()` failure (deliberately the opposite fail-open direction from most hooks here — a missed rewrite for the orchestrator is harmless, rewriting a worker's sleep on an unreliable cwd read is the exact incident being prevented). Exits 0 in all cases (fail-open rewrite hook — never blocks).
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command, run_in_background}}`); `os.getcwd()` (worktree exemption).
 **Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when command is a sleep-only form; nothing on passthrough.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
 **Calls out:** stdlib only (`json`, `os`, `re`, `sys`).
 
 **Rewrite condition (ALL must hold):**
-1. `run_in_background == True`
-2. Command matches `_SLEEP_ONLY_BG`: `^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$`
+1. Hook cwd is NOT inside `.claude/worktrees/` — orchestrator-only guard
+2. `run_in_background == True`
+3. Command matches `_SLEEP_ONLY_BG`: `^\s*sleep\s+\d+(?:\.\d+)?\s*(?:&&\s*echo\b[^;&|\n]*)?\s*$`
 
 **Passthrough (no output):**
+- Hook cwd inside `.claude/worktrees/` — worker session, never rewritten regardless of command shape
 - `run_in_background=false` or field absent — foreground, any sleep form allowed
 - Any non-sleep-only command (including `worker-cli wait` itself, already canonical) — `_SLEEP_ONLY_BG` fails to match; `block_unauthorized_background.py` handles the allow/force decision for these
 - Parse errors (fail-open)
 
-**Smoke:** `dev/hook_smoke/test_rewrite_background_sleep.py` (11 cases: 6 positive rewrite incl. the old canonical target, 5 negative no-op incl. `worker-cli wait` passthrough).
+**Smoke:** `dev/hook_smoke/test_rewrite_background_sleep.py` (14 cases: 6 positive rewrite incl. the old canonical target, 5 negative no-op incl. `worker-cli wait` passthrough, 3 worktree-cwd no-op cases proving the orchestrator-only guard actually fires — cwd forced explicitly per case via `subprocess.run(..., cwd=...)`, both a plain non-worktree tempdir and a `.claude/worktrees/`-shaped one, since this suite's own on-disk path contains that fragment and would otherwise leak into every case's inherited cwd).
 
 ---
 

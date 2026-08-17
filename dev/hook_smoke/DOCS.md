@@ -230,21 +230,28 @@ python3 dev/hook_smoke/test_rewrite_websearch_scrape_noise.py
 
 ---
 
-### test_rewrite_background_sleep.py (134 LOC, Milestone 2 rewrite target change 2026-08)
+### test_rewrite_background_sleep.py (184 LOC, Milestone 2 rewrite target change 2026-08; orchestrator-only guard cases 2026-08 Milestone 3b)
 
-**Purpose:** 11-case smoke for `rewrite_background_sleep.py`. Verifies 6 positive-rewrite cases
+**Purpose:** 14-case smoke for `rewrite_background_sleep.py`. Verifies 6 positive-rewrite cases
 (`sleep 300`, `sleep 5`, `sleep 1200`, the OLD canonical `sleep 3300 && echo done` (now also a stale
 habit), bare `sleep 300` alone, `sleep 45 && echo "bg-ack-probe done"` custom echo — all rewritten to
-the new canonical `worker-cli wait`) and 5 negative no-op cases (foreground flag; `worker-cli wait`
+the new canonical `worker-cli wait`), 5 negative no-op cases (foreground flag; `worker-cli wait`
 bare already canonical; `worker-cli wait /path --timeout 600` already canonical; non-canonical
-non-sleep command; wrong chain target `&& rag-cli`).
+non-sleep command; wrong chain target `&& rag-cli`), and 3 negative worktree-cwd cases (bare
+`sleep 300`, old-canonical `sleep 3300 && echo done`, foreground sleep — all still no-op from a
+`.claude/worktrees/`-shaped cwd, proving the 2026-08 orchestrator-only guard fires). Every case's
+subprocess `cwd` is set EXPLICITLY (`subprocess.run(..., cwd=...)`) — a plain `tempfile.
+TemporaryDirectory()` for the 11 non-worktree cases, a `.../.claude/worktrees/fake-worker` path for
+the 3 worktree cases — never inherited: this suite's own on-disk path already contains the
+`.claude/worktrees/` fragment, so an inherited cwd would silently flip every non-worktree case to
+the wrong expectation when the suite is run from inside a worktree (as it normally is, in dev).
 
-**Usage (from project root):**
+**Usage (from project root, or any cwd — HOOK is resolved via an absolute path):**
 ```bash
 python3 dev/hook_smoke/test_rewrite_background_sleep.py
 ```
 
-**Expected output:** `All 11 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** `All 14 tests passed.` (exit 0).
 
 ---
 
