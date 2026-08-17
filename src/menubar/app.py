@@ -14,9 +14,9 @@ from Foundation import NSObject, NSOperationQueue
 
 # From discover.py: Live session discovery
 from .discover import list_alive_sessions
-# From bg_timer.py: Background sleep-timer scanning and abort
+# From bg_timer.py: orchestrator wake-up process (worker-cli wait + legacy sleep timer) scanning and abort
 from .bg_timer import _scan_bg_sleep_timers, _abort_bg_sleep_timers
-# From focus_controller.py: FocusController — auto-focus debounce + auto-abort idle-workers
+# From focus_controller.py: FocusController — auto-focus debounce
 from .focus_controller import FocusController
 # From hotkey_controller.py: HotkeyController + Carbon Cmd+L / Cmd+K registration
 from .hotkey_controller import HotkeyController, register_cmd_l, register_cmd_k
@@ -252,7 +252,7 @@ class CCMenuBarApp(rumps.App):
             sessions = []
         cwd_to_project = {s.cwd: s.project_name for s in sessions if not s.is_worker and s.cwd}
         bg_by_project = _scan_bg_sleep_timers(cwd_to_project)
-        self.focus.tick(sessions, bg_by_project, now)
+        self.focus.tick(sessions, now)
         self.queue.tick(sessions)
         self.rag.tick(sessions)
         if self.panel._panel_open:
