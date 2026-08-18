@@ -18,6 +18,14 @@ Covers, per the M2 spec:
     mock), asserting a single correctly-decoded character comes out (not N replacement chars),
     and that the full search-bar input path accumulates the real characters into the query
 
+(2026-08-18, sub-milestone 1 of the pane-search rollout) pane.py's search state is now ONE
+search_bar.SearchState instance (`_proxy_search`) instead of 8 separate flat globals — this
+file's state-pokes were mechanically updated to the new attribute path
+(`mod_pane._proxy_search_query` -> `mod_pane._proxy_search.query`, etc.); all function-call
+shapes (`_handle_proxy_search_input`, `_search_col_to_query_index`, `_render_proxy_search_bar`,
+`_KILL_LINE_CHAR`, ...) are UNCHANGED — pane.py keeps thin compat wrappers over search_bar.py's
+generic functions specifically so this suite (and any other caller) needed no other changes.
+
 Uses REAL render_turn.py / format.py / search.py / forwarded_parser.py / pane.py functions
 against synthetic data — not mocks. importlib.import_module used throughout (dev/ scripts may
 not use a literal 'from src.' import line).
@@ -106,11 +114,11 @@ def _reset_pane_state():
     mod_pane.proxy_line_map.clear()
     mod_pane.proxy_hover_row = None
     mod_pane.proxy_scroll_offset = 0
-    mod_pane._proxy_search_query = ''
-    mod_pane._proxy_search_focused = False
-    mod_pane._proxy_search_matches = []
-    mod_pane._proxy_search_match_set = set()
-    mod_pane._proxy_search_current_idx = 0
+    mod_pane._proxy_search.query = ''
+    mod_pane._proxy_search.focused = False
+    mod_pane._proxy_search.matches = []
+    mod_pane._proxy_search.match_set = set()
+    mod_pane._proxy_search.current_idx = 0
     mod_pane._proxy_just_expanded = None
     mod_pane._proxy_pane_width = PANE_WIDTH
 
@@ -124,8 +132,8 @@ def test_search_bar_renders_at_row1():
     output = mod_pane._build_proxy_output()
     first_line = output.splitlines()[0]
     check("empty query: 'search: _' pattern present", 'search:' in first_line)
-    mod_pane._proxy_search_query = 'foo'
-    mod_pane._proxy_search_focused = True
+    mod_pane._proxy_search.query = 'foo'
+    mod_pane._proxy_search.focused = True
     output2 = mod_pane._build_proxy_output()
     first_line2 = output2.splitlines()[0]
     check("populated query: query text 'foo' visible in row 1", 'foo' in first_line2)
@@ -150,10 +158,10 @@ def test_collapsed_hit_marks_req_row():
     mod_pane.proxy_entries.extend(entries)
     matches = mod_search.build_search_matches('unique_marker_2', mod_pane.proxy_entries, mod_pane.proxy_expand_states, PANE_WIDTH)
     check("exactly entry 2 matches 'unique_marker_2'", matches == [2])
-    mod_pane._proxy_search_query = 'unique_marker_2'
-    mod_pane._proxy_search_matches = matches
-    mod_pane._proxy_search_match_set = set(matches)
-    mod_pane._proxy_search_current_idx = 0
+    mod_pane._proxy_search.query = 'unique_marker_2'
+    mod_pane._proxy_search.matches = matches
+    mod_pane._proxy_search.match_set = set(matches)
+    mod_pane._proxy_search.current_idx = 0
     output = mod_pane._build_proxy_output()
     lines = output.splitlines()
     marked_lines = [l for l in lines if SEARCH_CURRENT_BG in l]
@@ -175,10 +183,10 @@ def test_expanded_hit_marks_line():
     entries = [_make_entry(i) for i in range(4)]
     mod_pane.proxy_entries.extend(entries)
     matches = mod_search.build_search_matches('unique_marker_2', mod_pane.proxy_entries, mod_pane.proxy_expand_states, PANE_WIDTH)
-    mod_pane._proxy_search_query = 'unique_marker_2'
-    mod_pane._proxy_search_matches = matches
-    mod_pane._proxy_search_match_set = set(matches)
-    mod_pane._proxy_search_current_idx = 0
+    mod_pane._proxy_search.query = 'unique_marker_2'
+    mod_pane._proxy_search.matches = matches
+    mod_pane._proxy_search.match_set = set(matches)
+    mod_pane._proxy_search.current_idx = 0
     mod_pane.proxy_expand_states[('req', 2)] = True
     output = mod_pane._build_proxy_output()
     marked_lines = [l for l in output.splitlines() if SEARCH_CURRENT_BG in l]
@@ -226,19 +234,19 @@ def test_n_N_ordering():
     print("\n[n/N ordering] Jump forward/backward wraps around the match list")
     _reset_pane_state()
     mod_pane.proxy_entries.extend(_make_entry(i) for i in range(6))
-    mod_pane._proxy_search_matches = [1, 3, 5]
-    mod_pane._proxy_search_match_set = {1, 3, 5}
-    mod_pane._proxy_search_current_idx = 0
+    mod_pane._proxy_search.matches = [1, 3, 5]
+    mod_pane._proxy_search.match_set = {1, 3, 5}
+    mod_pane._proxy_search.current_idx = 0
     mod_pane._jump_search_match(forward=True)
-    check("n: 0 -> 1", mod_pane._proxy_search_current_idx == 1)
+    check("n: 0 -> 1", mod_pane._proxy_search.current_idx == 1)
     mod_pane._jump_search_match(forward=True)
-    check("n: 1 -> 2", mod_pane._proxy_search_current_idx == 2)
+    check("n: 1 -> 2", mod_pane._proxy_search.current_idx == 2)
     mod_pane._jump_search_match(forward=True)
-    check("n wraps: 2 -> 0", mod_pane._proxy_search_current_idx == 0)
+    check("n wraps: 2 -> 0", mod_pane._proxy_search.current_idx == 0)
     mod_pane._jump_search_match(forward=False)
-    check("N wraps backward: 0 -> 2", mod_pane._proxy_search_current_idx == 2)
-    mod_pane._proxy_search_matches = []
-    mod_pane._proxy_search_match_set = set()
+    check("N wraps backward: 0 -> 2", mod_pane._proxy_search.current_idx == 2)
+    mod_pane._proxy_search.matches = []
+    mod_pane._proxy_search.match_set = set()
     check("n/N no-op with zero matches", mod_pane._jump_search_match(forward=True) is False)
 
 
@@ -246,15 +254,15 @@ def test_esc_clears_query_bar_stays():
     print("\n[Esc] Clears query + matches; bar remains a permanent row")
     _reset_pane_state()
     mod_pane.proxy_entries.extend(_make_entry(i) for i in range(2))
-    mod_pane._proxy_search_query = 'unique_marker_1'
-    mod_pane._proxy_search_focused = True
-    mod_pane._proxy_search_matches = [1]
-    mod_pane._proxy_search_match_set = {1}
+    mod_pane._proxy_search.query = 'unique_marker_1'
+    mod_pane._proxy_search.focused = True
+    mod_pane._proxy_search.matches = [1]
+    mod_pane._proxy_search.match_set = {1}
     result = mod_pane._handle_proxy_search_cancel()
     check("cancel returns True (always redraws)", result is True)
-    check("query cleared", mod_pane._proxy_search_query == '')
-    check("focused cleared", mod_pane._proxy_search_focused is False)
-    check("matches cleared", mod_pane._proxy_search_matches == [] and mod_pane._proxy_search_match_set == set())
+    check("query cleared", mod_pane._proxy_search.query == '')
+    check("focused cleared", mod_pane._proxy_search.focused is False)
+    check("matches cleared", mod_pane._proxy_search.matches == [] and mod_pane._proxy_search.match_set == set())
     output = mod_pane._build_proxy_output()
     check("bar still rendered at row 1 after Esc (permanent, not hidden)", 'search:' in output.splitlines()[0])
 
@@ -265,9 +273,9 @@ def test_scroll_jump_clamps():
     # Many entries so total_lines exceeds a small terminal height, forcing real scrolling
     entries = [_make_entry(i) for i in range(40)]
     mod_pane.proxy_entries.extend(entries)
-    mod_pane._proxy_search_matches = [2]  # near the TOP of the (chronological) list
-    mod_pane._proxy_search_match_set = {2}
-    mod_pane._proxy_search_current_idx = 0
+    mod_pane._proxy_search.matches = [2]  # near the TOP of the (chronological) list
+    mod_pane._proxy_search.match_set = {2}
+    mod_pane._proxy_search.current_idx = 0
     orig_terminal_size = os.get_terminal_size
     os.get_terminal_size = lambda: os.terminal_size((30, 30))
     try:
@@ -391,14 +399,14 @@ def test_utf8_search_query_accumulation():
           "input path (_handle_proxy_search_input) accumulate the real characters")
     _reset_pane_state()
     mod_pane.proxy_entries.extend(_make_entry(i) for i in range(2))
-    mod_pane._proxy_search_focused = True
+    mod_pane._proxy_search.focused = True
     for byte_seq in [b'f', b'o', b'o', ' '.encode(), '—'.encode('utf-8'), b'b', 'ä'.encode('utf-8'), '😀'.encode('utf-8')]:
         ch = _read_keypress_from_bytes(byte_seq)
         mod_pane._handle_proxy_search_input(ch)
     check("query accumulates real multi-byte characters, not replacement chars",
-          mod_pane._proxy_search_query == 'foo —bä😀')
+          mod_pane._proxy_search.query == 'foo —bä😀')
     check("no U+FFFD replacement character leaked into the query",
-          '�' not in mod_pane._proxy_search_query)
+          '�' not in mod_pane._proxy_search.query)
 
 
 def test_kill_line_after_a_real_search_run():
@@ -408,16 +416,16 @@ def test_kill_line_after_a_real_search_run():
     _reset_pane_state()
     entries = [_make_entry(i) for i in range(3)]
     mod_pane.proxy_entries.extend(entries)
-    mod_pane._proxy_search_query = 'unique_marker_1'
-    mod_pane._proxy_search_focused = True
+    mod_pane._proxy_search.query = 'unique_marker_1'
+    mod_pane._proxy_search.focused = True
     mod_pane._handle_proxy_search_input('\r')  # Enter -> real _run_proxy_search via the real path
-    check("real search run found the match", mod_pane._proxy_search_matches == [1])
-    mod_pane._proxy_search_focused = True
+    check("real search run found the match", mod_pane._proxy_search.matches == [1])
+    mod_pane._proxy_search.focused = True
     changed = mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
     check("kill-line reports a change", changed)
-    check("query fully emptied", mod_pane._proxy_search_query == '')
+    check("query fully emptied", mod_pane._proxy_search.query == '')
     check("matches from the prior real search run are UNCHANGED (stale until next Enter)",
-          mod_pane._proxy_search_matches == [1])
+          mod_pane._proxy_search.matches == [1])
 
 
 # ORCHESTRATOR

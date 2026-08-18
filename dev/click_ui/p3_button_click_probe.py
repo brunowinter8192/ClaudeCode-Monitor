@@ -201,10 +201,10 @@ def test_proxy_pane_permanent_search_bar_header():
     mod_proxy.proxy_scroll_offset = 0
     mod_proxy._proxy_undo_stack.clear()
     mod_proxy._copy_feedback_until.clear()
-    mod_proxy._proxy_search_query = ''
-    mod_proxy._proxy_search_focused = False
-    mod_proxy._proxy_search_matches = []
-    mod_proxy._proxy_search_match_set = set()
+    mod_proxy._proxy_search.query = ''
+    mod_proxy._proxy_search.focused = False
+    mod_proxy._proxy_search.matches = []
+    mod_proxy._proxy_search.match_set = set()
     mod_proxy.proxy_entries.extend(_make_proxy_entry(i) for i in range(3))
 
     output = mod_proxy._build_proxy_output()
@@ -224,11 +224,11 @@ def test_proxy_pane_permanent_search_bar_header():
           key_row2 is not None and ((isinstance(key_row2, tuple) and key_row2[0] == 'req') or isinstance(key_row2, int)))
 
     # Click on row 1 focuses the search bar, does NOT toggle any expand state
-    mod_proxy._proxy_search_focused = False
+    mod_proxy._proxy_search.focused = False
     focus_click_changed = mod_proxy._handle_proxy_mouse(0, 5, 1)
     check("proxy: click on row 1 focuses the search bar",
-          focus_click_changed and mod_proxy._proxy_search_focused is True)
-    mod_proxy._proxy_search_focused = False
+          focus_click_changed and mod_proxy._proxy_search.focused is True)
+    mod_proxy._proxy_search.focused = False
 
     # Expand/collapse click still works, at the SHIFTED row (row 2, not row 1)
     pre_expand = mod_proxy.proxy_expand_states.get(key_row2, False)

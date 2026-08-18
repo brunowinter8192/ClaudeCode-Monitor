@@ -16,6 +16,16 @@ Covers, per the milestone spec:
     selection's highlight
   - a drag that starts on a BODY row (not row 1) never arms search-bar dragging — button-32
     motion after a body-row press falls through to the unchanged generic hover bucket
+  - editor-style deletion: Backspace with an active selection deletes it; kill-line (Cmd+Backspace
+    hypothesis) empties the whole query; neither clears _proxy_search.matches
+
+(2026-08-18, sub-milestone 1 of the pane-search rollout) pane.py's search state is now ONE
+search_bar.SearchState instance (`_proxy_search`) instead of 8 separate flat globals — this
+file's state-pokes were mechanically updated to the new attribute path
+(`mod_pane._proxy_search_dragging` -> `mod_pane._proxy_search.dragging`, etc.); all function-call
+shapes (`_handle_proxy_mouse`, `_search_col_to_query_index`, `_render_proxy_search_bar`,
+`_KILL_LINE_CHAR`, ...) are UNCHANGED — pane.py keeps thin compat wrappers over search_bar.py's
+generic functions specifically so this suite needed no other changes.
 
 Uses REAL src.proxy_display.pane functions against direct (button, col, row) calls — not a
 mock of the mouse-event layer itself (read_mouse_event's own SGR parsing is unchanged and out
@@ -56,11 +66,11 @@ def _reset_state(query: str = ''):
     mod_pane.proxy_entries.clear()
     mod_pane.proxy_expand_states.clear()
     mod_pane.proxy_line_map.clear()
-    mod_pane._proxy_search_query = query
-    mod_pane._proxy_search_focused = False
-    mod_pane._proxy_search_dragging = False
-    mod_pane._proxy_search_sel_anchor = None
-    mod_pane._proxy_search_sel_end = None
+    mod_pane._proxy_search.query = query
+    mod_pane._proxy_search.focused = False
+    mod_pane._proxy_search.dragging = False
+    mod_pane._proxy_search.sel_anchor = None
+    mod_pane._proxy_search.sel_end = None
     mod_pane._proxy_pane_width = PANE_WIDTH
     mod_pane._proxy_undo_stack.clear()
     mod_pane._proxy_just_expanded = None
@@ -114,21 +124,21 @@ def test_drag_select_copies_to_clipboard():
         label_w = len(mod_pane._SEARCH_BAR_LABEL)
         press_changed = mod_pane._handle_proxy_mouse(0, label_w + 2, 1)  # anchor at index1 ('e')
         check("press returns True (redraw)", press_changed)
-        check("press focuses the bar (existing behavior preserved)", mod_pane._proxy_search_focused is True)
-        check("press arms dragging", mod_pane._proxy_search_dragging is True)
+        check("press focuses the bar (existing behavior preserved)", mod_pane._proxy_search.focused is True)
+        check("press arms dragging", mod_pane._proxy_search.dragging is True)
         check("press sets anchor==end (empty range until motion)",
-              mod_pane._proxy_search_sel_anchor == mod_pane._proxy_search_sel_end == 1)
+              mod_pane._proxy_search.sel_anchor == mod_pane._proxy_search.sel_end == 1)
         motion_changed = mod_pane._handle_proxy_mouse(32, label_w + 7, 1)  # extend to index6 ('w')
         check("motion returns True (redraw)", motion_changed)
         check("motion extends sel_end only, anchor unchanged",
-              mod_pane._proxy_search_sel_anchor == 1 and mod_pane._proxy_search_sel_end == 6)
+              mod_pane._proxy_search.sel_anchor == 1 and mod_pane._proxy_search.sel_end == 6)
         release_changed = mod_pane._handle_proxy_search_release()
         check("release returns True (redraw)", release_changed)
-        check("release disarms dragging", mod_pane._proxy_search_dragging is False)
+        check("release disarms dragging", mod_pane._proxy_search.dragging is False)
         check("release copies exactly the selected substring",
               captured == ['ello '])
         check("release KEEPS the selection range visible (finished, not cleared)",
-              mod_pane._proxy_search_sel_anchor == 1 and mod_pane._proxy_search_sel_end == 6)
+              mod_pane._proxy_search.sel_anchor == 1 and mod_pane._proxy_search.sel_end == 6)
     finally:
         mod_pane.copy_to_clipboard = orig
 
@@ -144,8 +154,8 @@ def test_plain_click_no_motion_no_clipboard():
         check("release still returns True (state changed: dragging disarmed)", release_changed)
         check("NO clipboard call on a plain click (never clobber the real clipboard)", captured == [])
         check("selection state fully cleared after a plain click",
-              mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
-        check("focus is still set (existing behavior)", mod_pane._proxy_search_focused is True)
+              mod_pane._proxy_search.sel_anchor is None and mod_pane._proxy_search.sel_end is None)
+        check("focus is still set (existing behavior)", mod_pane._proxy_search.focused is True)
     finally:
         mod_pane.copy_to_clipboard = orig
 
@@ -167,12 +177,12 @@ def test_body_row_drag_never_arms_search_selection():
     _reset_state('hello world')
     mod_pane.proxy_line_map[2] = ('req', 0)
     press_changed = mod_pane._handle_proxy_mouse(0, 5, 2)  # press on a body row, not row 1
-    check("body-row press does not arm dragging", mod_pane._proxy_search_dragging is False)
+    check("body-row press does not arm dragging", mod_pane._proxy_search.dragging is False)
     motion_changed = mod_pane._handle_proxy_mouse(32, 40, 2)  # motion after a body-row press
     check("motion after a body-row press falls through to generic hover (proxy_hover_row set)",
           mod_pane.proxy_hover_row == 2)
     check("search selection untouched by a body-row drag",
-          mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
+          mod_pane._proxy_search.sel_anchor is None and mod_pane._proxy_search.sel_end is None)
 
 
 def test_click_elsewhere_clears_selection():
@@ -183,12 +193,12 @@ def test_click_elsewhere_clears_selection():
     mod_pane._handle_proxy_mouse(32, label_w + 5, 1)
     mod_pane._handle_proxy_search_release()
     check("selection exists before the elsewhere-click",
-          mod_pane._proxy_search_sel_anchor is not None)
+          mod_pane._proxy_search.sel_anchor is not None)
     mod_pane.proxy_line_map[2] = ('req', 0)
     changed = mod_pane._handle_proxy_mouse(0, 5, 2)
     check("elsewhere-click reports a change (selection cleared)", changed)
     check("selection cleared after clicking elsewhere",
-          mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
+          mod_pane._proxy_search.sel_anchor is None and mod_pane._proxy_search.sel_end is None)
 
 
 def test_new_input_clears_selection():
@@ -198,13 +208,13 @@ def test_new_input_clears_selection():
     mod_pane._handle_proxy_mouse(0, label_w + 1, 1)
     mod_pane._handle_proxy_mouse(32, label_w + 5, 1)
     mod_pane._handle_proxy_search_release()
-    check("selection exists before typing", mod_pane._proxy_search_sel_anchor is not None)
+    check("selection exists before typing", mod_pane._proxy_search.sel_anchor is not None)
     changed = mod_pane._handle_proxy_search_input('x')
     check("typing reports a change", changed)
     check("selection cleared after typing",
-          mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
+          mod_pane._proxy_search.sel_anchor is None and mod_pane._proxy_search.sel_end is None)
     check("query still gets the typed char appended (typing keeps operating at the end)",
-          mod_pane._proxy_search_query == 'hello worldx')
+          mod_pane._proxy_search.query == 'hello worldx')
 
 
 def test_backspace_deletes_active_selection():
@@ -216,24 +226,24 @@ def test_backspace_deletes_active_selection():
     mod_pane._handle_proxy_mouse(32, label_w + 7, 1)  # extend to index6 ('w') -> selects 'ello '
     mod_pane._handle_proxy_search_release()
     check("selection is 'ello ' before backspace",
-          mod_pane._proxy_search_query[mod_pane._proxy_search_sel_anchor:mod_pane._proxy_search_sel_end] == 'ello ')
+          mod_pane._proxy_search.query[mod_pane._proxy_search.sel_anchor:mod_pane._proxy_search.sel_end] == 'ello ')
     changed = mod_pane._handle_proxy_search_input('\x7f')
     check("backspace reports a change", changed)
     check("query has the SELECTED substring removed (not just the last char)",
-          mod_pane._proxy_search_query == 'hworld')
+          mod_pane._proxy_search.query == 'hworld')
     check("selection cleared after selection-delete",
-          mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
+          mod_pane._proxy_search.sel_anchor is None and mod_pane._proxy_search.sel_end is None)
 
 
 def test_backspace_without_selection_still_trims_last_char():
     print("\n[editor-style delete] Backspace with NO active selection still trims the last "
           "char — the pre-existing single-char behavior is unaffected")
     _reset_state('hello')
-    check("no selection active", mod_pane._proxy_search_sel_anchor is None)
+    check("no selection active", mod_pane._proxy_search.sel_anchor is None)
     changed = mod_pane._handle_proxy_search_input('\x7f')
     check("backspace reports a change", changed)
     check("last char trimmed (regression: unchanged pre-existing behavior)",
-          mod_pane._proxy_search_query == 'hell')
+          mod_pane._proxy_search.query == 'hell')
 
 
 def test_kill_line_empties_query():
@@ -242,7 +252,7 @@ def test_kill_line_empties_query():
     _reset_state('some fairly long search query text')
     changed = mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
     check("kill-line reports a change", changed)
-    check("query fully emptied", mod_pane._proxy_search_query == '')
+    check("query fully emptied", mod_pane._proxy_search.query == '')
 
 
 def test_kill_line_ignores_active_selection():
@@ -253,10 +263,10 @@ def test_kill_line_ignores_active_selection():
     mod_pane._handle_proxy_mouse(0, label_w + 2, 1)
     mod_pane._handle_proxy_mouse(32, label_w + 7, 1)
     mod_pane._handle_proxy_search_release()
-    check("selection is active before kill-line", mod_pane._proxy_search_sel_anchor is not None)
+    check("selection is active before kill-line", mod_pane._proxy_search.sel_anchor is not None)
     mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
-    check("query fully emptied (not just the selected substring)", mod_pane._proxy_search_query == '')
-    check("selection also cleared", mod_pane._proxy_search_sel_anchor is None)
+    check("query fully emptied (not just the selected substring)", mod_pane._proxy_search.query == '')
+    check("selection also cleared", mod_pane._proxy_search.sel_anchor is None)
 
 
 def test_kill_line_not_silently_swallowed_by_isprintable_fallthrough():
@@ -266,42 +276,42 @@ def test_kill_line_not_silently_swallowed_by_isprintable_fallthrough():
           mod_pane._KILL_LINE_CHAR.isprintable() is False)
     _reset_state('should be wiped')
     mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
-    check("query was actually cleared, not silently ignored", mod_pane._proxy_search_query == '')
+    check("query was actually cleared, not silently ignored", mod_pane._proxy_search.query == '')
 
 
 def test_editing_never_clears_matches():
     print("\n[matches] Editing (any form: plain backspace, selection-delete, kill-line) never "
-          "clears _proxy_search_matches — Enter remains the sole recompute trigger (confirmed: "
+          "clears _proxy_search.matches — Enter remains the sole recompute trigger (confirmed: "
           "neither did the pre-existing plain-backspace/typing path)")
     _reset_state('foo')
-    mod_pane._proxy_search_matches = [1, 2, 3]
-    mod_pane._proxy_search_match_set = {1, 2, 3}
+    mod_pane._proxy_search.matches = [1, 2, 3]
+    mod_pane._proxy_search.match_set = {1, 2, 3}
     mod_pane._handle_proxy_search_input('\x7f')
-    check("matches survive plain backspace", mod_pane._proxy_search_matches == [1, 2, 3])
-    mod_pane._proxy_search_query = 'bar'
+    check("matches survive plain backspace", mod_pane._proxy_search.matches == [1, 2, 3])
+    mod_pane._proxy_search.query = 'bar'
     label_w = len(mod_pane._SEARCH_BAR_LABEL)
     mod_pane._handle_proxy_mouse(0, label_w + 1, 1)
     mod_pane._handle_proxy_mouse(32, label_w + 3, 1)
     mod_pane._handle_proxy_search_release()
     mod_pane._handle_proxy_search_input('\x7f')
-    check("matches survive selection-delete backspace", mod_pane._proxy_search_matches == [1, 2, 3])
+    check("matches survive selection-delete backspace", mod_pane._proxy_search.matches == [1, 2, 3])
     mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
-    check("matches survive kill-line", mod_pane._proxy_search_matches == [1, 2, 3])
+    check("matches survive kill-line", mod_pane._proxy_search.matches == [1, 2, 3])
 
 
 def test_esc_cancel_clears_selection():
     print("\n[clear] Esc-cancel clears a live drag-selection (alongside the query)")
     _reset_state('hello world')
-    mod_pane._proxy_search_focused = True
+    mod_pane._proxy_search.focused = True
     label_w = len(mod_pane._SEARCH_BAR_LABEL)
     mod_pane._handle_proxy_mouse(0, label_w + 1, 1)
     mod_pane._handle_proxy_mouse(32, label_w + 5, 1)
     mod_pane._handle_proxy_search_release()
-    check("selection exists before Esc", mod_pane._proxy_search_sel_anchor is not None)
+    check("selection exists before Esc", mod_pane._proxy_search.sel_anchor is not None)
     mod_pane._handle_proxy_search_cancel()
     check("selection cleared after Esc",
-          mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
-    check("query also cleared (existing Esc behavior)", mod_pane._proxy_search_query == '')
+          mod_pane._proxy_search.sel_anchor is None and mod_pane._proxy_search.sel_end is None)
+    check("query also cleared (existing Esc behavior)", mod_pane._proxy_search.query == '')
 
 
 def test_render_reverse_video_bracket():
@@ -330,7 +340,7 @@ def test_session_change_clears_selection():
     mod_pane._handle_proxy_mouse(0, label_w + 1, 1)
     mod_pane._handle_proxy_mouse(32, label_w + 5, 1)
     mod_pane._handle_proxy_search_release()
-    check("selection exists before session change", mod_pane._proxy_search_sel_anchor is not None)
+    check("selection exists before session change", mod_pane._proxy_search.sel_anchor is not None)
 
     class _FakeMonitor:
         active_project_filter = None  # keeps parse_proxy_log_forwarded/find_proxy_log_path as safe no-ops
@@ -344,7 +354,7 @@ def test_session_change_clears_selection():
     mod_pane._proxy_current_main_session = None  # force the session-change branch to fire
     mod_pane._refresh_proxy_data(0.0, False, -9999.0, _FakeMonitor())
     check("selection cleared on session change",
-          mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
+          mod_pane._proxy_search.sel_anchor is None and mod_pane._proxy_search.sel_end is None)
 
 
 # ORCHESTRATOR
