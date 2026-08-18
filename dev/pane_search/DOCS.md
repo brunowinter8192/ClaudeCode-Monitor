@@ -2,15 +2,18 @@
 
 ## Purpose
 
-Feasibility measurement + regression coverage for the proxy-pane search feature
-(`src/proxy_display/`, main pane only — `pane.py`, `format.py`, `render_turn.py`,
-`forwarded_parser.py`, `search.py`). Milestone 1 (`p1_*`) probed the cost of candidate message-
-reconstruction strategies on real forwarded-delta logs — measurement only, no feature code.
-Milestone 2 (`p2_*`) is the regression suite for the implemented feature: permanent row-1
-search bar, one-sweep reconstruction, real-render-based matching, the `flow_id`-based
-`_lazy_load_messages_forwarded` fix found during M2 investigation, and (follow-up) the UTF-8
-multi-byte keypress fix in `input.click_handler.read_keypress`. Milestone 3 (`p3_*`) is
-drag-to-select on the search bar (press-anchors, motion-extends, release-copies-to-clipboard).
+Feasibility measurement + regression coverage for the pane-search rollout. `p1`-`p3` cover the
+PROXY pane's search feature (`src/proxy_display/` — `pane.py`, `format.py`, `render_turn.py`,
+`forwarded_parser.py`, `search.py`), the rollout's reference implementation. Milestone 1 (`p1_*`)
+probed the cost of candidate message-reconstruction strategies on real forwarded-delta logs —
+measurement only, no feature code. Milestone 2 (`p2_*`) is the regression suite for the
+implemented feature: permanent row-1 search bar, one-sweep reconstruction, real-render-based
+matching, the `flow_id`-based `_lazy_load_messages_forwarded` fix found during M2 investigation,
+and (follow-up) the UTF-8 multi-byte keypress fix in `input.click_handler.read_keypress`.
+Milestone 3 (`p3_*`) is drag-to-select on the search bar (press-anchors, motion-extends,
+release-copies-to-clipboard). `p4_*` (rollout sub-milestone 2) covers the MAIN pane
+(`src/core/monitor.py`, `core/monitor_display.py`) reaching full parity with the proxy-pane
+reference — consuming `src/search_bar.py`'s shared mechanics instead of duplicating them.
 See `process-docs/pane_search/` for the investigation trail.
 
 ## Scripts
@@ -192,3 +195,45 @@ change to `pane.py`'s `_search_col_to_query_index`, `_handle_proxy_mouse` (press
 branches), `_handle_proxy_search_release`, `_clear_proxy_search_selection`, or
 `_render_proxy_search_bar`.
 **Calls out:** `src.proxy_display.pane` — loaded via `importlib.import_module`.
+
+---
+
+### p4_main_pane_parity_test.py (441 LOC)
+
+**Purpose:** Regression guard for the MAIN pane (`src/core/monitor.py`, `core/monitor_display.py`)
+reaching full parity with the proxy pane's reference search-bar implementation (rollout
+sub-milestone 2). Covers: `_main_search` is one `search_bar.SearchState` (the 8 pre-migration
+flat globals, including the dead `_search_committed` flag and the `_search_cached_query`
+unchanged-query Enter-gate, are gone); the private `_highlight_query_in_line` duplicate is
+deleted in favor of `utils.highlight_query_in_line`; the rendered bar has NO click-arrows
+(`[←]`/`[→]`, replaced by `n`/`N` keys) and NO `HOVER_BG` row baseline; drag-to-select
+press→motion→release copies the exact selected substring (a plain click makes zero clipboard
+calls); editor-style deletion (selection-delete Backspace, plain Backspace, kill-line via
+`search_bar.KILL_LINE_CHAR`); editing never clears `_main_search.matches` (Enter is the sole
+recompute trigger); **Enter ALWAYS re-runs the full match rebuild, NOT gated on query-unchanged**
+— a deliberate correction FROM the pre-migration main pane's own gating behavior, aligning to the
+proxy pane's convention (a repeated Enter with the same query picks up events appended to
+`main_event_buffer` since the last search — asserted directly by appending a new event between
+two same-query Enters and checking the match count grows); `n`/`N` wrap both directions and
+no-op with zero matches; Esc clears query/matches/selection but the bar itself is never hidden;
+the search highlight wraps only the literal matched substring (browser-find style) via
+`utils.highlight_query_in_line`, verified through a real `render_main_buffer` call, not a whole-row
+prefix.
+
+`/` focusing the bar (new for this milestone, mirrors proxy) is a one-line dispatch inside
+`run_main_loop`'s own while-loop — like every other pane's inline hotkey routing (proxy's `/`
+and `n`/`N`, `u` for undo), it is NOT unit-tested at the loop level here; this suite tests the
+extracted handler functions (`_jump_search_match`, `_handle_main_search_input`, etc.) directly,
+consistent with how `p2`/`p3` never test `run_proxy_loop`'s own while-loop dispatch either.
+
+**Usage (from project root):**
+```bash
+./venv/bin/python dev/pane_search/p4_main_pane_parity_test.py
+```
+
+**Output:** PASS/FAIL per check to stdout; writes `dev/pane_search/md/p4_main_pane_parity_test_<timestamp>.md`; exits 1 if any check fails.
+
+**Reads:** nothing external — seeds `src.core.monitor_display.main_event_buffer` with synthetic `system_message` events directly (uncolored body text, a clean surface for asserting the highlight wraps exactly the matched substring).
+**Writes:** `dev/pane_search/md/p4_main_pane_parity_test_<timestamp>.md`.
+**Called by:** run manually — regression guard for the main pane's search bar; re-run after any change to `core/monitor.py`'s search/mouse handlers, `core/monitor_display.py`'s `_main_search`/`render_main_buffer`/`_render_search_bar`, or `src/search_bar.py`.
+**Calls out:** `src.core.monitor`, `src.core.monitor_display`, `src.search_bar`, `src.constants` — loaded via `importlib.import_module`.

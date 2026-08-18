@@ -27,6 +27,10 @@ from ..input.click_handler import (
     enable_mouse, disable_mouse, read_mouse_event,
     resolve_parent_key, copy_to_clipboard,
 )
+# From search_bar.py: shared search-bar mechanics (state, key/mouse handling, drag-select) —
+# rollout sub-milestone 2, retrofitting the main pane onto the proxy pane's reference
+# implementation (src/proxy_display/pane.py)
+from .. import search_bar
 
 file_positions: Dict[Path, int] = {}
 tool_use_caches: Dict[Path, dict] = {}
@@ -158,13 +162,21 @@ def run_main_loop() -> None:
                         if event is not None and event[0] != -1:
                             if _handle_main_mouse(*event):
                                 input_changed = True
-                        elif event is not None:  # (-1,-1,-1) sentinel → release, ignore
-                            pass
-                        elif _md._search_focused:  # bare ESC → cancel search
+                        elif event is not None:
+                            # (-1,-1,-1) release sentinel — no-op unless a row-1 drag was active
+                            if _handle_main_search_release():
+                                input_changed = True
+                        elif _md._main_search.focused:  # bare ESC → cancel search
                             if _handle_main_search_cancel():
                                 input_changed = True
-                    elif _md._search_focused:
+                    elif _md._main_search.focused:
                         if _handle_main_search_input(char):
+                            input_changed = True
+                    elif char == '/':
+                        _md._main_search.focused = True
+                        input_changed = True
+                    elif char in ('n', 'N'):
+                        if _jump_search_match(forward=(char == 'n')):
                             input_changed = True
                     elif char == 'y':
                         key = resolve_parent_key(_md.main_line_map, _md.main_hover_row)
@@ -209,78 +221,71 @@ def _main_ram_state() -> list:
 def _handle_main_mouse(button: int, col: int, row: int) -> bool:
     pw = _md._main_pane_width
     if button == 0:  # left click
-        if row == 1:  # search bar row
-            if col >= pw - 2:  # [→] next match
-                if _md._search_matches:
-                    _md._search_current_idx = (_md._search_current_idx + 1) % len(_md._search_matches)
-                    _md.ensure_match_visible()
-                    return True
-            elif col >= pw - 6:  # [←] prev match
-                if _md._search_matches:
-                    _md._search_current_idx = (_md._search_current_idx - 1) % len(_md._search_matches)
-                    _md.ensure_match_visible()
-                    return True
-            else:  # search text area → focus
-                _md._search_focused = True
-                return True
-        else:  # buffer area (row >= 2) — always check copy
-            entry = _md._main_copy_rows.get(row)
-            if entry is not None and col >= pw - 2:
-                event_idx, part = entry
-                copy_to_clipboard(_md.serialize_main_event(event_idx, part))
-                _md._main_copy_feedback_until[(event_idx, part)] = time.time() + 1.5
-                return True
+        if row == 1:  # search bar row — focuses; also anchors a potential drag-select
+            return search_bar.handle_search_mouse_press(_md._main_search, col, _md._SEARCH_BAR_LABEL)
+        # Click elsewhere clears any lingering drag-selection highlight (before the copy check
+        # below, so even a click on an empty/unmapped row clears it)
+        had_selection = _md._main_search.sel_anchor is not None
+        search_bar.clear_selection(_md._main_search)
+        entry = _md._main_copy_rows.get(row)
+        if entry is not None and col >= pw - 2:
+            event_idx, part = entry
+            copy_to_clipboard(_md.serialize_main_event(event_idx, part))
+            _md._main_copy_feedback_until[(event_idx, part)] = time.time() + 1.5
+            return True
+        return had_selection
     elif button == 64:  # WheelUp → older events
         _md.main_scroll_offset = max(0, _md.main_scroll_offset + 3)
         return True
     elif button == 65:  # WheelDown → newer events
         _md.main_scroll_offset = max(0, _md.main_scroll_offset - 3)
         return True
+    elif button == 32 and _md._main_search.dragging:  # motion with left button held (0+32), row-1 drag active
+        return search_bar.handle_search_mouse_motion(_md._main_search, col, _md._SEARCH_BAR_LABEL)
     elif button >= 32:  # motion/hover
         _md.main_hover_row = row
         return True
     return False
 
-# Cancel active search on bare ESC; returns True (always triggers redraw).
+# Cancel active search on bare ESC; returns True (always triggers redraw). Thin wrapper —
+# search_bar.handle_search_cancel resets query/focused/matches/match_set/selection all at once;
+# the extra main-pane-specific _search_match_line_offsets is cleared here too.
 def _handle_main_search_cancel() -> bool:
-    _md._search_focused = False
-    _md._search_query = ''
-    _md._search_committed = False
-    _md._search_matches = []
-    _md._search_match_set = set()
     _md._search_match_line_offsets = {}
+    return search_bar.handle_search_cancel(_md._main_search)
+
+# Handle keyboard input while search is focused; returns True if input_changed. Thin wrapper
+# over search_bar.handle_search_input — _main_search_on_commit is the pane-specific "run the
+# actual search" callback, injected so the shared module stays data-model-agnostic.
+def _handle_main_search_input(char: str) -> bool:
+    return search_bar.handle_search_input(_md._main_search, char, on_commit=_main_search_on_commit)
+
+# on_commit callback for search_bar.handle_search_input (fires on Enter): always re-runs the
+# full match rebuild (proxy's convention — a repeated Enter picks up events appended to
+# main_event_buffer since the last search; the recompute over the in-memory buffer is cheap),
+# then jumps to the first match if any.
+def _main_search_on_commit(state: search_bar.SearchState) -> None:
+    state.matches, state.match_set = _md._compute_search_matches(state.query)
+    state.current_idx = 0
+    _md._search_match_line_offsets = _md._compute_match_line_offsets(state.query, state.matches)
+    _md.ensure_match_visible()
+
+# Jump to the next (forward=True) or previous search match, wrapping around; returns True if
+# a jump happened (False when there are no matches, e.g. before the first Enter)
+def _jump_search_match(forward: bool) -> bool:
+    state = _md._main_search
+    if not state.matches:
+        return False
+    state.current_idx = (state.current_idx + (1 if forward else -1)) % len(state.matches)
+    _md.ensure_match_visible()
     return True
 
-# Handle keyboard input while search is focused; returns True if input_changed.
-def _handle_main_search_input(char: str) -> bool:
-    if char in ('\x7f', '\x08'):  # backspace (DEL or BS)
-        _md._search_query = _md._search_query[:-1]
-        _md._search_committed = False
-        _md._search_matches = []
-        _md._search_match_set = set()
-        _md._search_match_line_offsets = {}
-        return True
-    if char in ('\r', '\n'):  # enter → commit search, unfocus
-        if _md._search_query != _md._search_cached_query:
-            _md._search_matches, _md._search_match_set = _md._compute_search_matches(_md._search_query)
-            _md._search_cached_query = _md._search_query
-            _md._search_current_idx = 0
-        _md._search_match_line_offsets = _md._compute_match_line_offsets(
-            _md._search_query, _md._search_matches
-        )
-        _md._search_committed = True
-        _md._search_focused = False
-        _md.ensure_match_visible()
-        return True
-    if char.isprintable():
-        if len(_md._search_query) < 200:
-            _md._search_query += char
-            _md._search_committed = False
-            _md._search_matches = []
-            _md._search_match_set = set()
-            _md._search_match_line_offsets = {}
-            return True
-    return False
+# Finalize a row-1 drag on SGR mouse release; returns True if a redraw is needed. No-op (False)
+# unless a row-1 drag was actually in progress — safe to call unconditionally on EVERY release
+# sentinel, including releases after a plain click elsewhere (never armed). Thin wrapper —
+# release-copies-to-clipboard is identical across every pane.
+def _handle_main_search_release() -> bool:
+    return search_bar.handle_search_mouse_release(_md._main_search, copy_to_clipboard)
 
 # Tick-boundary data refresh: session change, sticky-scroll, monitor_sessions, janitor.
 # Returns (input_changed, last_data_refresh, last_janitor_ts, current_main_session).
