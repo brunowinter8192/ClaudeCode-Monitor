@@ -52,7 +52,7 @@ different log.
 
 ---
 
-### p2_search_feature_regression_test.py (328 LOC)
+### p2_search_feature_regression_test.py (396 LOC)
 
 **Purpose:** Regression guard for the implemented M2 search feature. Unlike `p1_*` (fully
 reimplemented, no `src/` imports), this file DOES exercise real `src/` code — via
@@ -69,6 +69,20 @@ idempotent across repeated renders at the same offset; the `flow_id`-based
 forwarded-delta JSONL fixture (not the real gitignored log) reproducing the exact
 `_fwd_req_idx`-collision scenario found during investigation — portable, no dependency on any
 one dev machine's log files.
+
+**(2026-08-18, follow-up) UTF-8 multi-byte keypress fix.** `input.click_handler.read_keypress`
+read exactly 1 byte and decoded it alone — a multi-byte character (em-dash, ä/ö/ü, emoji)
+arrived as N separate invalid single-byte decodes, each replaced with U+FFFD (`'�'`) — reported
+live as an em-dash rendering as `���` in the search bar. `test_utf8_multibyte_keypress` feeds
+the literal UTF-8 byte sequences for an em-dash (3 bytes), ä/ö/ü (2 bytes each), and an emoji
+(4 bytes) through a REAL `os.pipe()` fd into the real `read_keypress()` (not a mock), asserting
+each returns exactly the correct single decoded character, plus a back-to-back
+multi-byte-then-ASCII case (no over-consumption of the next character's byte).
+`test_utf8_search_query_accumulation` feeds the same byte sequences through the full
+`_handle_proxy_search_input` path and asserts `_proxy_search_query` accumulates the real
+characters. The fix lives in `src/input/click_handler.py` (shared by every pane, see
+`src/input/DOCS.md`) — confirmed (ad-hoc, not in this suite) to heal `core/monitor_display.py`'s
+main-pane search bar too, since both route through the same `read_keypress`.
 
 Synthetic entries (`_make_entry`) use a per-index unique marker embedded in that entry's own NEW
 message (`messages` list built CUMULATIVE — length == `message_count`, one filler message per
@@ -89,11 +103,13 @@ expanded, so it's a poor choice for asserting "found in the always-visible expan
 
 **Reads:** nothing external — seeds `src.proxy_display.pane` module state with synthetic
 entries directly; the flow_id-fix test writes a throwaway forwarded-delta JSONL fixture under
-`tempfile.mkdtemp()`, removed after the check.
+`tempfile.mkdtemp()`, removed after the check; the UTF-8 keypress tests open a real `os.pipe()`
+per case, closed after the check.
 **Writes:** `dev/pane_search/md/p2_search_feature_regression_test_<timestamp>.md`.
 **Called by:** run manually — regression guard for the M2 search feature; re-run after any change
 to `pane.py`'s search state/handlers, `format.py`'s `format_proxy_block`/`_apply_row_backgrounds`,
-`render_turn.py`'s search-marker embedding, `search.py`, or `forwarded_parser.py`'s
-`_lazy_load_messages_forwarded`/`reconstruct_all_messages`.
+`render_turn.py`'s search-marker embedding, `search.py`, `forwarded_parser.py`'s
+`_lazy_load_messages_forwarded`/`reconstruct_all_messages`, or `input.click_handler.read_keypress`.
 **Calls out:** `src.proxy_display.pane`, `src.proxy_display.format`, `src.proxy_display.search`,
-`src.proxy_display.forwarded_parser`, `src.constants` — loaded via `importlib.import_module`.
+`src.proxy_display.forwarded_parser`, `src.input.click_handler`, `src.constants` — loaded via
+`importlib.import_module`.

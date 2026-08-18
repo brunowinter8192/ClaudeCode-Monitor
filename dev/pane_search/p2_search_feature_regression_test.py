@@ -13,6 +13,10 @@ Covers, per the M2 spec:
   - the flow_id-based _lazy_load_messages_forwarded fix (the _fwd_req_idx collision bug found
     during M2 investigation — verified against a self-contained synthetic 2-batch fixture, not
     the real gitignored log, so this guard is portable)
+  - (follow-up, 2026-08-18) UTF-8 multi-byte keypress decoding in input.click_handler.read_keypress
+    — em-dash/ä-ö-ü/emoji fed through the REAL byte-wise reader via a real os.pipe() fd (not a
+    mock), asserting a single correctly-decoded character comes out (not N replacement chars),
+    and that the full search-bar input path accumulates the real characters into the query
 
 Uses REAL render_turn.py / format.py / search.py / forwarded_parser.py / pane.py functions
 against synthetic data — not mocks. importlib.import_module used throughout (dev/ scripts may
@@ -40,6 +44,7 @@ mod_format = importlib.import_module(f'{_ROOT_PKG}.proxy_display.format')
 mod_search = importlib.import_module(f'{_ROOT_PKG}.proxy_display.search')
 mod_fwd = importlib.import_module(f'{_ROOT_PKG}.proxy_display.forwarded_parser')
 mod_constants = importlib.import_module(f'{_ROOT_PKG}.constants')
+mod_click = importlib.import_module(f'{_ROOT_PKG}.input.click_handler')
 
 SEARCH_MATCH_BG = mod_constants.SEARCH_MATCH_BG
 SEARCH_CURRENT_BG = mod_constants.SEARCH_CURRENT_BG
@@ -289,6 +294,67 @@ def test_flow_id_lazy_load_fix():
     shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Write byte_seq into a real os.pipe(), point click_handler._stdin_fd at the read end, call the
+# REAL read_keypress() once. Real os.read/select.select through the actual function — not a mock.
+def _read_keypress_from_bytes(byte_seq: bytes):
+    r, w = os.pipe()
+    orig_fd = mod_click._stdin_fd
+    mod_click._stdin_fd = r
+    try:
+        os.write(w, byte_seq)
+        return mod_click.read_keypress()
+    finally:
+        mod_click._stdin_fd = orig_fd
+        os.close(r)
+        os.close(w)
+
+
+def test_utf8_multibyte_keypress():
+    print("\n[UTF-8 keypress] read_keypress decodes multi-byte sequences as ONE character, "
+          "not N replacement chars (input.click_handler, follow-up fix)")
+    cases = [
+        (b'a', 'a', 'plain ASCII (0 continuation bytes)'),
+        ('—'.encode('utf-8'), '—', 'em-dash U+2014 (3 bytes, 2 continuation) — the reported bug'),
+        ('ä'.encode('utf-8'), 'ä', 'ä U+00E4 (2 bytes, 1 continuation)'),
+        ('ö'.encode('utf-8'), 'ö', 'ö U+00F6 (2 bytes, 1 continuation)'),
+        ('ü'.encode('utf-8'), 'ü', 'ü U+00FC (2 bytes, 1 continuation)'),
+        ('😀'.encode('utf-8'), '😀', 'emoji U+1F600 (4 bytes, 3 continuation)'),
+    ]
+    for byte_seq, expected, label in cases:
+        result = _read_keypress_from_bytes(byte_seq)
+        check(f"{label}: {byte_seq!r} -> {result!r}", result == expected)
+
+    # Back-to-back multi-byte + ASCII in the SAME pipe write — continuation-byte reads must not
+    # over-consume into the next character
+    r, w = os.pipe()
+    orig_fd = mod_click._stdin_fd
+    mod_click._stdin_fd = r
+    try:
+        os.write(w, '—a'.encode('utf-8'))
+        c1 = mod_click.read_keypress()
+        c2 = mod_click.read_keypress()
+        check("back-to-back em-dash + 'a' split correctly (no over-consumption)", (c1, c2) == ('—', 'a'))
+    finally:
+        mod_click._stdin_fd = orig_fd
+        os.close(r)
+        os.close(w)
+
+
+def test_utf8_search_query_accumulation():
+    print("\n[UTF-8 search accumulation] Multi-byte chars fed through the search bar's real "
+          "input path (_handle_proxy_search_input) accumulate the real characters")
+    _reset_pane_state()
+    mod_pane.proxy_entries.extend(_make_entry(i) for i in range(2))
+    mod_pane._proxy_search_focused = True
+    for byte_seq in [b'f', b'o', b'o', ' '.encode(), '—'.encode('utf-8'), b'b', 'ä'.encode('utf-8'), '😀'.encode('utf-8')]:
+        ch = _read_keypress_from_bytes(byte_seq)
+        mod_pane._handle_proxy_search_input(ch)
+    check("query accumulates real multi-byte characters, not replacement chars",
+          mod_pane._proxy_search_query == 'foo —bä😀')
+    check("no U+FFFD replacement character leaked into the query",
+          '�' not in mod_pane._proxy_search_query)
+
+
 # ORCHESTRATOR
 
 def run_probe_workflow():
@@ -303,6 +369,8 @@ def run_probe_workflow():
     test_esc_clears_query_bar_stays()
     test_scroll_jump_clamps()
     test_flow_id_lazy_load_fix()
+    test_utf8_multibyte_keypress()
+    test_utf8_search_query_accumulation()
 
     total = len(_RESULTS)
     passed = sum(1 for _, ok in _RESULTS if ok)

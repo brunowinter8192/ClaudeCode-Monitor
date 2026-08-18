@@ -46,15 +46,45 @@ def wait_for_input(timeout: float) -> None:
     else:
         time.sleep(timeout)
 
-# Reads single byte from stdin fd without blocking (bypasses Python buffering)
+# Number of UTF-8 continuation bytes expected after this lead byte, per the bit pattern:
+# 0xxxxxxx=ASCII(0), 110xxxxx=+1, 1110xxxx=+2, 11110xxx=+3. A stray continuation byte or
+# invalid lead (e.g. 10xxxxxx alone) returns 0 — decoded alone via errors='replace', same as
+# today's single-byte behavior; a real multi-byte lead always matches one of the first three.
+def _utf8_continuation_count(lead_byte: int) -> int:
+    if lead_byte & 0x80 == 0x00:
+        return 0
+    if lead_byte & 0xE0 == 0xC0:
+        return 1
+    if lead_byte & 0xF0 == 0xE0:
+        return 2
+    if lead_byte & 0xF8 == 0xF0:
+        return 3
+    return 0
+
+# Reads one keypress from stdin fd without blocking (bypasses Python buffering). Reads the lead
+# byte first (non-blocking select, unchanged fast path for "nothing pending" -> None), then — for
+# a multi-byte UTF-8 lead byte — reads the expected continuation bytes (each via the SAME
+# 0.005s-timeout select pattern read_mouse_event already uses for its own byte-wise ESC-sequence
+# reads) and decodes the whole sequence together. Plain ASCII keys (the overwhelming majority)
+# take 0 extra reads — byte-for-byte identical to the pre-fix code path. Without this, a
+# multi-byte character (em-dash, ä/ö/ü, emoji) arrived as N separate invalid single-byte decodes,
+# each replaced with U+FFFD ('�') — fixed 2026-08-18, see process-docs/pane_search/.
+# A read error here propagates to the caller's own outer try/except (every pane loop wraps its
+# drain loop in try/except Exception: log_pane_error(...)) rather than being swallowed silently.
 def read_keypress() -> Optional[str]:
     if select.select([_stdin_fd], [], [], 0)[0]:
-        try:
-            data = os.read(_stdin_fd, 1)
-            if data:
-                return data.decode('utf-8', errors='replace')
-        except Exception:
-            pass
+        data = os.read(_stdin_fd, 1)
+        if not data:
+            return None
+        n_continuation = _utf8_continuation_count(data[0])
+        for _ in range(n_continuation):
+            if not select.select([_stdin_fd], [], [], 0.005)[0]:
+                break
+            more = os.read(_stdin_fd, 1)
+            if not more:
+                break
+            data += more
+        return data.decode('utf-8', errors='replace')
     return None
 
 # Returns subagent index (1-9) if digit pressed, None otherwise
