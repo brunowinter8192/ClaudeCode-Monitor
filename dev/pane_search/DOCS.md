@@ -25,6 +25,14 @@ expand level, data always fully loaded, no windowing) — reaching the same pari
 the `ZEBRA_BG_A == ''` sentinel bug (same class the proxy pane hit) in this pane's own
 hand-rolled row-background loop, and the two-key (`(turn_idx,call_idx)` vs `('turn',turn_idx)`)
 match-container-marking design.
+`p7_*` (rollout sub-milestone 5) covers the WORKERS pane (`src/workers/worker_pane.py`,
+`src/workers/worker_format.py`) — the FIRST pane needing a genuine reconstruction step
+(`worker_turns` only holds data for currently-EXPANDED workers, so Enter force-parses every
+listed worker's own JSONL) — reaching the same parity, plus a THREE-tier match key (worker /
+turn / call, composing with `format_cache_tracker`'s sub-milestone-4 kwargs via a per-worker
+scoping derivation), a third occurrence of the sentinel fix, and a jump-to-match design that
+respects the pane's dormant pane-level scroll while self-healing via a fresh re-parse at jump
+time.
 See `process-docs/pane_search/` for the investigation trail.
 
 ## Scripts
@@ -326,3 +334,54 @@ was the ONLY other suite affected — `p2`/`p3`/`p4`/`p3_button_click_probe`/`p2
 **Writes:** `dev/pane_search/md/p6_tokens_pane_parity_test_<timestamp>.md`.
 **Called by:** run manually — regression guard for the tokens pane's search bar; re-run after any change to `token_pane.py`'s search/mouse handlers, `token_format.py`'s `format_cache_tracker`/`_compute_cache_viewport`, `token_search.py`, or `src/search_bar.py`.
 **Calls out:** `src.panes.token_pane`, `src.panes.token_search`, `src.format.token_format`, `src.search_bar`, `src.constants`, `src.core.monitor`, `src.proxy_display.parser` — loaded via `importlib.import_module`.
+
+---
+
+### p7_workers_pane_parity_test.py (535 LOC)
+
+**Purpose:** Regression guard for the WORKERS pane (`src/workers/worker_pane.py`,
+`src/workers/worker_format.py`) reaching search-bar parity with the proxy pane (rollout
+sub-milestone 5) — the FIRST pane needing a genuine reconstruction step, since `worker_turns`
+only holds data for currently-EXPANDED workers. Covers the same mechanics suite as
+`p3`/`p4`/`p5`/`p6` (drag-select, editor-style deletion, `n`/`N`, Esc, reverse-video render)
+retargeted at this pane's own thin wrappers, PLUS what's genuinely new here:
+- **2-row header + freeze badge shift** — `test_search_bar_row1_and_freeze_badge_shifted`:
+  `_worker_header_regions['freeze']` moves from row 1 to row 2; the shifted region is STILL
+  clickable (real `_handle_workers_mouse` dispatch through it).
+- **Three-tier match keys + per-worker scoping, the actual new design** —
+  `test_worker_level_match_and_scoping` (bare `name` match, container-marks ONLY that worker's
+  header, a second non-matching worker stays unexpanded) and
+  `test_call_level_match_collapsed_container_marked_and_scoped` (a `(name,turn_idx,call_idx)`
+  match container-marks the collapsed call row in the MATCHING worker, while a SECOND worker
+  that's independently expanded with different (non-matching) content carries ZERO search
+  highlight anywhere in its own rendered output — the critical cross-worker leak check that
+  proves `_scope_matches_to_worker`/`_scope_current_key_to_worker` actually work). Both use REAL
+  throwaway JSONL fixture files (`_setup_worker_jsonls`, `find_worker_jsonl` monkeypatched to
+  resolve them) — the real `read_new_lines`→`parse_jsonl_lines`→`extract_cache_turns` pipeline
+  runs unmocked, only the tmux-session→path resolution is stubbed.
+- **The sentinel bug (third occurrence)** — folded into the two match tests above (asserts no
+  raw `_BG_RESTORE_SENTINEL` leaks, and the marker's own presence/absence exactly where
+  expected) rather than a separate dedicated test, since the real fixture-based match tests
+  already exercise the exact rendering path that needed the fix.
+- **The `LIGHT_RED_BG` collateral fix** — `test_light_red_bg_still_detected_when_call_is_also_a_match`:
+  same `.startswith()`→`in` regression guard as the tokens pane, against a real cc_broken call
+  that's ALSO a search match.
+- **Jump-to-match respecting the dormant scroll** — `test_jump_never_touches_dormant_pane_scroll`
+  (real Enter-triggered jump, asserts `worker_scroll_offset` — the pane-level int — stays
+  exactly 0) and `test_jump_self_heals_stale_worker_turns` (simulates `_refresh_workers_data`'s
+  own poll-tick `worker_turns.clear()` + un-expanding the worker between two jumps, confirms the
+  SECOND jump re-populates `worker_turns` fresh rather than finding it empty) and
+  `test_vanished_worker_jump_is_a_noop_not_a_crash` (a match for a worker absent from the
+  current `workers` list — the self-healing no-op path, not an exception).
+
+**Usage (from project root):**
+```bash
+./venv/bin/python dev/pane_search/p7_workers_pane_parity_test.py
+```
+
+**Output:** PASS/FAIL per check to stdout; writes `dev/pane_search/md/p7_workers_pane_parity_test_<timestamp>.md`; exits 1 if any check fails.
+
+**Reads:** nothing external — seeds `src.workers.worker_pane` module state (workers list via each test's own construction) directly; `_setup_worker_jsonls`/`_cleanup_worker_jsonls` write/remove real throwaway JSONL fixture files under `tempfile.mkdtemp()`, with `find_worker_jsonl` monkeypatched to resolve worker `session` strings to them (removed after each test that uses them).
+**Writes:** `dev/pane_search/md/p7_workers_pane_parity_test_<timestamp>.md`.
+**Called by:** run manually — regression guard for the workers pane's search bar; re-run after any change to `worker_pane.py`'s search/mouse handlers or jump-to-match, `worker_format.py`'s `format_workers_block`/`_scope_matches_to_worker`/`_scope_current_key_to_worker`, `panes/token_search.py`, or `src/search_bar.py`.
+**Calls out:** `src.workers.worker_pane`, `src.workers.worker_format`, `src.search_bar`, `src.constants` — loaded via `importlib.import_module`.
