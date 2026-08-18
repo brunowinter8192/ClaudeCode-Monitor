@@ -4,18 +4,16 @@ import time
 from typing import Optional
 
 from ..constants import (
-    RESET, GREEN, YELLOW, CYAN, DIM_YELLOW_BG, WHITE, HOVER_BG,
+    RESET, GREEN, YELLOW, CYAN, DIM_YELLOW_BG,
     SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
     MODE_ALL, MODE_MAIN, MAIN_EVENT_BUFFER_CAP,
 )
 from ..format.formatter import format_tool_call
 from ..format.formatter_events import format_user_prompt, format_user_media, format_thinking, format_skill_activation, format_system_message
-from ..utils import truncate_visible, _ANSI_ESCAPE_RE, _cell_width, append_copy_symbol
-
-# Private search-bar colors (not in palette; internal to this module)
-_SRCH_LABEL = '\033[38;2;108;112;134m'   # muted gray — "Search:" label
-_SRCH_IDLE  = '\033[38;2;166;173;200m'   # medium gray — unfocused query text
-_SRCH_BASE  = f'\033[0m{HOVER_BG}'       # RESET + hover-BG baseline between segments
+from ..utils import truncate_visible, _ANSI_ESCAPE_RE, _cell_width, append_copy_symbol, highlight_query_in_line
+# From search_bar.py: shared search-bar mechanics (SearchState, render_search_bar) — rollout
+# sub-milestone 2, retrofitting the main pane onto the proxy pane's reference implementation
+from .. import search_bar
 
 INDENT = '  '
 
@@ -27,15 +25,16 @@ _main_copy_rows: dict = {}          # phys_row → (event_idx, part)  part ∈ {
 _main_copy_feedback_until: dict = {}  # (event_idx, part) → expiry float
 _main_pane_width: int = 80          # updated each render cycle; read by click handler
 
-# Search state
-_search_query: str = ''
-_search_focused: bool = False
-_search_committed: bool = False      # True after Enter; False during editing → no highlights
-_search_matches: list = []           # [event_idx, ...] ordered by position in buffer
-_search_match_set: set = set()       # set(_search_matches) for O(1) membership
-_search_current_idx: int = 0         # index into _search_matches for current match
-_search_cached_query: str = ''       # query used to build current _search_matches
-_search_match_line_offsets: dict = {}  # event_idx → line_offset within event where query first appears
+_SEARCH_BAR_LABEL = 'Search: '  # single source for both the renderer and monitor.py's mouse/col mapping calls
+
+# Search bar state — one search_bar.SearchState instance replaces what used to be 8 flat
+# globals (rollout sub-milestone 2, retrofitting onto the proxy pane's reference
+# implementation). .matches holds event_idx values, ordered by position in main_event_buffer.
+# Enter always re-runs the full match rebuild (proxy's convention — see
+# monitor.py::_main_search_on_commit), not gated on query-unchanged, so a repeated Enter picks
+# up events appended to the buffer since the last search.
+_main_search: search_bar.SearchState = search_bar.SearchState()
+_search_match_line_offsets: dict = {}  # event_idx → line_offset within event where query first appears (main-pane-specific, not part of SearchState)
 _search_all_line_offsets: dict = {}  # event_idx → first_line_idx in all_lines (for scroll)
 _search_total_lines: int = 0         # len(all_lines) from last render (for scroll)
 
@@ -132,35 +131,6 @@ def _format_event_to_lines(event: dict) -> list:
         return []
     return formatted.split('\n')
 
-# Inject match_bg around each occurrence of query in line (case-insensitive, ANSI-safe)
-# Strategy: strip ANSI to find literal matched substrings → split ANSI-bearing line on each chunk
-# → join with bg+chunk+\033[49m. Silently skips when query straddles an ANSI code boundary.
-def _highlight_query_in_line(line: str, query: str, match_bg: str) -> str:
-    if not query or not line:
-        return line
-    stripped = _ANSI_ESCAPE_RE.sub('', line)
-    q_lower = query.lower()
-    s_lower = stripped.lower()
-    if q_lower not in s_lower:
-        return line
-    # Collect distinct literal chunks (preserving original case) from stripped text
-    seen: set = set()
-    pos = 0
-    while True:
-        p = s_lower.find(q_lower, pos)
-        if p == -1:
-            break
-        seen.add(stripped[p:p + len(query)])
-        pos = p + 1
-    result = line
-    for chunk in seen:
-        parts = result.split(chunk)
-        if len(parts) < 2:
-            continue  # chunk not found in ANSI-bearing string (straddled escape code)
-        result = f"{match_bg}{chunk}\033[49m".join(parts)
-    return result
-
-
 # For each matched event: find the first rendered line containing query; returns {event_idx → line_offset}
 # Fallback 0 when query is in serialized text but not in rendered lines (e.g. truncated output section)
 def _compute_match_line_offsets(query: str, matches: list) -> dict:
@@ -193,55 +163,20 @@ def _compute_search_matches(query: str) -> tuple:
             matches.append(event_idx)
     return matches, set(matches)
 
-# Render the always-visible search bar (row 1); returns ANSI string ≤ pane_width visible cells
+# Render the always-visible search bar (row 1). Thin wrapper binding this pane's own label —
+# no click-arrows (n/N replace them, see monitor.py::_jump_search_match) and no HOVER_BG row
+# baseline (the shared renderer has none — one visual "search" language across panes).
 def _render_search_bar(pane_width: int) -> str:
-    cursor = '_' if _search_focused else ''
-    left_plain = f"Search: {_search_query}{cursor}"
-    left_vis = sum(_cell_width(ch) for ch in left_plain)
-
-    m = len(_search_matches)
-    has_matches = bool(_search_query and m > 0)
-
-    if has_matches:
-        counter_plain = f"{_search_current_idx + 1}/{m}"
-        cnt_color = CYAN
-        arrow_color = GREEN
-    elif _search_query:
-        counter_plain = "0/0"
-        cnt_color = _SRCH_LABEL
-        arrow_color = _SRCH_LABEL
-    else:
-        counter_plain = ""
-        cnt_color = _SRCH_LABEL
-        arrow_color = _SRCH_LABEL
-
-    right_plain = (f" {counter_plain} [←] [→]" if counter_plain else " [←] [→]")
-    right_vis = sum(_cell_width(ch) for ch in right_plain)
-    gap = max(0, pane_width - left_vis - right_vis)
-
-    query_color = WHITE if _search_focused else _SRCH_IDLE
-    cursor_part = f"{CYAN}_" if _search_focused else ""
-    counter_part = (f" {cnt_color}{counter_plain}{_SRCH_BASE}" if counter_plain else "")
-
-    bar = (
-        f"{_SRCH_BASE}"
-        f"{_SRCH_LABEL}Search: {_SRCH_BASE}"
-        f"{query_color}{_search_query}{_SRCH_BASE}"
-        f"{cursor_part}{_SRCH_BASE}"
-        f"{' ' * gap}"
-        f"{counter_part}"
-        f" {arrow_color}[←]{_SRCH_BASE}"
-        f" {arrow_color}[→]{_SRCH_BASE}"
-    )
-    return truncate_visible(bar, pane_width)
+    return search_bar.render_search_bar(_main_search, pane_width, label=_SEARCH_BAR_LABEL)
 
 # Adjust main_scroll_offset so the current match's first line is visible in the buffer area
 def ensure_match_visible() -> None:
     import os
     global main_scroll_offset
-    if not _search_matches or _search_current_idx >= len(_search_matches):
+    state = _main_search
+    if not state.matches or state.current_idx >= len(state.matches):
         return
-    target_eidx = _search_matches[_search_current_idx]
+    target_eidx = state.matches[state.current_idx]
     event_start = _search_all_line_offsets.get(target_eidx)
     if event_start is None:
         return
@@ -265,10 +200,10 @@ def _count_buffer_lines(pane_width: int) -> int:
 # Row 1 is the persistent search bar; buffer events render from row 2 onward.
 def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) -> str:
     global main_line_map, _main_copy_rows, _main_pane_width
-    global _search_current_idx
     global _search_all_line_offsets, _search_total_lines
     global main_scroll_offset
 
+    state = _main_search
     _main_pane_width = pane_width
     buffer_height = pane_height - 1  # row 1 reserved for search bar
 
@@ -295,12 +230,12 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
         main_scroll_offset = max_scroll
 
     # Clamp current_idx on buffer shrink (matches only populated on Enter commit)
-    if _search_matches:
-        _search_current_idx = min(_search_current_idx, len(_search_matches) - 1)
+    if state.matches:
+        state.current_idx = min(state.current_idx, len(state.matches) - 1)
 
     current_match_eidx = (
-        _search_matches[_search_current_idx]
-        if _search_matches and _search_current_idx < len(_search_matches)
+        state.matches[state.current_idx]
+        if state.matches and state.current_idx < len(state.matches)
         else None
     )
 
@@ -318,12 +253,14 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
     for phys_idx, (line, eidx) in enumerate(zip(visible, visible_event_indices)):
         phys_row = phys_idx + 2  # row 1 is search bar; buffer starts at row 2
 
-        # Search highlight: inject BG only around matched substring (per line, ANSI-safe)
-        if eidx >= 0 and _search_match_set and _search_query:
+        # Search highlight: inject BG only around matched substring (per line, ANSI-safe).
+        # No per-row background on this pane (row assembly below is a plain trunc+\033[49m) —
+        # utils.highlight_query_in_line's default '\033[49m' restore is correct, no sentinel needed.
+        if eidx >= 0 and state.match_set and state.query:
             if eidx == current_match_eidx:
-                line = _highlight_query_in_line(line, _search_query, SEARCH_CURRENT_BG)
-            elif eidx in _search_match_set:
-                line = _highlight_query_in_line(line, _search_query, SEARCH_MATCH_BG)
+                line = highlight_query_in_line(line, state.query, SEARCH_CURRENT_BG)
+            elif eidx in state.match_set:
+                line = highlight_query_in_line(line, state.query, SEARCH_MATCH_BG)
 
         # ⎘ copy-button injection (existing — ANSI strip accounts for prepended BG)
         if eidx >= 0 and main_event_buffer[eidx]['type'] == 'tool_call':
@@ -362,8 +299,8 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
             main_line_map[phys_row] = eidx
         prev_eidx = eidx
 
-    search_bar = _render_search_bar(pane_width)
-    return f"{search_bar}\033[K{RESET}\n" + '\n'.join(result_lines)
+    bar_line = _render_search_bar(pane_width)
+    return f"{bar_line}\033[K{RESET}\n" + '\n'.join(result_lines)
 
 # Serialize a main-pane event to full untruncated text for clipboard
 # part='all' → header+INPUT+OUTPUT (y-hotkey); 'request' → header+INPUT; 'response' → header+OUTPUT
