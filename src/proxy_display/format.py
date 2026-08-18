@@ -5,6 +5,7 @@ from typing import Optional
 from ..constants import (
     RESET, SOFT_RESET, DIM, YELLOW, HOVER_BG,
     DIM_YELLOW_BG, DIM_GREEN_BG, ZEBRA_BG_A, ZEBRA_BG_B, COLLISION_BG,
+    SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
 )
 from ..format.token_format import _format_k
 from ..utils import truncate_visible
@@ -74,7 +75,11 @@ def _assign_turns_to_entries(entries: list, turns: list) -> list:
             groups[0]['entry_pairs'].append((entry_idx, entry))
     return [g for g in groups if g['entry_pairs']]
 
-# Apply per-row background priority (hover > DIM_YELLOW_BG > DIM_GREEN_BG > collision > zebra)
+# Apply per-row background priority: hover > SEARCH_CURRENT/MATCH_BG > DIM_YELLOW_BG >
+# DIM_GREEN_BG > collision > zebra. Search sits right below hover: hover is transient
+# mouse-pointer feedback and must never be masked, but a search hit is the user's explicit,
+# just-committed query intent — the entire reason Enter was pressed — so it outranks the
+# passive structural strip/inject annotations and the rare collision marker.
 # initial_parent_count preserves zebra parity continuity across the scroll viewport boundary
 def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_entry_idxs: set, hover_row, copy_rows_out, pane_width: int, initial_parent_count: int) -> list:
     parent_count = initial_parent_count
@@ -98,6 +103,10 @@ def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_en
         ))
         if is_hovered:
             chosen_bg = HOVER_BG
+        elif SEARCH_CURRENT_BG in line:
+            chosen_bg = SEARCH_CURRENT_BG
+        elif SEARCH_MATCH_BG in line:
+            chosen_bg = SEARCH_MATCH_BG
         elif DIM_YELLOW_BG in line:
             chosen_bg = DIM_YELLOW_BG
         elif DIM_GREEN_BG in line:
@@ -111,7 +120,9 @@ def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_en
     return result_lines
 
 # Format proxy pane with API request entries grouped by turn, expand/collapse, scroll, hover
-def format_proxy_block(entries: list, expand_states: dict = None, line_map: dict = None, hover_row: Optional[int] = None, pane_height: int = 50, pane_width: int = 80, scroll_offset: int = 0, turns: list = None, item_positions_out: Optional[dict] = None, copy_feedback: Optional[dict] = None, copy_rows_out: Optional[set] = None) -> tuple:
+# search_match_set/search_current_entry_idx/search_query: optional — omitted by every caller
+# that doesn't have a search feature (worker_proxy_pane.py), zero behavior change for them.
+def format_proxy_block(entries: list, expand_states: dict = None, line_map: dict = None, hover_row: Optional[int] = None, pane_height: int = 50, pane_width: int = 80, scroll_offset: int = 0, turns: list = None, item_positions_out: Optional[dict] = None, copy_feedback: Optional[dict] = None, copy_rows_out: Optional[set] = None, search_match_set: Optional[set] = None, search_current_entry_idx: Optional[int] = None, search_query: str = '') -> tuple:
     from .render_turn import render_turn_expanded
     if not entries:
         return (f"{YELLOW}No API requests logged yet{SOFT_RESET}", 0)
@@ -137,6 +148,9 @@ def format_proxy_block(entries: list, expand_states: dict = None, line_map: dict
                 rendered_opus_labels=rendered_opus_labels,
                 copy_feedback=copy_feedback,
                 copy_rows_out=copy_rows_out,
+                search_match_set=search_match_set,
+                search_current_entry_idx=search_current_entry_idx,
+                search_query=search_query,
             )
             all_lines.extend(t_lines)
             line_keys.extend(t_keys)
