@@ -1,13 +1,29 @@
 # INFRASTRUCTURE
 import time
+from typing import Optional
 from ..constants import (
     SOFT_RESET, RED, GREEN, WHITE, YELLOW, DIM,
+    SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
 )
 from ..utils import _ANSI_ESCAPE_RE, _cell_width
 from .format import _shorten_model, _format_k, _is_standalone_entry, _fmt_thinking_budget, _fmt_effort
 from .render_messages import _aggregate_req_buckets
 
 # FUNCTIONS
+
+# Walk backward from entry_idx-1 for the first non-standalone entry of the SAME family
+# (haiku vs non-haiku) — the reference used for ⚠T / section-diff rendering. None for
+# standalone entries (haiku/zero-context) or when no matching predecessor exists.
+def _resolve_prev_same_family(entries: list, entry_idx: int) -> Optional[dict]:
+    entry = entries[entry_idx]
+    if _is_standalone_entry(entry):
+        return None
+    ef = 'haiku' if 'haiku' in entry.get('model', '').lower() else 'opus'
+    for i in range(entry_idx - 1, -1, -1):
+        pf = 'haiku' if 'haiku' in entries[i].get('model', '').lower() else 'opus'
+        if pf == ef and not _is_standalone_entry(entries[i]):
+            return entries[i]
+    return None
 
 # Compute tool-mod string (🔧+N / -N / ±N) comparing entry tools to prev_same, or ''
 def _compute_req_mods_str(entry: dict, prev_same) -> str:
@@ -24,7 +40,11 @@ def _compute_req_mods_str(entry: dict, prev_same) -> str:
     return ''
 
 # Build the request header line string with haiku_info, eff/think, tag_badge, copy ⎘/✓ right-pad
-def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symbol: str, model_short: str, msg_count: int, mods_str: str, warn_str: str, pane_width: int, copy_feedback) -> str:
+# is_search_current wins over is_search_match — embeds a BG marker substring in the raw line so
+# _apply_row_backgrounds's existing hoist-to-whole-row pattern (mirrors DIM_YELLOW_BG/DIM_GREEN_BG)
+# picks it up; header stays marked for a search hit regardless of expand state (uniform, keeps
+# orientation when scrolling inside a long expanded request).
+def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symbol: str, model_short: str, msg_count: int, mods_str: str, warn_str: str, pane_width: int, copy_feedback, is_search_match: bool = False, is_search_current: bool = False) -> str:
     e_sys = entry.get('system_total_chars', entry.get('system_prompt_chars', 0))
     e_tools = entry.get('tools_total_chars', entry.get('tools_chars', 0))
     e_msgs = entry.get('messages_total_chars', 0)
@@ -40,7 +60,8 @@ def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symb
     if _has_strip: _badge_parts.append(f'{YELLOW}strip{SOFT_RESET}')
     if _has_inj:   _badge_parts.append(f'{GREEN}inject{SOFT_RESET}')
     tag_badge = (' ' + ' '.join(_badge_parts)) if _badge_parts else ''
-    header_raw = f"  {WHITE}{req_symbol} {num_label} {model_short} {msg_count}msg{eff_str}{think_str}{mods_str}{warn_str}{haiku_info}{tag_badge}{SOFT_RESET}"
+    search_marker = SEARCH_CURRENT_BG if is_search_current else (SEARCH_MATCH_BG if is_search_match else '')
+    header_raw = f"  {search_marker}{WHITE}{req_symbol} {num_label} {model_short} {msg_count}msg{eff_str}{think_str}{mods_str}{warn_str}{haiku_info}{tag_badge}{SOFT_RESET}"
     if copy_feedback is not None:
         _stripped_h = _ANSI_ESCAPE_RE.sub('', header_raw)
         visible_len = sum(_cell_width(ch) for ch in _stripped_h)
@@ -52,8 +73,23 @@ def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symb
             return header_raw + ' ' * pad + ' ' + copy_sym
     return header_raw
 
+# Prefix each line containing search_query (case-insensitive, ANSI-stripped) with a BG marker —
+# same inline-embed-then-hoist mechanism _apply_row_backgrounds already uses for strip/inject
+# spans. Marks EVERY matching line in the block, not just the first.
+def _mark_search_lines(lines: list, query: str, is_current: bool) -> list:
+    if not query:
+        return lines
+    q = query.lower()
+    marker = SEARCH_CURRENT_BG if is_current else SEARCH_MATCH_BG
+    return [
+        (marker + line) if q in _ANSI_ESCAPE_RE.sub('', line).lower() else line
+        for line in lines
+    ]
+
 # Render expanded section for one request entry (buckets, fields, beta, directives, sys, tools, messages)
-def _render_req_expanded(entry_idx: int, entry: dict, entries: list, is_standalone: bool, prev_same, expand_states: dict, pane_width: int) -> tuple:
+# search_query/is_search_current: when query is truthy, every rendered line containing it
+# (case-insensitive) gets a search-highlight BG marker — "exactly what this expanded view shows".
+def _render_req_expanded(entry_idx: int, entry: dict, entries: list, is_standalone: bool, prev_same, expand_states: dict, pane_width: int, search_query: str = '', is_search_current: bool = False) -> tuple:
     from .render_sections import render_system_blocks, render_tools, render_fields_delta, render_beta, render_directives
     from .render_messages import render_messages
     lines = []
@@ -86,10 +122,14 @@ def _render_req_expanded(entry_idx: int, entry: dict, entries: list, is_standalo
     m_lines, m_keys = render_messages(entry, _section_ref, entries, expand_states, pane_width)
     lines.extend(m_lines)
     keys.extend(m_keys)
+    lines = _mark_search_lines(lines, search_query, is_search_current)
     return lines, keys
 
 # Render all per-request rows for an expanded turn group, returning (lines, keys, opus_req_num, sub_req_num)
-def render_turn_expanded(group: dict, entries: list, expand_states: dict, pane_width: int, opus_req_num: int, sub_req_num: int, turns=None, turn_idx: int = 0, rendered_opus_labels: list = None, copy_feedback=None, copy_rows_out=None) -> tuple:
+# search_match_set/search_current_entry_idx/search_query: optional — None/empty (defaults) means
+# search is inactive and every entry renders exactly as before (no behavior change for callers
+# that don't pass these, e.g. worker_proxy_pane.py).
+def render_turn_expanded(group: dict, entries: list, expand_states: dict, pane_width: int, opus_req_num: int, sub_req_num: int, turns=None, turn_idx: int = 0, rendered_opus_labels: list = None, copy_feedback=None, copy_rows_out=None, search_match_set: set = None, search_current_entry_idx: int = None, search_query: str = '') -> tuple:
     lines = []
     keys = []
     for entry_idx, entry in group['entry_pairs']:
@@ -106,17 +146,10 @@ def render_turn_expanded(group: dict, entries: list, expand_states: dict, pane_w
                 num_label = f'#{opus_req_num}.{sub_req_num}'
         msg_count = entry.get('message_count', 0)
         warn_parts = []
-        prev_same = None
         is_standalone = _is_standalone_entry(entry)
         if model_short != 'haiku' and not is_standalone and rendered_opus_labels is not None:
             rendered_opus_labels.append((entry_idx, num_label))
-        if not is_standalone:
-            _ef = 'haiku' if 'haiku' in entry.get('model', '').lower() else 'opus'
-            for _i in range(entry_idx - 1, -1, -1):
-                _pf = 'haiku' if 'haiku' in entries[_i].get('model', '').lower() else 'opus'
-                if _pf == _ef and not _is_standalone_entry(entries[_i]):
-                    prev_same = entries[_i]
-                    break
+        prev_same = _resolve_prev_same_family(entries, entry_idx)
         if prev_same is not None:
             if entry.get('tools_hash') and prev_same.get('tools_hash') and entry.get('tools_hash') != prev_same.get('tools_hash'):
                 warn_parts.append(f"{RED}⚠T{SOFT_RESET}")
@@ -125,10 +158,12 @@ def render_turn_expanded(group: dict, entries: list, expand_states: dict, pane_w
         is_req_expanded = expand_states.get(req_key, False)
         req_symbol = '▼' if is_req_expanded else '▶'
         mods_str = _compute_req_mods_str(entry, prev_same)
-        lines.append(_build_req_header_line(entry, entry_idx, num_label, req_symbol, model_short, msg_count, mods_str, warn_str, pane_width, copy_feedback))
+        is_search_current = search_current_entry_idx is not None and entry_idx == search_current_entry_idx
+        is_search_match = bool(search_match_set) and entry_idx in search_match_set
+        lines.append(_build_req_header_line(entry, entry_idx, num_label, req_symbol, model_short, msg_count, mods_str, warn_str, pane_width, copy_feedback, is_search_match, is_search_current))
         keys.append(req_key)
         if is_req_expanded:
-            e_lines, e_keys = _render_req_expanded(entry_idx, entry, entries, is_standalone, prev_same, expand_states, pane_width)
+            e_lines, e_keys = _render_req_expanded(entry_idx, entry, entries, is_standalone, prev_same, expand_states, pane_width, search_query if is_search_match else '', is_search_current)
             lines.extend(e_lines)
             keys.extend(e_keys)
     return lines, keys, opus_req_num, sub_req_num

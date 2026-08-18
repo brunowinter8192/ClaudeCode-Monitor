@@ -14,11 +14,14 @@ Proves, per pane, that after ONE real render pass:
      expand/copy) still works after adding the header check ahead of it
 
 (2026-07-30) The proxy pane's [undo] button and the one-line header introduced solely to host it
-were REVERTED per user decision after live-testing: 'u' is the only way to undo, and stays. The
-proxy-pane test now proves the revert is complete instead (no header, no button, no leftover
-`_proxy_header_regions`/`_format_proxy_header`) and that everything the header/body split had
-touched -- expand/collapse clicks, copy symbols, scroll, auto-scroll-to-just-expanded, and 'u'
-itself -- still works at UNSHIFTED rows (row 1 is body content again, not a header).
+were REVERTED per user decision after live-testing: 'u' is the only way to undo, and stays.
+(2026-08-18) A DIFFERENT, permanent one-line header was added back for Milestone 2's search bar
+-- not a revert candidate, this is the user's explicit "always visible" design principle, not a
+hidden-feature button. The proxy-pane test now proves the NEW header+shift contract instead: row
+1 is the search bar (not body, no `_proxy_header_regions`/`_format_proxy_header` leftover from
+the button-era code), body rows start at row 2, and everything the header/body split touches --
+expand/collapse clicks, copy symbols, scroll, auto-scroll-to-just-expanded, and 'u' itself --
+still works at the SHIFTED rows.
 
 Covers:
   - src/panes/warnings_pane.py :: _build_warnings_output (_warnings_header_regions),
@@ -27,9 +30,9 @@ Covers:
   - src/workers/worker_pane.py :: _build_workers_output (_worker_header_regions),
     _handle_workers_mouse (now returns (changed, frozen)), _handle_workers_key --
     src/workers/worker_format.py :: format_workers_block
-  - src/proxy_display/pane.py :: _build_proxy_output (back to a plain string return, no header
-    split), _handle_proxy_mouse, _undo_proxy_expand -- src/proxy_display/format.py (no
-    _format_proxy_header)
+  - src/proxy_display/pane.py :: _build_proxy_output (permanent search-bar header, row-shifted
+    line_map/copy_rows), _handle_proxy_mouse (row==1 -> focus), _undo_proxy_expand --
+    src/proxy_display/format.py (search-highlight priority in _apply_row_backgrounds)
 
 No live tmux/terminal needed -- module globals are seeded directly with synthetic data;
 copy_to_clipboard is monkeypatched where needed (reused from milestone 2's pattern) so the
@@ -183,13 +186,14 @@ def test_workers_freeze_button():
         os.remove(mod_workers.get_selection_file_path(project_filter))
 
 
-# Proxy pane: milestone-3's [undo] button and its one-line header were REVERTED per user
-# decision after live-testing -- 'u' stays the only way to undo; the pane goes back to having no
-# header at all (body content is the first rendered row again). Proves the revert is complete
-# (no header, no button, no leftover regions/functions) and that everything the header/body split
-# touched -- expand/collapse clicks, copy symbols, scroll, auto-scroll-to-just-expanded, and the
-# 'u' key itself -- still works at UNSHIFTED rows.
-def test_proxy_pane_reverted_no_header():
+# Proxy pane: Milestone 2 (2026-08-18) added a PERMANENT row-1 search bar -- unlike the
+# milestone-3 [undo] button (reverted 2026-07-30, see git history), this header is not a
+# revert candidate; it is the user's explicit "always visible, not hidden behind a keypress"
+# design principle. Proves the new header+shift contract: row 1 is the search bar (not body),
+# body rows start at row 2, clicking row 1 focuses the bar, and everything the header/body split
+# touches -- expand/collapse clicks, copy symbols, scroll, auto-scroll-to-just-expanded, and the
+# 'u' key itself -- still works at the SHIFTED rows.
+def test_proxy_pane_permanent_search_bar_header():
     mod_proxy.proxy_entries.clear()
     mod_proxy.proxy_expand_states.clear()
     mod_proxy.proxy_line_map.clear()
@@ -197,31 +201,43 @@ def test_proxy_pane_reverted_no_header():
     mod_proxy.proxy_scroll_offset = 0
     mod_proxy._proxy_undo_stack.clear()
     mod_proxy._copy_feedback_until.clear()
+    mod_proxy._proxy_search_query = ''
+    mod_proxy._proxy_search_focused = False
+    mod_proxy._proxy_search_matches = []
+    mod_proxy._proxy_search_match_set = set()
     mod_proxy.proxy_entries.extend(_make_proxy_entry(i) for i in range(3))
 
     output = mod_proxy._build_proxy_output()
-    check("proxy: _build_proxy_output returns a plain string again (no (output, header) tuple)",
+    check("proxy: _build_proxy_output returns a plain string (header+'\\n'+body baked in)",
           isinstance(output, str))
-    check("proxy: no [undo] button text anywhere in the output", '[undo]' not in output)
-    check("proxy: no leftover _proxy_header_regions module attribute",
+    check("proxy: search bar text visible on the first line", output.splitlines()[0].find('search:') != -1)
+    check("proxy: no leftover _proxy_header_regions module attribute (that was the reverted-button's)",
           not hasattr(mod_proxy, '_proxy_header_regions'))
-    check("proxy: no leftover _format_proxy_header function in format.py",
+    check("proxy: no leftover _format_proxy_header function in format.py (that was the reverted-button's)",
           not hasattr(mod_proxy_format, '_format_proxy_header'))
 
-    # Row 1 resolves to real body content (a REQ entry), not a header -- the pane's first
-    # rendered row is body content again, matching the pre-milestone-3 shape
-    key_row1 = mod_proxy.proxy_line_map.get(1)
-    check("proxy: row 1 resolves to a body row (REQ key), not a header",
-          key_row1 is not None and ((isinstance(key_row1, tuple) and key_row1[0] == 'req') or isinstance(key_row1, int)))
+    # Row 1 is the search bar now -- NOT in proxy_line_map (only body rows get keys)
+    check("proxy: row 1 is NOT a body key (it's the search bar)", mod_proxy.proxy_line_map.get(1) is None)
+    # Body content starts at row 2 (header_lines=1 shift)
+    key_row2 = mod_proxy.proxy_line_map.get(2)
+    check("proxy: row 2 resolves to a body row (REQ key)",
+          key_row2 is not None and ((isinstance(key_row2, tuple) and key_row2[0] == 'req') or isinstance(key_row2, int)))
 
-    # Expand/collapse click still works, directly at row 1 -- unshifted (no header_lines offset)
-    pre_expand = mod_proxy.proxy_expand_states.get(key_row1, False)
-    row_click_changed = mod_proxy._handle_proxy_mouse(0, 5, 1)
-    check("proxy: click on row 1 toggles expand/collapse at the unshifted row",
-          row_click_changed and mod_proxy.proxy_expand_states.get(key_row1) != pre_expand)
+    # Click on row 1 focuses the search bar, does NOT toggle any expand state
+    mod_proxy._proxy_search_focused = False
+    focus_click_changed = mod_proxy._handle_proxy_mouse(0, 5, 1)
+    check("proxy: click on row 1 focuses the search bar",
+          focus_click_changed and mod_proxy._proxy_search_focused is True)
+    mod_proxy._proxy_search_focused = False
+
+    # Expand/collapse click still works, at the SHIFTED row (row 2, not row 1)
+    pre_expand = mod_proxy.proxy_expand_states.get(key_row2, False)
+    row_click_changed = mod_proxy._handle_proxy_mouse(0, 5, 2)
+    check("proxy: click on row 2 toggles expand/collapse at the shifted row",
+          row_click_changed and mod_proxy.proxy_expand_states.get(key_row2) != pre_expand)
     mod_proxy._build_proxy_output()  # re-render to pick up the new copy-row set post-expand
 
-    # Copy-symbol click still fires, at its own (unshifted) row
+    # Copy-symbol click still fires, at its own (shifted) row
     orig_copy = mod_proxy.copy_to_clipboard
     captured = []
     mod_proxy.copy_to_clipboard = lambda text: captured.append(text)
@@ -229,8 +245,9 @@ def test_proxy_pane_reverted_no_header():
         check("proxy: at least one copy row registered", bool(mod_proxy._proxy_copy_rows))
         if mod_proxy._proxy_copy_rows:
             copy_row = next(iter(mod_proxy._proxy_copy_rows))
+            check("proxy: copy row is >= 2 (never lands on the header row)", copy_row >= 2)
             copy_click_changed = mod_proxy._handle_proxy_mouse(0, mod_proxy._proxy_pane_width - 1, copy_row)
-            check("proxy: copy-symbol click still fires at its own unshifted row",
+            check("proxy: copy-symbol click still fires at its own shifted row",
                   copy_click_changed and len(captured) == 1)
     finally:
         mod_proxy.copy_to_clipboard = orig_copy
@@ -238,26 +255,27 @@ def test_proxy_pane_reverted_no_header():
     # 'u' key (_undo_proxy_expand) keeps working, unchanged
     mod_proxy.proxy_expand_states.clear()
     mod_proxy._proxy_undo_stack.clear()
-    mod_proxy.proxy_expand_states[key_row1] = True
-    mod_proxy._proxy_undo_stack.append((key_row1, False))
+    mod_proxy.proxy_expand_states[key_row2] = True
+    mod_proxy._proxy_undo_stack.append((key_row2, False))
     key_changed = mod_proxy._undo_proxy_expand()
     check("proxy: 'u' key (_undo_proxy_expand) still undoes the last toggle, unchanged",
-          key_changed and mod_proxy.proxy_expand_states.get(key_row1) is False and not mod_proxy._proxy_undo_stack)
+          key_changed and mod_proxy.proxy_expand_states.get(key_row2) is False and not mod_proxy._proxy_undo_stack)
 
-    # Scroll wheel still works
+    # Scroll wheel still works (row argument irrelevant to wheel handling)
     mod_proxy.proxy_scroll_offset = 0
-    scroll_changed = mod_proxy._handle_proxy_mouse(64, 5, 1)
+    scroll_changed = mod_proxy._handle_proxy_mouse(64, 5, 2)
     check("proxy: scroll wheel (button 64) still works",
           scroll_changed and mod_proxy.proxy_scroll_offset == 3)
 
     # Auto-scroll-to-just-expanded: the entry that was just expanded stays visible in the very
-    # next render (this is what the item_positions_out/_proxy_just_expanded machinery guarantees,
-    # unchanged code -- verified byte-identical to pre-milestone-3 via `git diff`)
+    # next render (item_positions_out/_proxy_just_expanded machinery, now operating on the
+    # header-shifted line_map -- same mechanism the search-jump feature reuses)
     mod_proxy.proxy_scroll_offset = 0
     mod_proxy.proxy_expand_states.clear()
     mod_proxy._build_proxy_output()
     target_row = next(iter(mod_proxy.proxy_line_map))
     target_key = mod_proxy.proxy_line_map[target_row]
+    check("proxy: first body row after header shift is >= 2", target_row >= 2)
     mod_proxy._handle_proxy_mouse(0, 5, target_row)
     check("proxy: _proxy_just_expanded set by the click", mod_proxy._proxy_just_expanded == target_key)
     mod_proxy._build_proxy_output()
@@ -273,7 +291,7 @@ def run_probe_workflow():
     print("=" * 70)
     test_warnings_refresh_button()
     test_workers_freeze_button()
-    test_proxy_pane_reverted_no_header()
+    test_proxy_pane_permanent_search_bar_header()
 
     total = len(_RESULTS)
     passed = sum(1 for _, ok in _RESULTS if ok)

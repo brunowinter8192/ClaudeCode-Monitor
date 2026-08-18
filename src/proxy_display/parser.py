@@ -9,7 +9,7 @@ from .forwarded_parser import (
     _proxy_session_id_for_project,
     _infer_model_family, _summarize_fwd_message, _dict_to_list_fwd,
     _apply_delta_to_list, _extract_forwarded_fields, _parse_forwarded_log,
-    _lazy_load_messages_forwarded, parse_proxy_log_forwarded,
+    _lazy_load_messages_forwarded, parse_proxy_log_forwarded, reconstruct_all_messages,
 )
 
 # FUNCTIONS

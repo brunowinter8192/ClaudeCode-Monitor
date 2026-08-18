@@ -7,9 +7,11 @@ by mouse, not just keyboard). Milestone 1 covers worker selection in the worker-
 and the workers pane. Milestone 2 covers copy-by-click in the main/tokens/warnings/workers panes.
 Milestone 3 covers two of three remaining single-purpose keyboard controls (workers freeze,
 warnings refresh) as pane-chrome buttons — the third (proxy undo) got a button too but it was
-reverted 2026-07-30 per user decision after live-testing; `u` stays the only way to undo, and the
-proxy pane has no header. Milestone 4 covers gpu (digit keys 1-9 already covered by existing
-buttons; new `[refresh]`) and news (new `[refresh]`). `md/` holds every run's report.
+reverted 2026-07-30 per user decision after live-testing; `u` stays the only way to undo. Milestone
+4 covers gpu (digit keys 1-9 already covered by existing buttons; new `[refresh]`) and news (new
+`[refresh]`). (2026-08-18, unrelated proxy-pane search feature milestone: the proxy pane now HAS a
+permanent one-line header again — a search bar, not a button, see `p3_button_click_probe.py`'s
+entry below.) `md/` holds every run's report.
 
 ## Modules
 
@@ -73,7 +75,7 @@ panes' `_handle_*_mouse` / `_handle_*_key` functions.
 
 ---
 
-### p3_button_click_probe.py (309 LOC)
+### p3_button_click_probe.py (327 LOC)
 
 **Purpose:** Proves, per pane (workers freeze, warnings refresh), that after one real render pass
 the header/chrome button region is registered at a plausible coordinate, a synthetic click on it
@@ -81,23 +83,28 @@ produces the SAME state change as the corresponding key (`f`/`r`), the freeze ba
 text reflects state BEFORE the click (`[LIVE]`/`[FROZEN]`), a too-narrow pane registers no region
 (and renders no button text either), and that each pane's PRE-EXISTING click handling (workers
 row-select, warnings expand/copy) still works after the header-check was added ahead of it.
-**(2026-07-30) Proxy pane: button reverted, probe now proves the REVERT instead.** The `[undo]`
-button and the header/body split introduced solely to host it were reverted per user decision
-after live-testing (`u` stays the only way to undo) — `test_proxy_pane_reverted_no_header`
-replaces the old button test: asserts `_build_proxy_output` is back to a plain-string return, no
-`[undo]` text anywhere, no leftover `_proxy_header_regions` / `_format_proxy_header`, that row 1
-resolves to real body content (not a header), and that expand/collapse clicks, copy-symbol
-clicks, scroll, auto-scroll-to-just-expanded, and `_undo_proxy_expand` itself all still work at
-UNSHIFTED rows — using a real synthetic entry set (`_make_proxy_entry`, matching
-`dev/display/test_hover_map.py`'s shape), not just checking the absence of the button.
+**(2026-07-30) Proxy pane: `[undo]` button reverted** — `u` stays the only way to undo.
+**(2026-08-18) Proxy pane: PERMANENT search-bar header added (Milestone 2, unrelated to the
+button revert — a deliberate "always visible" design principle, not a hidden-feature button).**
+`test_proxy_pane_permanent_search_bar_header` (renamed from `test_proxy_pane_reverted_no_header`,
+whose assertions were the OPPOSITE of the new contract) asserts the new header+shift contract:
+`_build_proxy_output` returns a plain string with the search bar baked into row 1 (`"search:"`
+visible), no leftover `_proxy_header_regions` / `_format_proxy_header` (those were the reverted
+button's, never resurrected), row 1 is NOT a body key, row 2 is the first REQ header, clicking
+row 1 focuses the search bar, and that expand/collapse clicks, copy-symbol clicks, scroll,
+auto-scroll-to-just-expanded, and `_undo_proxy_expand` itself all still work at the SHIFTED rows
+— using a real synthetic entry set (`_make_proxy_entry`, matching `dev/display/test_hover_map.py`'s
+shape). Functional coverage of the search feature ITSELF (matching, highlighting, n/N, Esc,
+scroll-jump, the flow_id lazy-load fix) lives in `dev/pane_search/p2_search_feature_regression_test.py`
+— this probe stays scoped to click-parity/chrome, mirroring its role for the other panes.
 **Reads:** nothing external — seeds `tool_errors` / synthetic `workers` list / `proxy_entries`
 (via `_make_proxy_entry`) directly.
 **Writes:** `md/p3_button_click_probe_<timestamp>.md`; one throwaway IPC selection file under
 `/tmp/monitor_cc_selected_worker_<hash>.txt` (workers-pane project_filter
 `/tmp/click_ui_probe_p3_workers`), removed after the check.
 **Called by:** run manually — regression guard for the two remaining pane-chrome buttons (workers
-freeze, warnings refresh) and for the proxy pane's reverted no-header shape; re-run after any
-change to `_format_warnings_header`, `_handle_warnings_mouse`/`_handle_warnings_key`,
+freeze, warnings refresh) and for the proxy pane's permanent search-bar header shape; re-run after
+any change to `_format_warnings_header`, `_handle_warnings_mouse`/`_handle_warnings_key`,
 `format_workers_block`, `_handle_workers_mouse` (`(button,col,row,project_filter,frozen) ->
 (changed, frozen)`) / `_handle_workers_key`, or `_build_proxy_output`/`_handle_proxy_mouse`/
 `_undo_proxy_expand`.

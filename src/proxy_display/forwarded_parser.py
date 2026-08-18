@@ -125,10 +125,13 @@ def _extract_forwarded_fields(fwd_entry: dict, system: list, tools: list, messag
 #   is_first resets the family state; subsequent entries apply deltas onto the accumulated lists.
 #   Unchanged message dicts are SHARED across consecutive summary lists (shallow copy) — O(M) total
 #   unique summary objects, not O(N^2).
-# Deque bound: only the last PROXY_MESSAGES_KEEP_LAST entries have entry['messages'] populated;
-#   earlier entries carry messages=None (lazy-loadable via _lazy_load_messages_forwarded).
-# _fwd_req_idx: 0-based within this call; pane adds session-level offset for lazy-reload targeting.
-def _parse_forwarded_log(fwd_path: Path, last_pos: int, acc_by_family: dict) -> tuple:
+# Deque bound: only the last keep_last entries have entry['messages'] populated; earlier entries
+#   carry messages=None (lazy-loadable via _lazy_load_messages_forwarded). keep_last=None retains
+#   ALL entries' messages — the one-sweep search-reconstruction variant (see reconstruct_all_messages).
+# _fwd_req_idx: 0-based within THIS call only — NOT a stable global identifier across incremental
+#   polling calls (each call restarts req_idx at 0 for whatever new lines it reads). Use flow_id
+#   (globally unique, always populated) to correlate an entry back to its forwarded-log line.
+def _parse_forwarded_log(fwd_path: Path, last_pos: int, acc_by_family: dict, keep_last: int = PROXY_MESSAGES_KEEP_LAST) -> tuple:
     entries: list = []
     recent_window: deque = deque()
     try:
@@ -193,7 +196,7 @@ def _parse_forwarded_log(fwd_path: Path, last_pos: int, acc_by_family: dict) -> 
                 entry['diff_from_prev'] = _compute_diff(prev_messages_for_diff, new_summaries)
                 entries.append(entry)
                 recent_window.append((entry, new_summaries))
-                if len(recent_window) > PROXY_MESSAGES_KEEP_LAST:
+                if keep_last is not None and len(recent_window) > keep_last:
                     recent_window.popleft()
                 req_idx += 1
             new_pos = f.tell()
@@ -205,18 +208,20 @@ def _parse_forwarded_log(fwd_path: Path, last_pos: int, acc_by_family: dict) -> 
     return entries, new_pos
 
 # Replay _forwarded log from byte 0 to reconstruct messages for a stripped entry.
-# entry['_fwd_req_idx'] identifies the target position in the forwarded stream.
+# Matches by entry['flow_id'] (globally unique, always populated) — NOT entry['_fwd_req_idx'],
+# which is only unique WITHIN one incremental parse call and collides across polling batches
+# (verified 2026-08-18: _fwd_req_idx-based matching returned wrong content for 158/158 entries
+# in a simulated 2-batch session — see process-docs/pane_search/).
 # Returns True if entry['messages'] was populated; False on any failure.
 # Cost: O(fwd_file_size) — acceptable for the small delta log.
 def _lazy_load_messages_forwarded(entry: dict, fwd_path: Path) -> bool:
-    target_idx = entry.get('_fwd_req_idx')
-    if target_idx is None or fwd_path is None or not fwd_path.exists():
+    target_flow_id = entry.get('flow_id')
+    if not target_flow_id or fwd_path is None or not fwd_path.exists():
         return False
     family = _infer_model_family(entry.get('model', ''))
     temp_acc: dict = {}
     try:
         with open(fwd_path, 'r', encoding='utf-8') as f:
-            req_idx = 0
             while True:
                 raw_line = f.readline()
                 if not raw_line:
@@ -256,15 +261,22 @@ def _lazy_load_messages_forwarded(entry: dict, fwd_path: Path) -> bool:
                     elif len(summaries) < msg_cnt:
                         summaries.extend([{}] * (msg_cnt - len(summaries)))
                     temp_acc[e_family] = summaries
-                if req_idx == target_idx:
+                if fwd_e.get('flow_id') == target_flow_id:
                     reconstructed = temp_acc.get(family, [])
                     entry['messages'] = list(reconstructed)
                     entry['messages_total_chars'] = sum(s.get('chars', 0) for s in reconstructed)
                     return True
-                req_idx += 1
     except OSError:
         return False
     return False
+
+# One-sweep reconstruction: full pass over fwd_path retaining messages for EVERY entry
+# (keep_last=None). Returns {flow_id: messages} for the caller to merge into its own entries
+# list by flow_id (NOT _fwd_req_idx — see _lazy_load_messages_forwarded's docstring).
+# Cost: ~35ms / 190 entries measured on a real 6.8MB forwarded log (process-docs/pane_search/).
+def reconstruct_all_messages(fwd_path: Path) -> dict:
+    entries, _ = _parse_forwarded_log(fwd_path, 0, {}, keep_last=None)
+    return {e['flow_id']: e['messages'] for e in entries if e.get('flow_id')}
 
 # Read new proxy-log entries for the monitored project from the _forwarded dual-log.
 # acc_by_family: persisted at caller (pane) across polling cycles for delta reconstruction.
