@@ -7,9 +7,11 @@ Feasibility measurement + regression coverage for the proxy-pane search feature
 `forwarded_parser.py`, `search.py`). Milestone 1 (`p1_*`) probed the cost of candidate message-
 reconstruction strategies on real forwarded-delta logs — measurement only, no feature code.
 Milestone 2 (`p2_*`) is the regression suite for the implemented feature: permanent row-1
-search bar, one-sweep reconstruction, real-render-based matching, and the `flow_id`-based
-`_lazy_load_messages_forwarded` fix found during M2 investigation. See
-`process-docs/pane_search/` for the investigation trail.
+search bar, one-sweep reconstruction, real-render-based matching, the `flow_id`-based
+`_lazy_load_messages_forwarded` fix found during M2 investigation, and (follow-up) the UTF-8
+multi-byte keypress fix in `input.click_handler.read_keypress`. Milestone 3 (`p3_*`) is
+drag-to-select on the search bar (press-anchors, motion-extends, release-copies-to-clipboard).
+See `process-docs/pane_search/` for the investigation trail.
 
 ## Scripts
 
@@ -113,3 +115,35 @@ to `pane.py`'s search state/handlers, `format.py`'s `format_proxy_block`/`_apply
 **Calls out:** `src.proxy_display.pane`, `src.proxy_display.format`, `src.proxy_display.search`,
 `src.proxy_display.forwarded_parser`, `src.input.click_handler`, `src.constants` — loaded via
 `importlib.import_module`.
+
+---
+
+### p3_drag_select_regression_test.py (308 LOC)
+
+**Purpose:** Regression guard for drag-to-select on the search bar (row 1) — a NEW milestone
+(not folded into `p2`, mirroring `dev/click_ui`'s own per-milestone `p1`/`p2`/`p3`/`p4` file
+split rather than growing one file indefinitely). Covers: `_search_col_to_query_index`
+boundary-mapping correctness for both plain ASCII (single-width, always snaps to the boundary
+BEFORE the clicked char — the only possible relative offset within a 1-cell span) and a
+wide-char/emoji query (2-cell, snaps to the nearer half); the full press
+(`button==0,row==1`) → motion (`button==32`, the SGR "left button held" flag) → release
+(`(-1,-1,-1)` sentinel, now routed to `_handle_proxy_search_release` instead of the previous
+hard no-op) drag flow, asserting `copy_to_clipboard` (monkeypatched, not a real `pbcopy` call)
+receives EXACTLY the selected substring; a plain click (press+release, NO motion) makes ZERO
+clipboard calls (must never clobber the real clipboard with an empty string) and preserves the
+pre-existing focus-only behavior; a release with no prior row-1 press is a no-op; a drag that
+starts on a BODY row never arms search-bar dragging (motion after it falls through unchanged to
+the generic hover bucket); click-elsewhere / new-keyboard-input / Esc-cancel / session-change
+all clear a live selection; rendering wraps the selected substring in SGR reverse-video
+(`\033[7m...\033[27m`) and only when a selection is actually active.
+**Reads:** nothing external — seeds `src.proxy_display.pane` module state directly; drives the
+real `_handle_proxy_mouse`/`_handle_proxy_search_release`/`_handle_proxy_search_input`/
+`_render_proxy_search_bar` with direct `(button, col, row)` calls (not simulated raw SGR bytes —
+`read_mouse_event`'s own parsing is unchanged and out of scope; button 32 for a held-left-button
+drag is a documented SGR protocol fact taken as given, not re-derived here).
+**Writes:** `dev/pane_search/md/p3_drag_select_regression_test_<timestamp>.md`.
+**Called by:** run manually — regression guard for the drag-select feature; re-run after any
+change to `pane.py`'s `_search_col_to_query_index`, `_handle_proxy_mouse` (press/motion
+branches), `_handle_proxy_search_release`, `_clear_proxy_search_selection`, or
+`_render_proxy_search_bar`.
+**Calls out:** `src.proxy_display.pane` — loaded via `importlib.import_module`.
