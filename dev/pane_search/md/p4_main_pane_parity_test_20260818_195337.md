@@ -1,0 +1,81 @@
+# P4 main pane parity regression — 20260818_195337
+
+77/77 checks passed
+
+- [x] _main_search is a search_bar.SearchState instance
+- [x] _search_committed (dead, never read for branching) removed
+- [x] _search_cached_query (unchanged-query Enter-gate) removed — proxy's always-rerun convention now
+- [x] private _highlight_query_in_line duplicate removed
+- [x] utils.highlight_query_in_line imported instead
+- [x] row 1 shows the 'Search: ' label
+- [x] no [<-] click-arrow
+- [x] no [->] click-arrow
+- [x] no HOVER_BG baseline on the bar row
+- [x] row 1 is NOT a body key (it's the search bar)
+- [x] click at label end -> index 0
+- [x] click past the end -> clamped to len(query)
+- [x] press returns True (redraw)
+- [x] press focuses the bar
+- [x] press arms dragging
+- [x] press anchors at index 1 ('e')
+- [x] motion returns True and extends sel_end only
+- [x] release returns True (redraw)
+- [x] release disarms dragging
+- [x] release copies exactly the selected substring
+- [x] release still returns True (dragging disarmed)
+- [x] NO clipboard call on a plain click
+- [x] selection cleared after a plain click
+- [x] release with no armed drag returns False
+- [x] selection exists before the elsewhere-click
+- [x] elsewhere-click reports a change (selection cleared)
+- [x] selection cleared after clicking elsewhere
+- [x] body-row press does not arm dragging
+- [x] motion after a body-row press falls through to generic hover
+- [x] selection exists before typing
+- [x] typing reports a change
+- [x] selection cleared after typing
+- [x] typed char appended at the end
+- [x] backspace reports a change
+- [x] query has the SELECTED substring removed
+- [x] selection cleared after selection-delete
+- [x] backspace reports a change
+- [x] last char trimmed
+- [x] kill-line reports a change
+- [x] query fully emptied
+- [x] query fully emptied (not just the selected substring)
+- [x] selection also cleared
+- [x] matches survive plain backspace
+- [x] matches survive selection-delete backspace
+- [x] matches survive kill-line
+- [x] Enter reports a change
+- [x] matches found the two events containing the query
+- [x] match_set mirrors matches
+- [x] current_idx reset to 0
+- [x] Enter unfocuses the bar
+- [x] first Enter found 1 match
+- [x] query unchanged before the second Enter
+- [x] second Enter (same query) picked up the new event -> 2 matches now
+- [x] no-op with zero matches
+- [x] n advances to idx 1
+- [x] n advances to idx 2
+- [x] n wraps back to idx 0
+- [x] N (backward) wraps to idx 2
+- [x] cancel reports a change
+- [x] query cleared
+- [x] matches cleared
+- [x] focused cleared
+- [x] selection cleared
+- [x] main-pane-specific line offsets cleared too
+- [x] bar still renders (never hidden)
+- [x] search state populated before session change
+- [x] query cleared by session change
+- [x] matches cleared by session change
+- [x] focused cleared by session change
+- [x] main-pane-specific line offsets cleared by session change
+- [x] reverse-video ON code present
+- [x] reverse-video OFF code present
+- [x] the reversed span wraps exactly the selected substring
+- [x] no reverse-video codes when there is no selection
+- [x] current-match BG present
+- [x] highlight wraps exactly the matched substring, restore right after
+- [x] highlight is NOT a whole-row prefix (row 1 char after the newline is not the BG code)

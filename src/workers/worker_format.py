@@ -6,11 +6,16 @@ import time
 from ..constants import (
     GREEN, RED, YELLOW, WHITE, CYAN,
     DIM, PASTEL_PURPLE, SOFT_RESET,
+    SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
 )
 from ..format.token_format import _format_k, format_cache_tracker
 from ..jsonl import read_new_lines, parse_jsonl_lines, get_message_content, is_tool_use
 # From utils.py: right-align a ⎘/✓ copy symbol at the pane edge, width-guarded
 from ..utils import append_copy_symbol
+# From search_bar.py: shared BG-restore sentinel (2026-08-18, rollout sub-milestone 5) — this
+# module doesn't know a row's eventual chosen_bg (zebra/hover) at embed time, only
+# worker_pane.py's own render loop does, once computed; same pattern as format/token_format.py
+from ..search_bar import _BG_RESTORE_SENTINEL
 
 INDENT = '  '
 
@@ -81,8 +86,36 @@ def _worker_cache_copy_feedback(copy_feedback: Optional[dict], name: str) -> Opt
     return {(k[1], k[2]): exp for k, exp in copy_feedback.items()
             if isinstance(k, tuple) and len(k) == 3 and k[0] == name}
 
-# Build flat (all_lines, line_keys) for workers pane; keys: str=worker name, 3-tuple=cache entry, None=non-clickable
-def format_workers_block(workers: list, expand_states: dict = None, worker_turns: dict = None, scroll_offsets: dict = None, cache_expand_states: dict = None, frozen: bool = False, selected_name: Optional[str] = None, copy_feedback: Optional[dict] = None, regions_out: Optional[dict] = None) -> tuple:
+# Scope a flat search-match set (worker-tagged keys: str name / (name,'turn',turn_idx) /
+# (name,turn_idx,call_idx)) down to THIS worker's own token_format-shape keys
+# (('turn',turn_idx) / (turn_idx,call_idx)) — a match belonging to a DIFFERENT worker must never
+# highlight in this worker's own nested cache-tracker view.
+def _scope_matches_to_worker(matches, name: str) -> set:
+    scoped = set()
+    for k in matches or ():
+        if isinstance(k, tuple) and len(k) == 3 and k[0] == name:
+            scoped.add(('turn', k[2]) if k[1] == 'turn' else (k[1], k[2]))
+    return scoped
+
+# Scope the current match key to THIS worker's own token_format-shape key, or None when the
+# current match belongs to a different worker (or is the bare worker-level key itself, which
+# format_cache_tracker has no concept of).
+def _scope_current_key_to_worker(current_key, name: str):
+    if isinstance(current_key, tuple) and len(current_key) == 3 and current_key[0] == name:
+        return ('turn', current_key[2]) if current_key[1] == 'turn' else (current_key[1], current_key[2])
+    return None
+
+# Build flat (all_lines, line_keys) for workers pane; keys: str=worker name, 3-tuple=cache entry,
+# None=non-clickable. (2026-08-18, rollout sub-milestone 5) search_match_set/search_current_key
+# hold worker-TAGGED keys (str name / (name,'turn',turn_idx) / (name,turn_idx,call_idx) — same
+# shape state.matches in worker_pane.py holds). A worker-level match (bare name) container-marks
+# the header_line unconditionally (marker+line+sentinel, mirrors token_format's turn-header
+# treatment) — BEFORE append_copy_symbol, so the copy button stays outside the marked span. A
+# turn/call-level match is scoped down (_scope_matches_to_worker/_scope_current_key_to_worker)
+# to THIS worker's own token_format-shape keys and threaded into format_cache_tracker, which
+# does ALL the collapsed-container-mark / expanded-substring-highlight work internally — zero
+# new highlighting logic needed for the nested view.
+def format_workers_block(workers: list, expand_states: dict = None, worker_turns: dict = None, scroll_offsets: dict = None, cache_expand_states: dict = None, frozen: bool = False, selected_name: Optional[str] = None, copy_feedback: Optional[dict] = None, regions_out: Optional[dict] = None, search_match_set: Optional[set] = None, search_current_key=None, search_query: str = '') -> tuple:
     freeze_indicator = f" {YELLOW}[FROZEN]{SOFT_RESET}" if frozen else f" {CYAN}[LIVE]{SOFT_RESET}"
 
     try:
@@ -155,6 +188,9 @@ def format_workers_block(workers: list, expand_states: dict = None, worker_turns
         is_selected = selected_name is not None and name == selected_name
         sel_prefix = f"{GREEN}>>{SOFT_RESET} " if is_selected else "   "
         header_line = f"{sel_prefix}{toggle_symbol} {CYAN}[{idx}] {name}{SOFT_RESET}  {sc}{status.upper()}{SOFT_RESET}{pct_str}{spawned_str}{model_str}{tokens_str}"
+        if search_match_set and name in search_match_set:
+            marker = SEARCH_CURRENT_BG if name == search_current_key else SEARCH_MATCH_BG
+            header_line = f"{marker}{header_line}{_BG_RESTORE_SENTINEL}"
         if copy_feedback is not None:
             is_flash = copy_feedback.get(name, 0) > time.time()
             header_line = append_copy_symbol(header_line, '✓' if is_flash else '⎘', pane_width)
@@ -181,6 +217,9 @@ def format_workers_block(workers: list, expand_states: dict = None, worker_turns
                 visible_lines, visible_keys, _, _, _ = format_cache_tracker(
                     turns, per_worker_expand, 15, pane_width - 4, scroll_offset,
                     copy_feedback=_worker_cache_copy_feedback(copy_feedback, name),
+                    search_match_set=_scope_matches_to_worker(search_match_set, name),
+                    search_current_key=_scope_current_key_to_worker(search_current_key, name),
+                    search_query=search_query,
                 )
                 for cl, ck in zip(visible_lines, visible_keys):
                     all_lines.append(f"  {cl}")
