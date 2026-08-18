@@ -48,6 +48,7 @@ mod_click = importlib.import_module(f'{_ROOT_PKG}.input.click_handler')
 
 SEARCH_MATCH_BG = mod_constants.SEARCH_MATCH_BG
 SEARCH_CURRENT_BG = mod_constants.SEARCH_CURRENT_BG
+_BG_RESTORE_SENTINEL = mod_format._BG_RESTORE_SENTINEL
 
 PANE_WIDTH = 120
 _RESULTS = []
@@ -142,7 +143,8 @@ def test_line_map_shift():
 
 
 def test_collapsed_hit_marks_req_row():
-    print("\n[collapsed hit] Header row marked; no inner line marked (nothing rendered)")
+    print("\n[collapsed hit] Header TEXT EXTENT marked (not the whole row) — no inner line "
+          "marked (nothing rendered), no leftover unsubstituted sentinel")
     _reset_pane_state()
     entries = [_make_entry(i) for i in range(4)]
     mod_pane.proxy_entries.extend(entries)
@@ -156,10 +158,19 @@ def test_collapsed_hit_marks_req_row():
     lines = output.splitlines()
     marked_lines = [l for l in lines if SEARCH_CURRENT_BG in l]
     check("exactly one line carries SEARCH_CURRENT_BG (the collapsed REQ header)", len(marked_lines) == 1)
+    header_line = marked_lines[0]
+    check("marker sits AFTER the leading indent — NOT at column 0 (whole-row prefix would start there)",
+          header_line.index(SEARCH_CURRENT_BG) > 0)
+    check("no leftover unsubstituted _BG_RESTORE_SENTINEL in the final rendered output",
+          _BG_RESTORE_SENTINEL not in output)
+    check("full row is NOT whole-row-hoisted: SEARCH_CURRENT_BG occurrence count is exactly 1 "
+          "(a whole-row hoist would ALSO show it prepended a second time via chosen_bg)",
+          header_line.count(SEARCH_CURRENT_BG) == 1)
 
 
 def test_expanded_hit_marks_line():
-    print("\n[expanded hit] Header STAYS marked + the matching inner line ALSO marked")
+    print("\n[expanded hit] Header STAYS marked (text-extent only) + the matching inner line "
+          "is highlighted browser-find style (substring only, not the whole content row)")
     _reset_pane_state()
     entries = [_make_entry(i) for i in range(4)]
     mod_pane.proxy_entries.extend(entries)
@@ -174,6 +185,13 @@ def test_expanded_hit_marks_line():
     check("2 lines carry SEARCH_CURRENT_BG (header + inner content line)", len(marked_lines) == 2)
     inner_marked = [l for l in marked_lines if 'unique_marker_2' in l]
     check("the inner marked line actually contains the matched text", len(inner_marked) == 1)
+    inner_line = inner_marked[0]
+    check("marker sits immediately adjacent to the matched substring (not at line start) — "
+          "proves it wraps just the substring, not the whole row",
+          inner_line.index(SEARCH_CURRENT_BG) > 0 and
+          inner_line[inner_line.index(SEARCH_CURRENT_BG) + len(SEARCH_CURRENT_BG):].startswith('unique_marker_2'))
+    check("no leftover unsubstituted _BG_RESTORE_SENTINEL in the final rendered output",
+          _BG_RESTORE_SENTINEL not in output)
 
 
 def test_n_N_ordering():
