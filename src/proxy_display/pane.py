@@ -6,7 +6,6 @@ import os
 import time
 
 from ..constants import (
-    RESET, YELLOW, DIM, WHITE, CYAN,
     POLL_INTERVAL, INPUT_POLL_INTERVAL, PROXY_MESSAGES_KEEP_LAST,
     PROXY_REPARSE_INTERVAL_SECONDS,
 )
@@ -22,24 +21,20 @@ from ..input.click_handler import (
     enable_mouse, disable_mouse, read_mouse_event,
     resolve_parent_key, copy_to_clipboard, wait_for_input,
 )
-from ..utils import truncate_visible, _cell_width
 from ..ram_audit import register_ram_dump
 # From pane_error_log.py: shared exception-safe pane-error sink
 from ..pane_error_log import log_pane_error
-
-# Private search-bar colors (not in palette; internal to this module — mirrors
-# core/monitor_display.py's identical private-color pattern for its own search bar)
-_SRCH_LABEL = '\033[38;2;108;112;134m'   # muted gray — "search:" label
-_SRCH_IDLE  = '\033[38;2;166;173;200m'   # medium gray — unfocused query text
+# From search_bar.py: shared search-bar mechanics (state, rendering, key/mouse handling,
+# col->char mapping, BG-restore sentinel) — extracted 2026-08-18 from this module, the
+# reference implementation, as part of the pane-search rollout to the other panes.
+from .. import search_bar
 
 _PROXY_HEADER_LINES = 1  # fixed-height search bar row; unlike worker_proxy_pane's header this never wraps
-_SEARCH_BAR_LABEL = 'search: '  # single source for both the renderer and the col->char-index mapper
+_SEARCH_BAR_LABEL = 'search: '  # single source for both the renderer and the col->char-index mapper calls below
 
-# Kill-line binding (2026-08-18) — HYPOTHESIS, not confirmed: Cmd+Backspace is normally consumed
-# by the terminal app itself; on macOS, Ghostty most likely maps it to the kill-line control char
-# 0x15 (Ctrl-U) before it ever reaches this process. Named constant so a rebind after live
-# testing (if the real captured sequence differs) is a one-line change.
-_KILL_LINE_CHAR = '\x15'
+# Backward-compat alias — the canonical constant now lives in search_bar.py (shared by every
+# pane); kept here so existing call sites/tests referencing _KILL_LINE_CHAR need no changes.
+_KILL_LINE_CHAR = search_bar.KILL_LINE_CHAR
 
 proxy_entries: List[dict] = []
 proxy_expand_states: Dict[int, bool] = {}
@@ -66,20 +61,14 @@ _proxy_current_main_session: Optional[str] = None  # tracks session change for f
 _proxy_session_start_ts: Optional[str] = None  # filters new entries to current session window
 _proxy_undo_stack: list = []  # (key, prev_state) tuples for 'u' expand/collapse undo, capped at 200
 
-# Search state — permanent row-1 search bar (always visible, per user design principle)
-_proxy_search_query: str = ''
-_proxy_search_focused: bool = False
-_proxy_search_matches: List[int] = []       # entry_idx list, ordered by position in proxy_entries
-_proxy_search_match_set: Set[int] = set()   # set(_proxy_search_matches) for O(1) membership
-_proxy_search_current_idx: int = 0          # index into _proxy_search_matches for the jump target
-
-# Drag-to-select state (search bar only, row 1). Release always copies to clipboard (unchanged);
-# (2026-08-18 follow-up) ALSO an edit target — Backspace with an active selection deletes the
-# selected substring from the query instead of trimming the last char (see
-# _handle_proxy_search_input). No longer copy-only.
-_proxy_search_dragging: bool = False        # True between a row-1 press and its matching release
-_proxy_search_sel_anchor: Optional[int] = None  # char-boundary index [0, len(query)] where the drag started
-_proxy_search_sel_end: Optional[int] = None     # char-boundary index of the current/last drag position
+# Search state — permanent row-1 search bar (always visible, per user design principle).
+# One search_bar.SearchState instance replaces what used to be 8 separate globals (query,
+# focused, matches, match_set, current_idx, dragging, sel_anchor, sel_end) — attributes are
+# mutated in place, the reference itself is never rebound, so no `global _proxy_search`
+# declaration is needed anywhere below. .matches holds entry_idx values, ordered by position
+# in proxy_entries. Release always copies a drag-selection to clipboard; Backspace with an
+# active selection deletes it from the query (editor-style, see search_bar.handle_search_input).
+_proxy_search: search_bar.SearchState = search_bar.SearchState()
 
 # ORCHESTRATOR
 
@@ -87,7 +76,6 @@ _proxy_search_sel_end: Optional[int] = None     # char-boundary index of the cur
 def run_proxy_loop() -> None:
     from ..core import monitor as _monitor
     global _proxy_current_main_session, _proxy_session_start_ts, _copy_feedback_until
-    global _proxy_search_focused
 
     register_ram_dump('proxy', _proxy_ram_state)
     _proxy_current_main_session = _monitor._get_newest_main_session()
@@ -115,17 +103,17 @@ def run_proxy_loop() -> None:
                             # (-1,-1,-1) release sentinel — no-op unless a row-1 drag was active
                             if _handle_proxy_search_release():
                                 input_changed = True
-                        elif _proxy_search_focused:  # bare ESC while focused → clear query
+                        elif _proxy_search.focused:  # bare ESC while focused → clear query
                             if _handle_proxy_search_cancel():
                                 input_changed = True
-                    elif _proxy_search_focused:
+                    elif _proxy_search.focused:
                         if _handle_proxy_search_input(char):
                             input_changed = True
                     elif char == 'u':
                         if _undo_proxy_expand():
                             input_changed = True
                     elif char == '/':
-                        _proxy_search_focused = True
+                        _proxy_search.focused = True
                         input_changed = True
                     elif char in ('n', 'N'):
                         if _jump_search_match(forward=(char == 'n')):
@@ -233,78 +221,33 @@ def _proxy_ram_state() -> list:
         ('proxy_scroll_offset',   proxy_scroll_offset),
         ('proxy_log_position',    proxy_log_position),
         ('_proxy_jsonl_position', _proxy_jsonl_position),
-        ('_proxy_search_query',   _proxy_search_query),
-        ('_proxy_search_matches', _proxy_search_matches),
+        ('_proxy_search_query',   _proxy_search.query),
+        ('_proxy_search_matches', _proxy_search.matches),
     ]
 
-# Clear the drag-select highlight/state (not the query) — "click elsewhere or new input clears
-# the selection". Called from click-elsewhere, new-input, and Esc-cancel; never touches
-# _proxy_search_query itself.
-def _clear_proxy_search_selection() -> None:
-    global _proxy_search_dragging, _proxy_search_sel_anchor, _proxy_search_sel_end
-    _proxy_search_dragging = False
-    _proxy_search_sel_anchor = None
-    _proxy_search_sel_end = None
-
 # Cancel active search on bare ESC while focused; bar stays visible with an empty query.
-# Returns True (always triggers redraw).
+# Returns True (always triggers redraw). Thin wrapper — search_bar.handle_search_cancel resets
+# query/focused/matches/match_set/selection all at once, identical across every pane.
 def _handle_proxy_search_cancel() -> bool:
-    global _proxy_search_focused, _proxy_search_query, _proxy_search_matches, _proxy_search_match_set
-    _proxy_search_focused = False
-    _proxy_search_query = ''
-    _proxy_search_matches = []
-    _proxy_search_match_set = set()
-    _clear_proxy_search_selection()
-    return True
+    return search_bar.handle_search_cancel(_proxy_search)
 
-# Handle keyboard input while the search bar is focused; returns True if input_changed.
-# Editing NEVER clears _proxy_search_matches/_match_set (confirmed: neither did plain backspace/
-# typing before this change) — Enter remains the only recompute trigger, unchanged.
+# Handle keyboard input while the search bar is focused; returns True if input_changed. Thin
+# wrapper over search_bar.handle_search_input — _proxy_search_on_commit is the pane-specific
+# "run the actual search" callback, injected so the shared module stays data-model-agnostic.
 def _handle_proxy_search_input(char: str) -> bool:
-    global _proxy_search_query, _proxy_search_focused
-    # Any new input clears a lingering drag-selection highlight — capture its (start, end) range
-    # BEFORE clearing so Backspace can still delete it, and track whether one existed so an
-    # otherwise-unhandled char (e.g. a stray control character) still triggers the redraw that
-    # makes the highlight disappear, instead of silently mutating state with no repaint.
-    had_selection = _proxy_search_sel_anchor is not None
-    sel_range = None
-    if _proxy_search_sel_anchor is not None and _proxy_search_sel_end is not None:
-        s, e = sorted((_proxy_search_sel_anchor, _proxy_search_sel_end))
-        if s != e:
-            sel_range = (s, e)
-    _clear_proxy_search_selection()
-    if char == _KILL_LINE_CHAR:  # Cmd+Backspace hypothesis (see _KILL_LINE_CHAR) — kill whole line
-        _proxy_search_query = ''
-        return True
-    if char in ('\x7f', '\x08'):  # backspace (DEL or BS)
-        if sel_range is not None:
-            s, e = sel_range
-            _proxy_search_query = _proxy_search_query[:s] + _proxy_search_query[e:]
-        else:
-            _proxy_search_query = _proxy_search_query[:-1]
-        return True
-    if char in ('\r', '\n'):  # Enter → (re)run search, unfocus
-        _run_proxy_search()
-        _proxy_search_focused = False
-        if _proxy_search_matches:
-            _jump_to_search_match()
-        return True
-    if char.isprintable():
-        if len(_proxy_search_query) < 200:
-            _proxy_search_query += char
-            return True
-    return had_selection
+    return search_bar.handle_search_input(_proxy_search, char, on_commit=_proxy_search_on_commit)
 
-# Run the search: one-sweep reconstruction of ALL entries' messages (merged by flow_id — see
+# on_commit callback for search_bar.handle_search_input (fires on Enter): one-sweep
+# reconstruction of ALL entries' messages (merged by flow_id — see
 # forwarded_parser.reconstruct_all_messages), then build the match index via search.py's
-# real-render-based matcher. Always re-runs (not gated on query-unchanged) — the one-sweep is
-# cheap enough (~55ms/190 entries measured, process-docs/pane_search/) that "(re)runs the
-# search" picks up requests that streamed in since the last Enter.
-def _run_proxy_search() -> None:
-    global _proxy_search_matches, _proxy_search_match_set, _proxy_search_current_idx
-    if not _proxy_search_query:
-        _proxy_search_matches = []
-        _proxy_search_match_set = set()
+# real-render-based matcher, then jump to the first match if any. Always re-runs (not gated on
+# query-unchanged) — the one-sweep is cheap enough (~55ms/190 entries measured,
+# process-docs/pane_search/) that "(re)runs the search" picks up requests that streamed in
+# since the last Enter.
+def _proxy_search_on_commit(state: search_bar.SearchState) -> None:
+    if not state.query:
+        state.matches = []
+        state.match_set = set()
         return
     if _proxy_log_path is not None:
         fwd_path = _proxy_log_path.parent / 'dual_log' / f'{_proxy_log_path.stem}_forwarded.jsonl'
@@ -314,17 +257,18 @@ def _run_proxy_search() -> None:
             if fid in by_flow:
                 e['messages'] = by_flow[fid]
                 e['messages_total_chars'] = sum(s.get('chars', 0) for s in by_flow[fid])
-    _proxy_search_matches = build_search_matches(_proxy_search_query, proxy_entries, proxy_expand_states, _proxy_pane_width)
-    _proxy_search_match_set = set(_proxy_search_matches)
-    _proxy_search_current_idx = 0
+    state.matches = build_search_matches(state.query, proxy_entries, proxy_expand_states, _proxy_pane_width)
+    state.match_set = set(state.matches)
+    state.current_idx = 0
+    if state.matches:
+        _jump_to_search_match()
 
 # Jump to the next (forward=True) or previous search match, wrapping around; returns True if
 # a jump happened (False when there are no matches, e.g. before the first Enter)
 def _jump_search_match(forward: bool) -> bool:
-    global _proxy_search_current_idx
-    if not _proxy_search_matches:
+    if not _proxy_search.matches:
         return False
-    _proxy_search_current_idx = (_proxy_search_current_idx + (1 if forward else -1)) % len(_proxy_search_matches)
+    _proxy_search.current_idx = (_proxy_search.current_idx + (1 if forward else -1)) % len(_proxy_search.matches)
     _jump_to_search_match()
     return True
 
@@ -334,106 +278,38 @@ def _jump_search_match(forward: bool) -> bool:
 # regardless of expand state, since render_turn.py appends req_key unconditionally)
 def _jump_to_search_match() -> None:
     global _proxy_just_expanded
-    target_entry_idx = _proxy_search_matches[_proxy_search_current_idx]
+    target_entry_idx = _proxy_search.matches[_proxy_search.current_idx]
     _proxy_just_expanded = ('req', target_entry_idx)
 
-# Map a 1-based screen column to a char-BOUNDARY index [0, len(query)] into the query text
-# (a "cursor position", not a character index — needed so a click on the right half of a
-# 2-wide char snaps to AFTER it, not before). Walks cumulative _cell_width from the end of
-# _SEARCH_BAR_LABEL (which is pure ASCII, so its own width is just its char count).
+# Thin wrapper over search_bar.col_to_query_index, binding this pane's own label — preserves
+# the pre-extraction 2-arg call shape for existing callers/tests.
 def _search_col_to_query_index(col: int, query: str) -> int:
-    rel = col - 1 - len(_SEARCH_BAR_LABEL)
-    if rel <= 0:
-        return 0
-    pos = 0
-    for idx, ch in enumerate(query):
-        w = _cell_width(ch)
-        if rel < pos + w:
-            return idx if (rel - pos) * 2 < w else idx + 1
-        pos += w
-    return len(query)
+    return search_bar.col_to_query_index(col, query, _SEARCH_BAR_LABEL)
 
 # Finalize a row-1 drag on SGR mouse release; returns True if a redraw is needed. No-op (False)
 # unless a row-1 drag was actually in progress — safe to call unconditionally on EVERY release
 # sentinel, including releases after a plain click elsewhere (never armed) or after a normal
-# expand-click (never armed either, _proxy_search_dragging only set True by a row-1 press).
+# expand-click (never armed either, _proxy_search.dragging only set True by a row-1 press).
+# Thin wrapper — release-copies-to-clipboard is identical across every pane.
 def _handle_proxy_search_release() -> bool:
-    global _proxy_search_dragging
-    if not _proxy_search_dragging:
-        return False
-    _proxy_search_dragging = False
-    if _proxy_search_sel_anchor is None or _proxy_search_sel_end is None:
-        return False
-    start, end = sorted((_proxy_search_sel_anchor, _proxy_search_sel_end))
-    if start == end:
-        # Plain click, no motion in between — "keeps today's behavior: focus the bar" only.
-        # No clipboard call (never clobber the user's real clipboard with an empty string).
-        _clear_proxy_search_selection()
-        return True
-    copy_to_clipboard(_proxy_search_query[start:end])
-    return True
+    return search_bar.handle_search_mouse_release(_proxy_search, copy_to_clipboard)
 
-# Render the always-visible search bar (row 1): "search: <query>_" left, "N/M" match counter
-# right. A live/finished drag-selection renders in SGR reverse-video (terminal convention for
-# text selection, distinct from the app's own color palette — never touched by format.py's
-# body-row _apply_row_backgrounds, this header string is built and returned independently).
-# Returns ANSI string truncated to pane_width visible cells.
+# Render the always-visible search bar (row 1). Thin wrapper binding this pane's own label —
+# preserves the pre-extraction 1-arg call shape for existing callers/tests.
 def _render_proxy_search_bar(pane_width: int) -> str:
-    cursor = '_' if _proxy_search_focused else ''
-    left_plain = f"{_SEARCH_BAR_LABEL}{_proxy_search_query}{cursor}"
-    left_vis = sum(_cell_width(ch) for ch in left_plain)
-    m = len(_proxy_search_matches)
-    if _proxy_search_query and m > 0:
-        counter_plain = f"{_proxy_search_current_idx + 1}/{m}"
-        cnt_color = CYAN
-    elif _proxy_search_query:
-        counter_plain = "0/0"
-        cnt_color = _SRCH_LABEL
-    else:
-        counter_plain = ""
-        cnt_color = _SRCH_LABEL
-    right_vis = sum(_cell_width(ch) for ch in counter_plain) + (1 if counter_plain else 0)
-    gap = max(0, pane_width - left_vis - right_vis)
-    query_color = WHITE if _proxy_search_focused else _SRCH_IDLE
-    cursor_part = f"{CYAN}_" if _proxy_search_focused else ""
-    counter_part = f" {cnt_color}{counter_plain}{RESET}" if counter_plain else ""
-    if _proxy_search_sel_anchor is not None and _proxy_search_sel_end is not None:
-        sel_start, sel_end = sorted((_proxy_search_sel_anchor, _proxy_search_sel_end))
-    else:
-        sel_start = sel_end = 0
-    if sel_start != sel_end:
-        before = _proxy_search_query[:sel_start]
-        selected = _proxy_search_query[sel_start:sel_end]
-        after = _proxy_search_query[sel_end:]
-        query_part = f"{query_color}{before}{RESET}\033[7m{selected}\033[27m{query_color}{after}{RESET}"
-    else:
-        query_part = f"{query_color}{_proxy_search_query}{RESET}"
-    bar = (
-        f"{_SRCH_LABEL}{_SEARCH_BAR_LABEL}{RESET}"
-        f"{query_part}"
-        f"{cursor_part}{RESET}"
-        f"{' ' * gap}"
-        f"{counter_part}"
-    )
-    return truncate_visible(bar, pane_width)
+    return search_bar.render_search_bar(_proxy_search, pane_width, label=_SEARCH_BAR_LABEL)
 
 # Process one mouse event; returns True if display should refresh
 def _handle_proxy_mouse(button: int, col: int, row: int) -> bool:
     global proxy_expand_states, proxy_scroll_offset, proxy_hover_row
     global _proxy_just_expanded, _copy_feedback_until, _proxy_undo_stack
-    global _proxy_search_focused, _proxy_search_dragging, _proxy_search_sel_anchor, _proxy_search_sel_end
     if button == 0:
         if row == 1:  # search bar row — focuses; also anchors a potential drag-select
-            _proxy_search_focused = True
-            idx = _search_col_to_query_index(col, _proxy_search_query)
-            _proxy_search_sel_anchor = idx
-            _proxy_search_sel_end = idx
-            _proxy_search_dragging = True
-            return True
+            return search_bar.handle_search_mouse_press(_proxy_search, col, _SEARCH_BAR_LABEL)
         # Click elsewhere clears any lingering drag-selection highlight (before the early-return
         # below, so even a click on an empty/unmapped row clears it)
-        had_selection = _proxy_search_sel_anchor is not None
-        _clear_proxy_search_selection()
+        had_selection = _proxy_search.sel_anchor is not None
+        search_bar.clear_selection(_proxy_search)
         key = proxy_line_map.get(row)
         if key is None:
             return had_selection
@@ -474,11 +350,10 @@ def _handle_proxy_mouse(button: int, col: int, row: int) -> bool:
     if button == 65:
         proxy_scroll_offset = max(0, proxy_scroll_offset - 3)
         return True
-    if button == 32 and _proxy_search_dragging:  # motion with left button held (0+32), row-1 drag active
+    if button == 32 and _proxy_search.dragging:  # motion with left button held (0+32), row-1 drag active
         # row is ignored while dragging — clamps vertical drift to the bar's own column model,
-        # a body-row drag never sets _proxy_search_dragging so this never fires there
-        _proxy_search_sel_end = _search_col_to_query_index(col, _proxy_search_query)
-        return True
+        # a body-row drag never sets _proxy_search.dragging so this never fires there
+        return search_bar.handle_search_mouse_motion(_proxy_search, col, _SEARCH_BAR_LABEL)
     if button >= 32:
         proxy_hover_row = row
         return True
@@ -502,7 +377,6 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
     global _proxy_current_main_session, _proxy_session_start_ts
     global _proxy_stripped_pos, _proxy_injected_pos, _proxy_acc_stripped, _proxy_acc_injected
     global _proxy_undo_stack
-    global _proxy_search_query, _proxy_search_focused, _proxy_search_matches, _proxy_search_match_set
     if now - last_data_refresh < POLL_INTERVAL:
         return input_changed, last_data_refresh
     newest = monitor._get_newest_main_session()
@@ -528,11 +402,7 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
         _proxy_injected_pos = 0
         _proxy_acc_stripped.clear()
         _proxy_acc_injected.clear()
-        _proxy_search_query = ''
-        _proxy_search_focused = False
-        _proxy_search_matches = []
-        _proxy_search_match_set = set()
-        _clear_proxy_search_selection()
+        search_bar.handle_search_cancel(_proxy_search)  # reset query/focused/matches/selection
         input_changed = True
     if _last_full_parse_ts == 0.0:
         _last_full_parse_ts = now
@@ -613,8 +483,8 @@ def _build_proxy_output() -> str:
         return header + '\n' + body
     item_positions: dict = {}
     current_match_entry_idx = (
-        _proxy_search_matches[_proxy_search_current_idx]
-        if _proxy_search_matches and _proxy_search_current_idx < len(_proxy_search_matches)
+        _proxy_search.matches[_proxy_search.current_idx]
+        if _proxy_search.matches and _proxy_search.current_idx < len(_proxy_search.matches)
         else None
     )
     # format_proxy_block is called with content_height as its own pane_height argument and
@@ -626,8 +496,8 @@ def _build_proxy_output() -> str:
         content_height, pane_width, proxy_scroll_offset,
         turns=_proxy_cache_turns, item_positions_out=item_positions,
         copy_feedback=_copy_feedback_until, copy_rows_out=_proxy_copy_rows,
-        search_match_set=_proxy_search_match_set, search_current_entry_idx=current_match_entry_idx,
-        search_query=_proxy_search_query,
+        search_match_set=_proxy_search.match_set, search_current_entry_idx=current_match_entry_idx,
+        search_query=_proxy_search.query,
     )
     max_scroll = max(0, total_lines - viewport_lines_n)
     proxy_scroll_offset = min(proxy_scroll_offset, max_scroll)
@@ -650,8 +520,8 @@ def _build_proxy_output() -> str:
                 content_height, pane_width, proxy_scroll_offset,
                 turns=_proxy_cache_turns,
                 copy_feedback=_copy_feedback_until, copy_rows_out=_proxy_copy_rows,
-                search_match_set=_proxy_search_match_set, search_current_entry_idx=current_match_entry_idx,
-                search_query=_proxy_search_query,
+                search_match_set=_proxy_search.match_set, search_current_entry_idx=current_match_entry_idx,
+                search_query=_proxy_search.query,
             )
             shifted = {r + _PROXY_HEADER_LINES: k for r, k in proxy_line_map.items()}
             proxy_line_map.clear()

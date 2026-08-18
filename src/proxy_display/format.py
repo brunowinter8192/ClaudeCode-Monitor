@@ -6,16 +6,13 @@ from ..constants import (
     RESET, SOFT_RESET, DIM, YELLOW, HOVER_BG,
     DIM_YELLOW_BG, DIM_GREEN_BG, ZEBRA_BG_A, ZEBRA_BG_B, COLLISION_BG,
 )
-
-# Placeholder a search-highlight span's restore code embeds instead of a real color (render_turn.py
-# doesn't know the row's eventual chosen_bg — zebra/hover/strip/collision — at embed time; only
-# _apply_row_backgrounds does, once it runs). Looks like a real (if unused) SGR code so the
-# existing _ANSI_ESCAPE_RE (\x1b\[[0-9;]*m) strips it as zero-width everywhere that already
-# happens (copy-button padding math, truncate_visible) — substituted for the real chosen_bg here.
-_BG_RESTORE_SENTINEL = '\033[999m'
 from ..format.token_format import _format_k
 from ..utils import truncate_visible
 from .parser import _chars_to_tokens
+# From search_bar.py: shared BG-restore sentinel + substitution (2026-08-18 extraction — was
+# defined locally here, now the single source for every pane that embeds a search-highlight span
+# it can't resolve to a real color at render time)
+from ..search_bar import _BG_RESTORE_SENTINEL, resolve_bg_restore
 
 # FUNCTIONS
 
@@ -123,16 +120,14 @@ def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_en
             chosen_bg = COLLISION_BG
         else:
             chosen_bg = zebra_bg
-        if _BG_RESTORE_SENTINEL in line:
-            # chosen_bg is '' for ZEBRA_BG_A rows (no override) — substituting '' would DELETE
-            # the sentinel outright, leaving the search-highlight BG active with nothing to
-            # close it before the trailing \033[K erase-to-EOL, flooding the rest of the row
-            # gold (2026-08-18 live bug, reproduced byte-for-byte). '' only means "no override"
-            # in the LEADING f'{chosen_bg}{trunc}' position because the PRIOR row's own trailing
-            # RESET already cleared the terminal's active background by the time this row starts
-            # printing — mid-line, after a real color WAS set (the search marker), omission
-            # doesn't restore anything; it must be an explicit reset instead.
-            line = line.replace(_BG_RESTORE_SENTINEL, chosen_bg if chosen_bg else '\033[49m')
+        # search_bar.resolve_bg_restore substitutes any _BG_RESTORE_SENTINEL for chosen_bg,
+        # falling back to an explicit '\033[49m' when chosen_bg is '' (ZEBRA_BG_A rows) — a
+        # bare '' substitution would DELETE the sentinel outright, leaving the search-highlight
+        # BG active with nothing to close it before the trailing \033[K erase-to-EOL, flooding
+        # the rest of the row (2026-08-18 live bug, reproduced byte-for-byte; see
+        # search_bar.py's resolve_bg_restore for the full reasoning on why the LEADING
+        # f'{chosen_bg}{trunc}' position doesn't need the same fix).
+        line = resolve_bg_restore(line, chosen_bg)
         trunc = truncate_visible(line, pane_width)
         result_lines.append(f"{chosen_bg}{trunc}\033[K{RESET}")
     return result_lines
