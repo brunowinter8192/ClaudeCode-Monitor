@@ -21,13 +21,15 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 
 ## Modules
 
-### pane.py (223 LOC)
+### pane.py (336 LOC)
 
 **Purpose:** Left control pane event loop. Collection stats display, SGR mouse button click dispatch, subprocess launch, running-state indicator. `NEWS_POLL_INTERVAL = 2.0` s; `LOG_RUNNING_RECENT_SECS = 60`. **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — an uncaught exception (this pane previously had none) is caught, logged via `pane_error_log.log_pane_error('news')`, and the loop continues after `wait_for_input(INPUT_POLL_INTERVAL)`; `KeyboardInterrupt`/`SystemExit` still propagate, `finally: disable_mouse(); restore_terminal()` still runs. **(2026-07-30) New `[refresh]` header button:** appended to the `CoinDesk News Pipeline` title line (row 1, disjoint from the `[run pipeline]`/`[running…]` button which starts several rows down), registered under `('refresh', 'refresh')`. The mouse dispatch loop now special-cases `action == 'refresh'` (sets `force_refresh = True`) BEFORE the pre-existing `if not _is_running(): _fire_pipeline()` branch — previously that branch fired UNCONDITIONALLY on any matched region regardless of `action`/`target` (there was only ever one button, so this never mattered before). Width-guarded with a real gate — no button text, no region, when it doesn't fit. **(2026-07-30 review fix) Decoration yields to the button, not the reverse:** the `'═' * min(pane_width, 52)` rule used to be computed at FULL length regardless of whether `[refresh]` fit, so the button silently disappeared at pane_width < 86 even though the title text needed only 25 cols — `utils.compute_header_rule_len('  CoinDesk News Pipeline', '[refresh]', 52, pane_width)` now shrinks the rule first (down to a 4-char minimum) to make room for the button. Crossover: button visible from pane_width >= 38 (was 86); title text always renders regardless of width. Verified with a width sweep in `dev/click_ui/p4_gpu_news_button_probe.py` spanning both sides of the crossover, down to well below today's live pane width (107).
+
+**(2026-08-18, rollout sub-milestone 8) Permanent row-1 search bar -- HIGHLIGHT-ONLY, same reduced scope as the gpu pane (`src/gpu_pane/pane.py`, this pane's structural twin): no scroll/viewport infra, so no jump-to-match; `n`/`N` cycles `current_idx` only (which on-screen match gets `SEARCH_CURRENT_BG` vs `SEARCH_MATCH_BG`, and the N/M counter), zero scroll call. `_news_search: search_bar.SearchState`; mechanics called directly at the INLINE mouse/key dispatch in `run_news_loop` (same "no standalone handler function" boundary as gpu, unchanged). `_news_search_on_commit` (Enter callback) calls `_render_pane` ONCE without search kwargs, splits/strips/scans exactly like the gpu pane's matcher -- no separate matcher module. `_render_pane` applies highlighting as a single post-loop pass; NO sentinel needed (no per-row background at all, same simple case as gpu/main pane). `_render_pane`'s own `_button_regions` row numbering stays UNSHIFTED -- `run_news_loop` shifts every region by `+_NEWS_SEARCH_BAR_LINES` EXTERNALLY after `_render_pane` returns; `dev/click_ui/p4_gpu_news_button_probe.py` (calls `_render_pane` directly) needed ZERO changes. **`log_pane.py` is explicitly OUT of scope for this milestone** -- excluded per the approved decision, no search bar there.
 **Reads:** `rag-cli list_documents searxng_crypto` + `rag-cli list_collections --json` (every 2s); `LAST_RUN_FILE` (every 2s); `_pipeline_proc.poll()` (every render); log file via `_is_running_via_log()`.
-**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`).
+**Writes:** stdout (full-screen ANSI via `\033[2J\033[3J\033[H`); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`); mutates `_news_search` (query/focused/matches/match_set/current_idx/drag-select fields).
 **Called by:** `workflow.py` (`--mode news` route).
-**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`), `log_parser` (constants + file helpers), `pane_error_log` (`log_pane_error`), `utils` (`compute_header_rule_len`), `subprocess.Popen` (pipeline launch).
+**Calls out:** `click_handler` (keyboard + mouse via `enable_mouse`/`read_mouse_event`, `copy_to_clipboard`), `log_parser` (constants + file helpers), `pane_error_log` (`log_pane_error`), `utils` (`compute_header_rule_len`, `highlight_query_in_line`), `search_bar` (shared search-bar mechanics), `subprocess.Popen` (pipeline launch).
 
 ---
 
@@ -57,8 +59,11 @@ Standalone tmux Window 5 "news" pane pair that controls and observes the CoinDes
 |---|---|---|---|
 | `pane.py` | `_button_regions: dict[(start_col, end_col, phys_row) → (action, target)]` | mouse-click handler in `run_news_loop` | `_render_pane` (cleared + rebuilt per tick); `('refresh', 'refresh')` value added 2026-07-30 for the header `[refresh]` button, on row 1 — always disjoint from the `('run', 'pipeline')` entry, which starts several rows lower |
 | `pane.py` | `_pipeline_proc: Popen \| None` | `_is_running()` | `_fire_pipeline()` |
+| `pane.py` | `_news_search: search_bar.SearchState` (2026-08-18) | `.matches` holds 0-based indices into `_render_pane`'s own lines list (no click-interactivity concept for matches) | mutated by the inline mouse/key dispatch in `run_news_loop` |
 
 ## Gotchas
+
+- **`log_pane.py` has NO search bar** (2026-08-18) -- explicitly excluded from the pane-search rollout per the approved decision. Only `pane.py` (the left control pane) gained one; the right log-tail pane's top-anchored scroll-free rendering was judged out of scope.
 
 - `log_parser.py` is the constant anchor for the package. `WEBSEARCH_ROOT`, `LOG_DIR`, `LAST_RUN_FILE`, `TARGET_COLLECTION` all live there. Both pane.py and log_pane.py import from it — no constants in `src/constants.py`.
 - `_LOG_LINE_RE` `\s+` group before `(.*)` consumes ALL leading whitespace from the message — `msg` carries no leading spaces. Whitelist patterns must NOT include leading spaces (e.g. `\[(OK|FAIL)\]`, not `  \[(OK|FAIL)\]`).

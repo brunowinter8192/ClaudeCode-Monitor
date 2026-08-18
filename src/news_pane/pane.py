@@ -7,20 +7,27 @@ import time
 
 from ..constants import (
     RESET, GREEN, YELLOW, DIM, CYAN,
-    INPUT_POLL_INTERVAL,
+    INPUT_POLL_INTERVAL, SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
 )
 from ..input.click_handler import (
     setup_keyboard_input, restore_terminal, read_keypress, wait_for_input,
-    enable_mouse, disable_mouse, read_mouse_event,
+    enable_mouse, disable_mouse, read_mouse_event, copy_to_clipboard,
 )
-# From utils.py: shrinking-rule header layout (decoration yields to the [refresh] button first)
-from ..utils import compute_header_rule_len
+# From utils.py: shrinking-rule header layout (decoration yields to the [refresh] button first);
+# browser-find-style inline substring highlight
+from ..utils import compute_header_rule_len, highlight_query_in_line
 from .log_parser import (
     TARGET_COLLECTION, WEBSEARCH_ROOT, read_last_run_ts,
     find_log_file, RUN_START_MARKER, RUN_END_MARKER,
 )
 # From pane_error_log.py: shared exception-safe pane-error sink
 from ..pane_error_log import log_pane_error
+# From search_bar.py: shared search-bar mechanics (state, key/mouse handling, drag-select) --
+# rollout sub-milestone 8, retrofitting the news pane onto the proxy pane's reference
+# implementation. HIGHLIGHT-ONLY, same reduced scope as the gpu pane -- no scroll/viewport
+# exists here either, so no jump-to-match; n/N cycles current_idx with zero scroll call. Only
+# news_pane/pane.py is in scope -- log_pane.py is EXCLUDED per the approved decision.
+from .. import search_bar
 
 NEWS_POLL_INTERVAL      = 2.0
 LOG_RUNNING_RECENT_SECS = 60
@@ -28,6 +35,14 @@ LOG_RUNNING_RECENT_SECS = 60
 _ANSI_RE        = re.compile(r'\x1b\[[0-9;]*[mKHJABCDEFGsuTXP]')
 _button_regions: dict                      = {}
 _pipeline_proc: subprocess.Popen | None   = None
+
+_NEWS_SEARCH_BAR_LINES = 1  # fixed-height search bar row; the rule+[refresh] header (below it) shifts down by exactly this
+_NEWS_SEARCH_BAR_LABEL = 'search: '
+
+# Search state -- permanent row-1 search bar. .matches holds 0-based indices into _render_pane's
+# OWN (unshifted) lines list -- same design as the gpu pane, no click-interactivity concept for
+# matches here (only buttons are clickable).
+_news_search: search_bar.SearchState = search_bar.SearchState()
 
 # ORCHESTRATOR
 
@@ -50,23 +65,52 @@ def run_news_loop() -> None:
                     char = read_keypress()
                     if char is None:
                         break
-                    if char in ('r', 'R'):
-                        force_refresh = True
-                        input_changed = True
-                    elif char == '\033':
+                    if char == '\033':
                         event = read_mouse_event(char)
-                        if event is not None:
+                        if event is not None and event[0] != -1:
                             button, col, row = event
                             if button == 0:
-                                for (sc, ec, er), (action, target) in list(_button_regions.items()):
-                                    if row == er and sc <= col <= ec:
-                                        if action == 'refresh':
-                                            force_refresh = True
-                                            input_changed = True
-                                        elif not _is_running():
-                                            _fire_pipeline()
-                                            input_changed = True
-                                        break
+                                if row == 1:  # search bar row -- focuses; also anchors a potential drag-select
+                                    if search_bar.handle_search_mouse_press(_news_search, col, _NEWS_SEARCH_BAR_LABEL):
+                                        input_changed = True
+                                else:
+                                    # Click elsewhere ([refresh]/[run pipeline] or unmapped) clears
+                                    # any lingering drag-selection highlight
+                                    if _news_search.sel_anchor is not None:
+                                        input_changed = True
+                                    search_bar.clear_selection(_news_search)
+                                    for (sc, ec, er), (action, target) in list(_button_regions.items()):
+                                        if row == er and sc <= col <= ec:
+                                            if action == 'refresh':
+                                                force_refresh = True
+                                                input_changed = True
+                                            elif not _is_running():
+                                                _fire_pipeline()
+                                                input_changed = True
+                                            break
+                            elif button == 32 and _news_search.dragging:  # motion with left button held (0+32), row-1 drag active
+                                if search_bar.handle_search_mouse_motion(_news_search, col, _NEWS_SEARCH_BAR_LABEL):
+                                    input_changed = True
+                        elif event is not None:
+                            # (-1,-1,-1) release sentinel -- no-op unless a row-1 drag was active
+                            if search_bar.handle_search_mouse_release(_news_search, copy_to_clipboard):
+                                input_changed = True
+                        elif _news_search.focused:  # bare ESC -> cancel search
+                            if search_bar.handle_search_cancel(_news_search):
+                                input_changed = True
+                    elif _news_search.focused:
+                        on_commit = lambda state: _news_search_on_commit(state, status)
+                        if search_bar.handle_search_input(_news_search, char, on_commit=on_commit):
+                            input_changed = True
+                    elif char == '/':
+                        _news_search.focused = True
+                        input_changed = True
+                    elif char in ('n', 'N'):
+                        if _jump_news_search_match(forward=(char == 'n')):
+                            input_changed = True
+                    elif char in ('r', 'R'):
+                        force_refresh = True
+                        input_changed = True
 
                 now = time.time()
                 if force_refresh or now - last_data_refresh >= NEWS_POLL_INTERVAL:
@@ -84,7 +128,24 @@ def run_news_loop() -> None:
                     except OSError:
                         pane_width, pane_height = 80, 24
                     running = _is_running()
-                    output  = _render_pane(pane_width, pane_height, status, running)
+                    current_match_line = (
+                        _news_search.matches[_news_search.current_idx]
+                        if _news_search.matches and _news_search.current_idx < len(_news_search.matches)
+                        else None
+                    )
+                    body = _render_pane(pane_width, pane_height, status, running,
+                                        search_query=_news_search.query,
+                                        search_match_line_set=_news_search.match_set,
+                                        search_current_line=current_match_line)
+                    # _render_pane's own _button_regions rows are relative to ITS OWN top --
+                    # shift by _NEWS_SEARCH_BAR_LINES since the search bar now owns physical row
+                    # 1 (mirrors gpu_pane's identical pattern; _render_pane itself stays
+                    # unshifted/reusable -- dev/click_ui/p4_gpu_news_button_probe.py calls it
+                    # directly and needed zero changes).
+                    shifted = {(sc, ec, er + _NEWS_SEARCH_BAR_LINES): v for (sc, ec, er), v in _button_regions.items()}
+                    _button_regions.clear()
+                    _button_regions.update(shifted)
+                    output = _render_news_search_bar(pane_width) + '\n' + body
                     if output != last_output:
                         print('\033[2J\033[3J\033[H', end='', flush=True)
                         print(output, end='', flush=True)
@@ -179,8 +240,54 @@ def _strip_ansi(s: str) -> str:
     return _ANSI_RE.sub('', s)
 
 
-# Build full pane content; registers button region as side effect
-def _render_pane(pane_width: int, pane_height: int, status: dict, running: bool) -> str:
+# on_commit callback for search_bar.handle_search_input (fires on Enter): calls _render_pane
+# ONCE without search kwargs (plain baseline), splits on '\n', ANSI-strips each, and collects
+# the 0-based indices whose text contains query, case-insensitive -- same design as the gpu
+# pane's matcher (no separate matcher function needed, no collapse/expand state to force-open).
+# Always re-runs (not gated on query-unchanged), matching every other pane's convention.
+def _news_search_on_commit(state: search_bar.SearchState, status: dict) -> None:
+    if not state.query:
+        state.matches = []
+        state.match_set = set()
+        return
+    try:
+        pane_width = os.get_terminal_size().columns
+    except OSError:
+        pane_width = 80
+    plain = _render_pane(pane_width, 0, status, _is_running())
+    q = state.query.lower()
+    matches = [i for i, line in enumerate(plain.split('\n')) if q in _strip_ansi(line).lower()]
+    state.matches = matches
+    state.match_set = set(matches)
+    state.current_idx = 0
+
+# Cycle the current match (updating which occurrence gets SEARCH_CURRENT_BG vs SEARCH_MATCH_BG,
+# and the N/M counter) -- NO jump/scroll call, per the approved decision: this pane has no
+# scroll/viewport infra at all, same as the gpu pane. Returns True if a cycle happened (False
+# when there are no matches, e.g. before the first Enter).
+def _jump_news_search_match(forward: bool) -> bool:
+    if not _news_search.matches:
+        return False
+    _news_search.current_idx = (_news_search.current_idx + (1 if forward else -1)) % len(_news_search.matches)
+    return True
+
+# Render the always-visible search bar (row 1). Thin wrapper binding this pane's own label.
+def _render_news_search_bar(pane_width: int) -> str:
+    return search_bar.render_search_bar(_news_search, pane_width, label=_NEWS_SEARCH_BAR_LABEL)
+
+
+# Build full pane content; registers button region as side effect. (2026-08-18, rollout
+# sub-milestone 8) search_query/search_match_line_set/search_current_line -- HIGHLIGHT-ONLY,
+# applied as a SINGLE post-loop pass right before the final join. No sentinel needed: this pane
+# has no per-row background/zebra/hover loop at all -- utils.highlight_query_in_line's default
+# restore_bg='\\033[49m' is directly correct, same simple case as the gpu pane and
+# core/monitor_display.py's main pane. _button_regions' own row numbering stays relative to
+# THIS function's own top -- callers that prepend a search bar shift it externally (see
+# news_pane.run_news_loop), so this function stays reusable/directly-testable (dev/click_ui/
+# p4_gpu_news_button_probe.py calls it directly and needed zero changes).
+def _render_pane(pane_width: int, pane_height: int, status: dict, running: bool,
+                  search_query: str = '', search_match_line_set: set | None = None,
+                  search_current_line: int | None = None) -> str:
     _button_regions.clear()
     lines: list[str] = []
 
@@ -219,5 +326,11 @@ def _render_pane(pane_width: int, pane_height: int, status: dict, running: bool)
     if not running:
         _button_regions[(vis_len + pad + 1, vis_len + pad + len(btn), phys_row)] = ('run', 'pipeline')
     lines.append(content + ' ' * pad + btn)
+
+    if search_query and search_match_line_set:
+        for idx in search_match_line_set:
+            if 0 <= idx < len(lines):
+                marker = SEARCH_CURRENT_BG if idx == search_current_line else SEARCH_MATCH_BG
+                lines[idx] = highlight_query_in_line(lines[idx], search_query, marker)
 
     return "\n".join(lines)

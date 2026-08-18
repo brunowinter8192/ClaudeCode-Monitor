@@ -100,7 +100,10 @@ def test_warnings_refresh_button():
     output, header = mod_warnings._build_warnings_output()
     regions = dict(mod_warnings._warnings_header_regions)
     check("warnings: [refresh] button region registered", regions.get((sorted(regions)[0])) == 'refresh' if regions else False)
-    check("warnings: exactly one header region, on row 1", len(regions) == 1 and next(iter(regions))[2] == 1)
+    # (2026-08-18, rollout sub-milestone 6) row shifted from 1 to 2 -- the search bar now owns
+    # physical row 1, the [refresh] header (still exactly one row) shifts to row 2.
+    check("warnings: exactly one header region, on row 2 (shifted past the new search bar)",
+          len(regions) == 1 and next(iter(regions))[2] == 1 + mod_warnings._WARNINGS_SEARCH_BAR_LINES)
     check("warnings: button text visible in header", '[refresh]' in header)
 
     (sc, ec, er), _ = next(iter(regions.items()))

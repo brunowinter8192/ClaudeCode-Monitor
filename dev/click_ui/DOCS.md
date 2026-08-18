@@ -87,7 +87,7 @@ panes' `_handle_*_mouse` / `_handle_*_key` functions.
 
 ---
 
-### p3_button_click_probe.py (327 LOC)
+### p3_button_click_probe.py (330 LOC)
 
 **Purpose:** Proves, per pane (workers freeze, warnings refresh), that after one real render pass
 the header/chrome button region is registered at a plausible coordinate, a synthetic click on it
@@ -120,6 +120,16 @@ any change to `_format_warnings_header`, `_handle_warnings_mouse`/`_handle_warni
 `format_workers_block`, `_handle_workers_mouse` (`(button,col,row,project_filter,frozen) ->
 (changed, frozen)`) / `_handle_workers_key`, or `_build_proxy_output`/`_handle_proxy_mouse`/
 `_undo_proxy_expand`.
+
+**(2026-08-18, rollout sub-milestone 6) `test_warnings_refresh_button`'s row assertion updated.**
+`warnings_pane.py` gained its own permanent row-1 search bar — the pre-existing `[refresh]`
+header region shifts from row 1 to row `1 + mod_warnings._WARNINGS_SEARCH_BAR_LINES` (row 2).
+The ONE hardcoded `next(iter(regions))[2] == 1` assertion was updated to reference the constant
+instead of a bare literal — same "update the dependent test when a pane's row contract changes"
+pattern as the worker-proxy wrap-straddle fix (sub-milestone 3) and identical to the shift every
+other pane in this rollout applied; every OTHER assertion in this test already resolved `(sc, ec,
+er)` dynamically and needed no change. `dev/click_ui/p4_gpu_news_button_probe.py` needed ZERO
+changes for the gpu/news milestone (sub-milestones 7-8) — see that file's own DOCS entry below.
 **Calls out:** `src.panes.warnings_pane`, `src.panes.warnings_render`, `src.workers.worker_pane`,
 `src.workers.worker_format`, `src.proxy_display.pane`, `src.proxy_display.format` — loaded via
 `importlib.import_module`.
@@ -160,3 +170,11 @@ capturing stub (no real rag-cli or news-pipeline process ever launched).
 to `_render_pane` (either pane), `_toggle_server`, `_fire_button`, `_fire_pipeline`,
 `utils.compute_header_rule_len`, or either loop's inline mouse-dispatch snippet.
 **Calls out:** `src.gpu_pane.pane`, `src.news_pane.pane` — loaded via `importlib.import_module`.
+
+**(2026-08-18, rollout sub-milestones 7-8) Needed ZERO changes for the gpu/news search-bar
+migration.** Both panes' `_render_pane` kept its OWN row numbering UNSHIFTED (relative to its
+own top) by design — the new search bar's row is prepended and `_button_regions` shifted
+EXTERNALLY, in each pane's loop, AFTER `_render_pane` returns (mirrors `worker_proxy_pane.py`'s
+sub-milestone-3 precedent) — so every assertion in this file (which calls `_render_pane`
+directly) kept working unmodified. This is the doc trail for why: confirms the "keep the pure
+render function reusable/testable, shift externally" design choice paid off exactly as intended.
