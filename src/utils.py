@@ -91,6 +91,40 @@ def compute_header_rule_len(prefix_text: str, btn_label: str, rule_cap: int, pan
         return shrunk, True
     return max(0, min(full_rule_len, pane_width - len(prefix_text))), False
 
+# Inject match_bg around each occurrence of query in line (case-insensitive, ANSI-safe).
+# Strategy: strip ANSI to find literal matched substrings -> split ANSI-bearing line on each
+# chunk -> join with match_bg+chunk+restore_bg. Silently skips a chunk that straddles an ANSI
+# code boundary (rare). restore_bg defaults to '\033[49m' (terminal default background) — correct
+# when the caller's row has no background of its own (e.g. core/monitor_display.py's main pane,
+# which owns its own copy of this exact function — not yet migrated to this shared one). A
+# caller with a per-row background (e.g. proxy_display's zebra/hover shading) must pass its own
+# restore code instead, or a sentinel it substitutes for the real value once known (see
+# proxy_display/format.py's _BG_RESTORE_SENTINEL) — otherwise \033[49m blows a visible hole back
+# to the terminal's raw default background for the rest of the row after the highlighted chunk.
+def highlight_query_in_line(line: str, query: str, match_bg: str, restore_bg: str = '\033[49m') -> str:
+    if not query or not line:
+        return line
+    stripped = _ANSI_ESCAPE_RE.sub('', line)
+    q_lower = query.lower()
+    s_lower = stripped.lower()
+    if q_lower not in s_lower:
+        return line
+    seen: set = set()
+    pos = 0
+    while True:
+        p = s_lower.find(q_lower, pos)
+        if p == -1:
+            break
+        seen.add(stripped[p:p + len(query)])
+        pos = p + 1
+    result = line
+    for chunk in seen:
+        parts = result.split(chunk)
+        if len(parts) < 2:
+            continue  # chunk not found in ANSI-bearing string (straddled escape code)
+        result = f"{match_bg}{chunk}{restore_bg}".join(parts)
+    return result
+
 # Truncate line to pane_width terminal cells (ANSI- and wide-char-aware); append … if cut
 def truncate_visible(line: str, pane_width: int) -> str:
     if pane_width <= 0:

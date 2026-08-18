@@ -5,8 +5,8 @@ from ..constants import (
     SOFT_RESET, RED, GREEN, WHITE, YELLOW, DIM,
     SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
 )
-from ..utils import _ANSI_ESCAPE_RE, _cell_width
-from .format import _shorten_model, _format_k, _is_standalone_entry, _fmt_thinking_budget, _fmt_effort
+from ..utils import _ANSI_ESCAPE_RE, _cell_width, highlight_query_in_line
+from .format import _shorten_model, _format_k, _is_standalone_entry, _fmt_thinking_budget, _fmt_effort, _BG_RESTORE_SENTINEL
 from .render_messages import _aggregate_req_buckets
 
 # FUNCTIONS
@@ -40,10 +40,13 @@ def _compute_req_mods_str(entry: dict, prev_same) -> str:
     return ''
 
 # Build the request header line string with haiku_info, eff/think, tag_badge, copy ⎘/✓ right-pad
-# is_search_current wins over is_search_match — embeds a BG marker substring in the raw line so
-# _apply_row_backgrounds's existing hoist-to-whole-row pattern (mirrors DIM_YELLOW_BG/DIM_GREEN_BG)
-# picks it up; header stays marked for a search hit regardless of expand state (uniform, keeps
-# orientation when scrolling inside a long expanded request).
+# is_search_current wins over is_search_match — wraps only the header's own TEXT EXTENT (from
+# req_symbol through the last badge, i.e. the "body" below) in a search-highlight BG span with a
+# _BG_RESTORE_SENTINEL close — NOT the leading 2-space indent and NOT the copy-button padding
+# appended after this function returns, so the highlight never reaches the right pane edge.
+# _apply_row_backgrounds substitutes the sentinel for the row's real chosen_bg once known.
+# Header stays marked for a search hit regardless of expand state (uniform, keeps orientation
+# when scrolling inside a long expanded request).
 def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symbol: str, model_short: str, msg_count: int, mods_str: str, warn_str: str, pane_width: int, copy_feedback, is_search_match: bool = False, is_search_current: bool = False) -> str:
     e_sys = entry.get('system_total_chars', entry.get('system_prompt_chars', 0))
     e_tools = entry.get('tools_total_chars', entry.get('tools_chars', 0))
@@ -60,8 +63,11 @@ def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symb
     if _has_strip: _badge_parts.append(f'{YELLOW}strip{SOFT_RESET}')
     if _has_inj:   _badge_parts.append(f'{GREEN}inject{SOFT_RESET}')
     tag_badge = (' ' + ' '.join(_badge_parts)) if _badge_parts else ''
-    search_marker = SEARCH_CURRENT_BG if is_search_current else (SEARCH_MATCH_BG if is_search_match else '')
-    header_raw = f"  {search_marker}{WHITE}{req_symbol} {num_label} {model_short} {msg_count}msg{eff_str}{think_str}{mods_str}{warn_str}{haiku_info}{tag_badge}{SOFT_RESET}"
+    body = f"{WHITE}{req_symbol} {num_label} {model_short} {msg_count}msg{eff_str}{think_str}{mods_str}{warn_str}{haiku_info}{tag_badge}{SOFT_RESET}"
+    if is_search_match:
+        search_marker = SEARCH_CURRENT_BG if is_search_current else SEARCH_MATCH_BG
+        body = f"{search_marker}{body}{_BG_RESTORE_SENTINEL}"
+    header_raw = f"  {body}"
     if copy_feedback is not None:
         _stripped_h = _ANSI_ESCAPE_RE.sub('', header_raw)
         visible_len = sum(_cell_width(ch) for ch in _stripped_h)
@@ -73,18 +79,16 @@ def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symb
             return header_raw + ' ' * pad + ' ' + copy_sym
     return header_raw
 
-# Prefix each line containing search_query (case-insensitive, ANSI-stripped) with a BG marker —
-# same inline-embed-then-hoist mechanism _apply_row_backgrounds already uses for strip/inject
-# spans. Marks EVERY matching line in the block, not just the first.
+# Highlight ONLY the literal query substring occurrence(s) within each line (browser-find
+# style, via utils.highlight_query_in_line) — NOT the whole line/row. Uses _BG_RESTORE_SENTINEL
+# as the restore code so _apply_row_backgrounds can substitute the row's real chosen_bg
+# (zebra/hover/strip/collision) once known, instead of blowing a hole to the terminal default.
+# A line not containing the query is returned unchanged (highlight_query_in_line's own no-op).
 def _mark_search_lines(lines: list, query: str, is_current: bool) -> list:
     if not query:
         return lines
-    q = query.lower()
     marker = SEARCH_CURRENT_BG if is_current else SEARCH_MATCH_BG
-    return [
-        (marker + line) if q in _ANSI_ESCAPE_RE.sub('', line).lower() else line
-        for line in lines
-    ]
+    return [highlight_query_in_line(line, query, marker, _BG_RESTORE_SENTINEL) for line in lines]
 
 # Render expanded section for one request entry (buckets, fields, beta, directives, sys, tools, messages)
 # search_query/is_search_current: when query is truthy, every rendered line containing it

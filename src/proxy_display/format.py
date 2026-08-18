@@ -5,8 +5,14 @@ from typing import Optional
 from ..constants import (
     RESET, SOFT_RESET, DIM, YELLOW, HOVER_BG,
     DIM_YELLOW_BG, DIM_GREEN_BG, ZEBRA_BG_A, ZEBRA_BG_B, COLLISION_BG,
-    SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
 )
+
+# Placeholder a search-highlight span's restore code embeds instead of a real color (render_turn.py
+# doesn't know the row's eventual chosen_bg — zebra/hover/strip/collision — at embed time; only
+# _apply_row_backgrounds does, once it runs). Looks like a real (if unused) SGR code so the
+# existing _ANSI_ESCAPE_RE (\x1b\[[0-9;]*m) strips it as zero-width everywhere that already
+# happens (copy-button padding math, truncate_visible) — substituted for the real chosen_bg here.
+_BG_RESTORE_SENTINEL = '\033[999m'
 from ..format.token_format import _format_k
 from ..utils import truncate_visible
 from .parser import _chars_to_tokens
@@ -75,12 +81,18 @@ def _assign_turns_to_entries(entries: list, turns: list) -> list:
             groups[0]['entry_pairs'].append((entry_idx, entry))
     return [g for g in groups if g['entry_pairs']]
 
-# Apply per-row background priority: hover > SEARCH_CURRENT/MATCH_BG > DIM_YELLOW_BG >
-# DIM_GREEN_BG > collision > zebra. Search sits right below hover: hover is transient
-# mouse-pointer feedback and must never be masked, but a search hit is the user's explicit,
-# just-committed query intent — the entire reason Enter was pressed — so it outranks the
-# passive structural strip/inject annotations and the rare collision marker.
-# initial_parent_count preserves zebra parity continuity across the scroll viewport boundary
+# Apply per-row background priority: hover > DIM_YELLOW_BG > DIM_GREEN_BG > collision > zebra
+# (back to the pre-2026-08 order — search highlights are no longer part of this hoist chain;
+# see below). initial_parent_count preserves zebra parity continuity across the scroll viewport
+# boundary.
+#
+# Search highlights (2026-08-18, revised): NOT a row-level background choice anymore — a search
+# hit is an independent inline overlay applied ON TOP of whichever chosen_bg wins above (hover,
+# strip/inject, collision, or zebra), everywhere, browser-find style. render_turn.py embeds the
+# highlighted span with _BG_RESTORE_SENTINEL in place of the "resume normal background" code
+# (it doesn't know chosen_bg at embed time); once chosen_bg IS known here, every sentinel
+# occurrence in the line is substituted for it — so text after a highlighted match correctly
+# resumes the row's real background instead of the terminal's raw default.
 def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_entry_idxs: set, hover_row, copy_rows_out, pane_width: int, initial_parent_count: int) -> list:
     parent_count = initial_parent_count
     result_lines = []
@@ -103,10 +115,6 @@ def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_en
         ))
         if is_hovered:
             chosen_bg = HOVER_BG
-        elif SEARCH_CURRENT_BG in line:
-            chosen_bg = SEARCH_CURRENT_BG
-        elif SEARCH_MATCH_BG in line:
-            chosen_bg = SEARCH_MATCH_BG
         elif DIM_YELLOW_BG in line:
             chosen_bg = DIM_YELLOW_BG
         elif DIM_GREEN_BG in line:
@@ -115,6 +123,8 @@ def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_en
             chosen_bg = COLLISION_BG
         else:
             chosen_bg = zebra_bg
+        if _BG_RESTORE_SENTINEL in line:
+            line = line.replace(_BG_RESTORE_SENTINEL, chosen_bg)
         trunc = truncate_visible(line, pane_width)
         result_lines.append(f"{chosen_bg}{trunc}\033[K{RESET}")
     return result_lines

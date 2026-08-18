@@ -54,7 +54,7 @@ different log.
 
 ---
 
-### p2_search_feature_regression_test.py (396 LOC)
+### p2_search_feature_regression_test.py (414 LOC)
 
 **Purpose:** Regression guard for the implemented M2 search feature. Unlike `p1_*` (fully
 reimplemented, no `src/` imports), this file DOES exercise real `src/` code — via
@@ -71,6 +71,16 @@ idempotent across repeated renders at the same offset; the `flow_id`-based
 forwarded-delta JSONL fixture (not the real gitignored log) reproducing the exact
 `_fwd_req_idx`-collision scenario found during investigation — portable, no dependency on any
 one dev machine's log files.
+
+**(2026-08-18, follow-up) Highlight-scope tightening.** `test_collapsed_hit_marks_req_row` /
+`test_expanded_hit_marks_line` were widened beyond "marker present somewhere in the line" (which
+kept passing even through the whole-row-hoist bug, since the marker WAS still present, just
+scoped wrong) to also assert: the marker sits AFTER the leading indent (not at column 0, which a
+whole-row prefix would produce), for content lines the marker is immediately ADJACENT to the
+matched substring (proves substring-only wrapping, not whole-line), and no unsubstituted
+`format._BG_RESTORE_SENTINEL` leaks into the final rendered output (proves
+`_apply_row_backgrounds` always resolves it). See `process-docs/pane_search/` for the full
+before/after mechanism writeup.
 
 **(2026-08-18, follow-up) UTF-8 multi-byte keypress fix.** `input.click_handler.read_keypress`
 read exactly 1 byte and decoded it alone — a multi-byte character (em-dash, ä/ö/ü, emoji)
