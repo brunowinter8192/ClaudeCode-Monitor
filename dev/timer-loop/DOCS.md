@@ -10,7 +10,9 @@ from them (`p2_`, `src/proxy/pending_bg_state.py` — REMOVED, see `process-docs
 the 2026-08-07 project-scoping fix spanning that writer and its enforcement hook,
 `src/hooks/block_timer_pending_bg.py` (`p3_` — hook removed Milestone 2, writer removed Milestone
 3; the whole chapter is closed, `p2_`/`p3_` kept only as historical record). `md/` holds every
-script's report.
+script's report. `test_abort_stamp_scope.py` is a live regression-guard for the 2026-08-18
+menubar-side abort-scoping fix (`src/menubar/bg_timer.py`) — a different mechanism in the same
+wake-up chain, not related to the removed pending-state machinery above.
 
 ## Modules
 
@@ -55,6 +57,30 @@ hook-subprocess sections and the writer-side sections are now dead imports).
 **Calls out:** `src/hooks/block_timer_pending_bg.py` (removed, path now dead),
 `src/proxy/pending_bg_state.py` (removed, path now dead), `src/proxy/addon.py` (`ProxyAddon`,
 `_derive_worker_context` — still live).
+
+---
+
+### test_abort_stamp_scope.py (122 LOC)
+
+**Purpose:** Integration regression guard for the 2026-08-18 abort-stamp scoping fix
+(`src/menubar/bg_timer.py:_abort_bg_sleep_timers`/`_resolve_pid_output_file`). Spawns two REAL
+subprocesses (`sleep 20`) with stdout+stderr redirected straight to fake `.output` files —
+mirrors CC's own background-launch fd shape — plus one plain 0-byte file with no associated
+process. Calls the REAL `_abort_bg_sleep_timers` with only one of the two PIDs, asserts: (1) the
+killed PID's own file gets stamped `aborted\n`; (2) the killed PID's process actually terminates;
+(3) the foreign 0-byte file (no associated PID) is untouched; (4) the OTHER live process's file
+AND its process are both untouched (still running) — the exact "a live wait's file in another
+session" shape from the confirmed 2026-08-17 incident; (5) the `[abort]` menubar.log line lists
+only the stamped file, not the untouched ones. `importlib.import_module` used for the
+`src.menubar` imports (`block_dev_imports_src.py` forbids a literal `from src.` line in `dev/`).
+**Reads:** nothing persistent — spawns its own subprocesses + tempdir.
+**Writes:** tempdir under system temp (removed in `finally`); appends to the REAL
+`APP_SUPPORT/menubar.log` (same file the live menubar app uses — append-only, no isolation
+needed, verified via before/after size diff rather than a fresh file).
+**Called by:** run manually — `python3 dev/timer-loop/test_abort_stamp_scope.py`.
+**Calls out:** `src.menubar.bg_timer` (`_abort_bg_sleep_timers`, dynamic import),
+`src.menubar.paths` (`_APP_SUPPORT`, dynamic import); `subprocess`, `lsof` (via the module under
+test), `sleep` (fixture processes).
 
 ---
 

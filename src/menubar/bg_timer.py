@@ -4,10 +4,11 @@ import signal
 import subprocess
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
-# From proc_cache.py: Tasks base dir + CC process cache for project attribution
-from .proc_cache import _TASKS_BASE, _cc_proc_cache
+# From proc_cache.py: CC process cache for project attribution
+from .proc_cache import _cc_proc_cache
 # From menubar_log.py: unified log sink for abort action events
 from .menubar_log import log_menubar
 
@@ -144,44 +145,71 @@ def _aggregate_bg(result: Dict[str, BgSleepInfo]) -> Optional[BgSleepInfo]:
         sleep_pids=[p for info in result.values() for p in info.sleep_pids],
     )
 
-# Kill wake-up-process PIDs (worker-cli wait OR legacy sleep timers) via SIGTERM; write
-# 'aborted\n' to all 0-byte task files so the [B] badge clears. Generic by PID — no logic change
-# needed for the worker-cli wait case, it was already agnostic to what the pid actually was.
+# Resolve the *.output file a PID currently holds open on fd 1/2 (stdout/stderr) — the exact
+# CC-managed task file for THAT process (CC's background-launch redirects a backgrounded Bash
+# call's stdout+stderr straight to its own task .output file, so this is a precise 1:1 PID->file
+# lookup, not a directory guess). MUST be called BEFORE the PID is killed — the open write handle
+# (and lsof's ability to see it) disappears the instant the process exits, so resolving after the
+# kill would race the process's own teardown. Returns None on any lsof failure or no match (fail-
+# closed: an unresolvable PID's file just never gets stamped — no collateral risk either way,
+# mirrors _wait_has_live_bg_task's own -Fn parsing convention in the sibling worker-cli codebase).
+def _resolve_pid_output_file(pid: int) -> Optional[str]:
+    try:
+        r = subprocess.run(
+            ['lsof', '-p', str(pid), '-a', '-d', '1,2', '-Fn'],
+            capture_output=True, text=True,
+            encoding='utf-8', errors='replace', timeout=2)
+    except Exception:
+        return None
+    for line in r.stdout.splitlines():
+        if line.startswith('n') and line.endswith('.output'):
+            return line[1:]
+    return None
+
+# Kill wake-up-process PIDs (worker-cli wait OR legacy sleep timers) via SIGTERM; stamp
+# 'aborted\n' ONLY into the specific task file each killed PID itself owned (resolved via
+# _resolve_pid_output_file before the kill) — NOT a global sweep of every pending task on the
+# machine. The prior global-sweep version cross-contaminated unrelated sessions: confirmed live
+# 2026-08-17 (process-docs/timer-loop/), a single abort action stamped 'aborted' into a DIFFERENT,
+# still-running worker-cli wait's own output file (bwbf0nmow.output carried both 'aborted' and the
+# wait's own later 'workers idle' line). NOTE (verified while fixing this): the [B] badge itself
+# does NOT actually depend on this stamp's file content — panel_manager.py's badge is driven by
+# _scan_bg_sleep_timers' live ps-scan (PID gone -> badge gone next tick) and discover.py's has_bg
+# flag by proc_cache._has_active_bg's lsof-handle scan (handle closed -> has_bg False next scan);
+# both clear on process death alone. The stamp is kept per the fix's scope (preserve, not remove,
+# the write) — its practical purpose today is a human-readable trace of intent in the task file,
+# not a functional dependency of either clearing mechanism.
 def _abort_bg_sleep_timers(sleep_pids: List[int]) -> int:
     killed = 0
     errors = 0
     last_err = None
+    stamped: List[str] = []
     for pid in sleep_pids:
+        output_file = _resolve_pid_output_file(pid)
         try:
             os.kill(pid, signal.SIGTERM)
             killed += 1
         except (ProcessLookupError, OSError) as e:
             errors += 1
             last_err = e
+            continue
+        if output_file is None:
+            continue
+        try:
+            p = Path(output_file)
+            if p.is_file() and p.stat().st_size == 0:
+                p.write_text('aborted\n')
+                stamped.append(output_file)
+        except OSError as e:
+            print(f'[abort-stamp] write error for {output_file}: {e}', file=sys.stderr)
     try:
         ts = datetime.now().strftime('%Y-%m-%dT%H:%M:%S.%f')[:23]
         pids_str = ','.join(str(p) for p in sleep_pids)
+        stamped_str = ','.join(stamped) if stamped else '(none)'
         err_extra = f' last_err={repr(last_err)}' if last_err else ''
-        line = f'{ts} abort_action pids=[{pids_str}] killed={killed} errors={errors}{err_extra}'
+        line = (f'{ts} abort_action pids=[{pids_str}] killed={killed} errors={errors} '
+                f'stamped=[{stamped_str}]{err_extra}')
         log_menubar('abort', line)
     except Exception as e:
         print(f'[abort-log] abort_action write error: {e}', file=sys.stderr)
-    try:
-        for encoded_dir in _TASKS_BASE.iterdir():
-            if not encoded_dir.is_dir():
-                continue
-            for session_dir in encoded_dir.iterdir():
-                if not session_dir.is_dir():
-                    continue
-                tasks_dir = session_dir / 'tasks'
-                if not tasks_dir.is_dir():
-                    continue
-                for f in tasks_dir.glob('*.output'):
-                    try:
-                        if f.stat().st_size == 0:
-                            f.write_text('aborted\n')
-                    except OSError:
-                        pass
-    except OSError:
-        pass
     return killed
