@@ -19,6 +19,12 @@ reference — consuming `src/search_bar.py`'s shared mechanics instead of duplic
 `format_proxy_block`/`render_turn` pipeline, same forwarded-log data model) — reaching the same
 parity, plus the NEW 2-row header composition (search bar row 1, the pre-existing
 worker-switcher header shifted below) and a worker-switch search-state reset.
+`p6_*` (rollout sub-milestone 4) covers the TOKENS pane (`src/panes/token_pane.py`,
+`src/format/token_format.py`, new `src/panes/token_search.py`) — structurally simpler (single
+expand level, data always fully loaded, no windowing) — reaching the same parity, plus fixing
+the `ZEBRA_BG_A == ''` sentinel bug (same class the proxy pane hit) in this pane's own
+hand-rolled row-background loop, and the two-key (`(turn_idx,call_idx)` vs `('turn',turn_idx)`)
+match-container-marking design.
 See `process-docs/pane_search/` for the investigation trail.
 
 ## Scripts
@@ -295,3 +301,28 @@ was the ONLY other suite affected — `p2`/`p3`/`p4`/`p3_button_click_probe`/`p2
 **Writes:** `dev/pane_search/md/p5_worker_proxy_pane_parity_test_<timestamp>.md`.
 **Called by:** run manually — regression guard for the worker-proxy pane's search bar; re-run after any change to `worker_proxy_pane.py`'s search/mouse handlers, `_build_worker_proxy_output`'s header composition, `_format_worker_proxy_header`/`worker_proxy_helpers.py`, or `src/search_bar.py`.
 **Calls out:** `src.proxy_display.worker_proxy_pane`, `src.search_bar` — loaded via `importlib.import_module`.
+
+---
+
+### p6_tokens_pane_parity_test.py (514 LOC)
+
+**Purpose:** Regression guard for the TOKENS pane (`src/panes/token_pane.py`, `src/format/token_format.py`, `src/panes/token_search.py`) reaching search-bar parity with the proxy pane (rollout sub-milestone 4). Structurally simpler than the proxy family — single expand level, turns never collapse, data always fully loaded (no windowing/reconstruction). Covers the same mechanics suite as `p3`/`p4`/`p5` (drag-select, editor-style deletion, `n`/`N`, Esc, reverse-video render) retargeted at this pane's own thin wrappers, PLUS what's genuinely new here:
+- **Two-key match semantics** — `test_call_level_match_collapsed_container_marked` / `_expanded_substring_marked`: a `(turn_idx, call_idx)` match gets its WHOLE call-header line container-marked unconditionally, even when the match text lives in unrendered (collapsed) detail content invisible in the assertion's own rendered output; when expanded, the header stays marked AND the specific matching detail line gets browser-find substring-highlighted. `test_turn_level_match`: a `('turn', turn_idx)` match container-marks the turn's own prompt line; asserts the key never leaks into `cache_line_map` (turn headers stay non-interactive for clicks).
+- **The sentinel bug, same class as the proxy pane** — `test_sentinel_resolves_to_default_bg_not_empty_string`: confirms `constants.ZEBRA_BG_A == ''`, then confirms an explicit `\033[49m` (not a raw leaked `_BG_RESTORE_SENTINEL`) appears right after a highlighted detail line in a real `_build_tokens_output()` call.
+- **A collateral regression fix** — `test_light_red_bg_still_detected_when_call_is_also_a_match`: `_build_tokens_output`'s `LIGHT_RED_BG` (cc_broken row) detection changed from `.startswith()` to `in` (a search-match marker now precedes it in the string when both conditions co-occur); asserts the row's OUTER `chosen_bg` prefix is still `LIGHT_RED_BG` despite the marker.
+- **Jump-to-match** — `test_jump_to_match_moves_scroll_offset`: real Enter-triggered search pushes `cache_scroll_offset` to bring an early (off-screen-by-default) match into view, via `_tokens_nav` (populated by `format_cache_tracker`'s new `nav_out` param on a prior render — the test renders once first, mirroring the live pane loop's own render cadence).
+- **Session-change reset** — `test_session_change_resets_search_state`: drives the real `_refresh_tokens_data` with `core.monitor.get_main_session_files`/`proxy_display.parser.find_response_log_path`/`read_response_log` monkeypatched to a synthetic session switch; confirms `_tokens_search` AND `_tokens_nav` both reset — mirrors `pane.py`'s session-change reset and the fix applied to the main pane (sub-milestone 2) and the worker-proxy pane (sub-milestone 3).
+
+**Not re-verified here:** `format_cache_tracker`'s byte-identity against its 4 real callers (default kwargs) — proven via a ONE-SHOT frozen-turns old-vs-new comparison during implementation (not committed; the live `dev/display/A_format_cache_tracker_proof.py` harness reads directly from `~/.claude/projects/.../*.jsonl`, the top-10-most-recently-modified REAL session files, which were actively growing during this milestone's own session and produced a false-positive mismatch on a naive capture-then-verify-later run — see `process-docs/pane_search/` for the full root-cause writeup). 0/60 mismatches confirmed against turns frozen in memory and held constant across both code versions in the same process.
+
+**Usage (from project root):**
+```bash
+./venv/bin/python dev/pane_search/p6_tokens_pane_parity_test.py
+```
+
+**Output:** PASS/FAIL per check to stdout; writes `dev/pane_search/md/p6_tokens_pane_parity_test_<timestamp>.md`; exits 1 if any check fails.
+
+**Reads:** nothing external — seeds `src.panes.token_pane._cache_turns` with synthetic turns directly; the session-change test monkeypatches `core.monitor.get_main_session_files` and `proxy_display.parser.find_response_log_path`/`read_response_log` to point at nonexistent throwaway paths (never opened for real — `jsonl.read_new_lines` gracefully returns `[]` for a nonexistent file).
+**Writes:** `dev/pane_search/md/p6_tokens_pane_parity_test_<timestamp>.md`.
+**Called by:** run manually — regression guard for the tokens pane's search bar; re-run after any change to `token_pane.py`'s search/mouse handlers, `token_format.py`'s `format_cache_tracker`/`_compute_cache_viewport`, `token_search.py`, or `src/search_bar.py`.
+**Calls out:** `src.panes.token_pane`, `src.panes.token_search`, `src.format.token_format`, `src.search_bar`, `src.constants`, `src.core.monitor`, `src.proxy_display.parser` — loaded via `importlib.import_module`.

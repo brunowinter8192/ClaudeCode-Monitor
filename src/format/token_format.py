@@ -3,10 +3,18 @@ import datetime
 import time
 import re as _re
 from typing import Optional
-from ..constants import RED, GREEN, YELLOW, WHITE, PASTEL_PURPLE, PASTEL_ORANGE, LIGHT_RED_BG, DIM, SOFT_RESET
+from ..constants import (
+    RED, GREEN, YELLOW, WHITE, PASTEL_PURPLE, PASTEL_ORANGE, LIGHT_RED_BG, DIM, SOFT_RESET,
+    SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
+)
 from .formatter import shorten_tool_name
-# From utils.py: right-align a ⎘/✓ copy symbol at the pane edge, width-guarded
-from ..utils import append_copy_symbol
+# From utils.py: right-align a ⎘/✓ copy symbol at the pane edge, width-guarded; browser-find-style
+# inline substring highlight
+from ..utils import append_copy_symbol, highlight_query_in_line
+# From search_bar.py: shared BG-restore sentinel (2026-08-18, rollout sub-milestone 4) — this
+# module doesn't know a row's eventual chosen_bg (zebra/hover) at embed time, only
+# token_pane.py's own render loop does, once computed; same pattern as proxy_display/format.py
+from ..search_bar import _BG_RESTORE_SENTINEL
 
 # FUNCTIONS
 
@@ -33,6 +41,14 @@ def _format_cache_call(symbol: str, cr: int, cc: int, d: int, out: int, wide: bo
     if wide:
         return f"{bg}  {symbol} REQ #{req_num}  CR: {cr:>7,}  CC: {cc:>7,}  D: {d:>5,}  ({_format_k(out)} out){think_indicator}"
     return f"{bg} {symbol} #{req_num} {_format_k(cr)}/{_format_k(cc)}/{_format_k(d)} ({_format_k(out)} out){think_indicator}"
+
+# Compute (has_thinking, sig_chars) for a call's content_blocks — extracted 2026-08-18 (rollout
+# sub-milestone 4) so the real render loop and token_search.py's matcher can never disagree on
+# which calls show the 🧠 indicator / think_color threshold.
+def _call_thinking_meta(call: dict) -> tuple:
+    has_thinking = any(b.get('type') == 'thinking' for b in call.get('content_blocks', []))
+    sig_chars = sum(b.get('sig_chars', 0) for b in call.get('content_blocks', []) if b.get('type') == 'thinking')
+    return has_thinking, sig_chars
 
 # Extract first meaningful value from tool input dict for preview
 def _get_tool_preview(input_data: dict) -> str:
@@ -172,13 +188,43 @@ def _compute_cache_viewport(all_lines: list, line_keys: list, pane_height: int, 
     initial_parent_count = sum(1 for k in line_keys[:start] if k is not None)
     return visible_lines, visible_keys, sticky_header, start, initial_parent_count
 
+# Format one turn's header line (prompt truncation + timestamp + thinking-count badge) —
+# extracted 2026-08-18 (rollout sub-milestone 4) so the real render loop and
+# token_search.py's matcher can never disagree on what a turn's own line actually says.
+def _format_turn_header_line(turn_idx: int, turn: dict, pane_width: int) -> str:
+    wide = pane_width >= 60
+    prompt_max = min(pane_width - 15, 60) if wide else min(pane_width - 8, 30)
+    prompt = turn.get('prompt', '').replace('\n', ' ')
+    timestamp = _format_ts(turn.get('timestamp', ''))
+    truncated = prompt[:prompt_max] + ('...' if len(prompt) > prompt_max else '')
+    api_calls = turn.get('api_calls', [])
+    thinking_calls = sum(1 for call in api_calls if _call_thinking_meta(call)[0])
+    think_str = f" ({thinking_calls}/{len(api_calls)} 🧠)" if thinking_calls > 0 else ""
+    return f"{PASTEL_PURPLE}Turn {turn_idx + 1} [{timestamp}]{think_str}: \"{truncated}\"{SOFT_RESET}"
+
 # Format cache tracker — returns (visible_lines, visible_keys, sticky_header, viewport_start, initial_parent_count)
-def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: int = 50, pane_width: int = 80, scroll_offset: int = 0, response_rid_map: dict = None, copy_feedback: Optional[dict] = None) -> tuple:
+# (2026-08-18, rollout sub-milestone 4) search_match_set/search_current_key/search_query embed
+# search highlights at construction time via _BG_RESTORE_SENTINEL — a MATCH key is either
+# (turn_idx, call_idx) [container-marked whole line, unconditionally, regardless of expand
+# state — mirrors proxy_display's REQ-header "text extent" marking] or ('turn', turn_idx)
+# [same whole-line container mark, since a turn has no expand state to distinguish]. An
+# expanded matching call ADDITIONALLY gets its specific matching detail line(s) browser-find
+# substring-highlighted via utils.highlight_query_in_line — the header stays marked too
+# (uniform, keeps orientation when scrolling, same decision proxy made). nav_out, when given,
+# is populated (NOT returned — cleared+rewritten in place, same contract as
+# proxy_display.format's copy_rows_out) with {key: absolute_line_idx, ..., 'total_lines': N}
+# for the caller's own jump-to-match scroll math — deliberately kept OUT of line_keys so
+# ('turn', idx) keys never reach cache_line_map/click handling (turn headers stay
+# non-interactive for clicks, exactly as before) and workers/worker_format.py's own reuse of
+# this function (which assumes every non-None key is a plain 2-int-tuple) is unaffected.
+def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: int = 50, pane_width: int = 80, scroll_offset: int = 0, response_rid_map: dict = None, copy_feedback: Optional[dict] = None, search_match_set: Optional[set] = None, search_current_key=None, search_query: str = '', nav_out: Optional[dict] = None) -> tuple:
     if not turns:
         return [f"{YELLOW}No turns yet{SOFT_RESET}"], [None], None, 0, 0
 
     if expand_states is None:
         expand_states = {}
+    if nav_out is not None:
+        nav_out.clear()
 
     wide = pane_width >= 60
     prompt_max = min(pane_width - 15, 60) if wide else min(pane_width - 8, 30)
@@ -192,18 +238,18 @@ def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: i
         line_keys.append(None)
 
     for turn_idx, turn in enumerate(turns):
-        prompt = turn.get('prompt', '').replace('\n', ' ')
-        timestamp = _format_ts(turn.get('timestamp', ''))
-        truncated = prompt[:prompt_max] + ('...' if len(prompt) > prompt_max else '')
-        api_calls = turn.get('api_calls', [])
-        thinking_calls = sum(
-            1 for call in api_calls
-            if any(b.get('type') == 'thinking' for b in call.get('content_blocks', []))
-        )
-        think_str = f" ({thinking_calls}/{len(api_calls)} 🧠)" if thinking_calls > 0 else ""
-        all_lines.append(f"{PASTEL_PURPLE}Turn {turn_idx + 1} [{timestamp}]{think_str}: \"{truncated}\"{SOFT_RESET}")
+        turn_key = ('turn', turn_idx)
+        turn_line = _format_turn_header_line(turn_idx, turn, pane_width)
+        turn_is_match = bool(search_match_set) and turn_key in search_match_set
+        if turn_is_match:
+            marker = SEARCH_CURRENT_BG if turn_key == search_current_key else SEARCH_MATCH_BG
+            turn_line = f"{marker}{turn_line}{_BG_RESTORE_SENTINEL}"
+        if nav_out is not None:
+            nav_out[turn_key] = len(all_lines)
+        all_lines.append(turn_line)
         line_keys.append(None)
 
+        api_calls = turn.get('api_calls', [])
         for call_idx, call in enumerate(api_calls):
             cr = call.get('cache_read', 0)
             cc = call.get('cache_creation', 0)
@@ -213,16 +259,24 @@ def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: i
             is_expanded = expand_states.get(key, False)
             symbol = '▼' if is_expanded else '▶'
             request_num += 1
-            has_thinking = any(b.get('type') == 'thinking' for b in call.get('content_blocks', []))
-            sig_chars = sum(b.get('sig_chars', 0) for b in call.get('content_blocks', []) if b.get('type') == 'thinking')
+            has_thinking, sig_chars = _call_thinking_meta(call)
             call_line = _format_cache_call(symbol, cr, cc, d, out, wide, request_num, has_thinking, sig_chars)
+            call_is_match = bool(search_match_set) and key in search_match_set
+            marker = None
+            if call_is_match:
+                marker = SEARCH_CURRENT_BG if key == search_current_key else SEARCH_MATCH_BG
+                call_line = f"{marker}{call_line}{_BG_RESTORE_SENTINEL}"
             if copy_feedback is not None:
                 is_flash = copy_feedback.get(key, 0) > time.time()
                 call_line = append_copy_symbol(call_line, '✓' if is_flash else '⎘', pane_width)
+            if nav_out is not None:
+                nav_out[key] = len(all_lines)
             all_lines.append(call_line)
             line_keys.append(key)
             if is_expanded:
                 exp_lines, exp_keys = _render_expanded_call_lines(call, response_rid_map)
+                if call_is_match and search_query:
+                    exp_lines = [highlight_query_in_line(l, search_query, marker, _BG_RESTORE_SENTINEL) for l in exp_lines]
                 all_lines.extend(exp_lines)
                 line_keys.extend(exp_keys)
 
@@ -232,5 +286,8 @@ def format_cache_tracker(turns: list, expand_states: dict = None, pane_height: i
     while all_lines and all_lines[-1] == '':
         all_lines.pop()
         line_keys.pop()
+
+    if nav_out is not None:
+        nav_out['total_lines'] = len(all_lines)
 
     return _compute_cache_viewport(all_lines, line_keys, pane_height, pane_width, scroll_offset)
