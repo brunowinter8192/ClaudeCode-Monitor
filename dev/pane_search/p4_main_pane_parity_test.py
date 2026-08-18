@@ -34,6 +34,10 @@ Covers, per the milestone spec:
     routing ('/' and 'n'/'N' in run_proxy_loop, 'u' for undo) — NOT unit-tested at the loop level
     in this suite, consistent with p2/p3's own scope (they test the extracted handler functions
     _jump_search_match/_handle_proxy_search_input, never the outer while-loop dispatch itself)
+  - session change resets _main_search (search_bar.handle_search_cancel) and
+    _search_match_line_offsets alongside main_event_buffer.clear() in _refresh_main_data —
+    mirrors the proxy pane's _refresh_proxy_data; without this a stale .matches list of
+    event_idx values would point past the freshly-cleared buffer
 
 Uses REAL src.core.monitor / src.core.monitor_display functions against synthetic
 main_event_buffer entries — not mocks. importlib.import_module used throughout (dev/ scripts
@@ -358,6 +362,40 @@ def test_esc_cancel_clears_state_bar_stays():
     check("bar still renders (never hidden)", 'Search:' in bar)
 
 
+def test_session_change_resets_search_state():
+    print("\n[clear] Session change resets _main_search and the main-pane-specific offset dict "
+          "(mirrors the proxy pane's _refresh_proxy_data; without this a stale .matches list "
+          "would point past the freshly-cleared buffer)")
+    _reset_state('hello world')
+    mod_md.main_event_buffer.extend([_make_event('hello world')])
+    mod_md._main_search.matches = [0]
+    mod_md._main_search.match_set = {0}
+    mod_md._main_search.focused = True
+    mod_md._search_match_line_offsets = {0: 0}
+    check("search state populated before session change",
+          mod_md._main_search.matches == [0] and mod_md._main_search.query == 'hello world')
+
+    fake_session = Path('/tmp/pane_search_p4_fake_session.jsonl')
+    orig_get_newest = mod_monitor._get_newest_main_session
+    orig_monitor_sessions = mod_monitor.monitor_sessions
+    mod_monitor._get_newest_main_session = lambda: fake_session
+    mod_monitor.monitor_sessions = lambda: None  # isolate the session-change reset block itself
+    try:
+        now = 10_000_000.0
+        mod_monitor._refresh_main_data(now, 0.0, now, None)  # current_main_session=None -> forces the change branch
+    finally:
+        mod_monitor._get_newest_main_session = orig_get_newest
+        mod_monitor.monitor_sessions = orig_monitor_sessions
+        mod_monitor.file_positions.pop(fake_session, None)
+        mod_monitor.tool_use_caches.pop(fake_session, None)
+
+    check("query cleared by session change", mod_md._main_search.query == '')
+    check("matches cleared by session change",
+          mod_md._main_search.matches == [] and mod_md._main_search.match_set == set())
+    check("focused cleared by session change", mod_md._main_search.focused is False)
+    check("main-pane-specific line offsets cleared by session change", mod_md._search_match_line_offsets == {})
+
+
 def test_render_reverse_video_bracket():
     print("\n[render] Active selection renders SGR reverse-video around the exact substring")
     _reset_state('hello world')
@@ -414,6 +452,7 @@ def run_probe_workflow():
     test_enter_always_reruns_not_gated_on_unchanged_query()
     test_n_N_jump_wraps_both_directions()
     test_esc_cancel_clears_state_bar_stays()
+    test_session_change_resets_search_state()
     test_render_reverse_video_bracket()
     test_highlight_wraps_substring_only_via_real_render()
 

@@ -300,6 +300,12 @@ def _refresh_main_data(now: float, last_data_refresh: float, last_janitor_ts: fl
         _md.main_event_buffer.clear()
         _md.main_scroll_offset = 0
         _md.main_event_buffer.append({'type': 'session_banner', 'data': {}, 'call_number': None})
+        # A stale _main_search.matches list holds event_idx values into the buffer just cleared
+        # above — reset query/focused/matches/selection (mirrors proxy's _refresh_proxy_data)
+        # plus the main-pane-specific line-offset dict search_bar.handle_search_cancel doesn't
+        # know about.
+        search_bar.handle_search_cancel(_md._main_search)
+        _md._search_match_line_offsets = {}
     _sticky_pre = None
     if _md.main_scroll_offset > 0:
         try:

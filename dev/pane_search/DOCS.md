@@ -218,7 +218,12 @@ two same-query Enters and checking the match count grows); `n`/`N` wrap both dir
 no-op with zero matches; Esc clears query/matches/selection but the bar itself is never hidden;
 the search highlight wraps only the literal matched substring (browser-find style) via
 `utils.highlight_query_in_line`, verified through a real `render_main_buffer` call, not a whole-row
-prefix.
+prefix; **session change resets `_main_search` and `_search_match_line_offsets`**
+(`test_session_change_resets_search_state`, real `_refresh_main_data` call with
+`_get_newest_main_session`/`monitor_sessions` monkeypatched to isolate the reset block from real
+filesystem session discovery) — mirrors the proxy pane's `_refresh_proxy_data`, fixed as part of
+this migration (the pre-2026-08-18 flat-globals version had the same gap, left unaddressed until
+a review pass caught it).
 
 `/` focusing the bar (new for this milestone, mirrors proxy) is a one-line dispatch inside
 `run_main_loop`'s own while-loop — like every other pane's inline hotkey routing (proxy's `/`
