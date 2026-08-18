@@ -207,6 +207,88 @@ def test_new_input_clears_selection():
           mod_pane._proxy_search_query == 'hello worldx')
 
 
+def test_backspace_deletes_active_selection():
+    print("\n[editor-style delete] Backspace with an active selection deletes the SELECTED "
+          "substring (not just the last char) and clears the selection")
+    _reset_state('hello world')
+    label_w = len(mod_pane._SEARCH_BAR_LABEL)
+    mod_pane._handle_proxy_mouse(0, label_w + 2, 1)   # anchor at index1 ('e')
+    mod_pane._handle_proxy_mouse(32, label_w + 7, 1)  # extend to index6 ('w') -> selects 'ello '
+    mod_pane._handle_proxy_search_release()
+    check("selection is 'ello ' before backspace",
+          mod_pane._proxy_search_query[mod_pane._proxy_search_sel_anchor:mod_pane._proxy_search_sel_end] == 'ello ')
+    changed = mod_pane._handle_proxy_search_input('\x7f')
+    check("backspace reports a change", changed)
+    check("query has the SELECTED substring removed (not just the last char)",
+          mod_pane._proxy_search_query == 'hworld')
+    check("selection cleared after selection-delete",
+          mod_pane._proxy_search_sel_anchor is None and mod_pane._proxy_search_sel_end is None)
+
+
+def test_backspace_without_selection_still_trims_last_char():
+    print("\n[editor-style delete] Backspace with NO active selection still trims the last "
+          "char — the pre-existing single-char behavior is unaffected")
+    _reset_state('hello')
+    check("no selection active", mod_pane._proxy_search_sel_anchor is None)
+    changed = mod_pane._handle_proxy_search_input('\x7f')
+    check("backspace reports a change", changed)
+    check("last char trimmed (regression: unchanged pre-existing behavior)",
+          mod_pane._proxy_search_query == 'hell')
+
+
+def test_kill_line_empties_query():
+    print("\n[editor-style delete] Kill-line (_KILL_LINE_CHAR, Cmd+Backspace hypothesis) "
+          "empties the WHOLE query")
+    _reset_state('some fairly long search query text')
+    changed = mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
+    check("kill-line reports a change", changed)
+    check("query fully emptied", mod_pane._proxy_search_query == '')
+
+
+def test_kill_line_ignores_active_selection():
+    print("\n[editor-style delete] Kill-line empties the query REGARDLESS of an active "
+          "selection (not selection-aware, matches standard editor Cmd+Backspace semantics)")
+    _reset_state('hello world')
+    label_w = len(mod_pane._SEARCH_BAR_LABEL)
+    mod_pane._handle_proxy_mouse(0, label_w + 2, 1)
+    mod_pane._handle_proxy_mouse(32, label_w + 7, 1)
+    mod_pane._handle_proxy_search_release()
+    check("selection is active before kill-line", mod_pane._proxy_search_sel_anchor is not None)
+    mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
+    check("query fully emptied (not just the selected substring)", mod_pane._proxy_search_query == '')
+    check("selection also cleared", mod_pane._proxy_search_sel_anchor is None)
+
+
+def test_kill_line_not_silently_swallowed_by_isprintable_fallthrough():
+    print("\n[editor-style delete] \\x15 is intercepted by the kill-line branch BEFORE the "
+          "isprintable() fallthrough — regression guard for the exact bug being fixed")
+    check("'\\x15'.isprintable() is False (confirms the fallthrough risk this branch prevents)",
+          mod_pane._KILL_LINE_CHAR.isprintable() is False)
+    _reset_state('should be wiped')
+    mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
+    check("query was actually cleared, not silently ignored", mod_pane._proxy_search_query == '')
+
+
+def test_editing_never_clears_matches():
+    print("\n[matches] Editing (any form: plain backspace, selection-delete, kill-line) never "
+          "clears _proxy_search_matches — Enter remains the sole recompute trigger (confirmed: "
+          "neither did the pre-existing plain-backspace/typing path)")
+    _reset_state('foo')
+    mod_pane._proxy_search_matches = [1, 2, 3]
+    mod_pane._proxy_search_match_set = {1, 2, 3}
+    mod_pane._handle_proxy_search_input('\x7f')
+    check("matches survive plain backspace", mod_pane._proxy_search_matches == [1, 2, 3])
+    mod_pane._proxy_search_query = 'bar'
+    label_w = len(mod_pane._SEARCH_BAR_LABEL)
+    mod_pane._handle_proxy_mouse(0, label_w + 1, 1)
+    mod_pane._handle_proxy_mouse(32, label_w + 3, 1)
+    mod_pane._handle_proxy_search_release()
+    mod_pane._handle_proxy_search_input('\x7f')
+    check("matches survive selection-delete backspace", mod_pane._proxy_search_matches == [1, 2, 3])
+    mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
+    check("matches survive kill-line", mod_pane._proxy_search_matches == [1, 2, 3])
+
+
 def test_esc_cancel_clears_selection():
     print("\n[clear] Esc-cancel clears a live drag-selection (alongside the query)")
     _reset_state('hello world')
@@ -279,6 +361,12 @@ def run_probe_workflow():
     test_body_row_drag_never_arms_search_selection()
     test_click_elsewhere_clears_selection()
     test_new_input_clears_selection()
+    test_backspace_deletes_active_selection()
+    test_backspace_without_selection_still_trims_last_char()
+    test_kill_line_empties_query()
+    test_kill_line_ignores_active_selection()
+    test_kill_line_not_silently_swallowed_by_isprintable_fallthrough()
+    test_editing_never_clears_matches()
     test_esc_cancel_clears_selection()
     test_render_reverse_video_bracket()
     test_session_change_clears_selection()

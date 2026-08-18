@@ -54,7 +54,7 @@ different log.
 
 ---
 
-### p2_search_feature_regression_test.py (414 LOC)
+### p2_search_feature_regression_test.py (434 LOC)
 
 **Purpose:** Regression guard for the implemented M2 search feature. Unlike `p1_*` (fully
 reimplemented, no `src/` imports), this file DOES exercise real `src/` code — via
@@ -96,6 +96,14 @@ characters. The fix lives in `src/input/click_handler.py` (shared by every pane,
 `src/input/DOCS.md`) — confirmed (ad-hoc, not in this suite) to heal `core/monitor_display.py`'s
 main-pane search bar too, since both route through the same `read_keypress`.
 
+**(2026-08-18, follow-up) Kill-line after a real search run.** `test_kill_line_after_a_real_search_run`
+runs an actual Enter-triggered search (via `_handle_proxy_search_input('\r')`, the real code
+path, not a mock of `_run_proxy_search`), then feeds `pane._KILL_LINE_CHAR` and asserts the query
+empties while the matches from that run stay untouched — matches are edit-independent, Enter is
+the sole recompute trigger (unchanged M2 convention, confirmed — see `pane.py`'s module entry).
+The fuller selection-delete + kill-line mechanics live in `p3_drag_select_regression_test.py`
+below (same feature, drag-select is that file's primary subject).
+
 Synthetic entries (`_make_entry`) use a per-index unique marker embedded in that entry's own NEW
 message (`messages` list built CUMULATIVE — length == `message_count`, one filler message per
 earlier index plus this entry's own marked one) — `render_messages._render_new_messages` finds
@@ -128,7 +136,7 @@ to `pane.py`'s search state/handlers, `format.py`'s `format_proxy_block`/`_apply
 
 ---
 
-### p3_drag_select_regression_test.py (308 LOC)
+### p3_drag_select_regression_test.py (396 LOC)
 
 **Purpose:** Regression guard for drag-to-select on the search bar (row 1) — a NEW milestone
 (not folded into `p2`, mirroring `dev/click_ui`'s own per-milestone `p1`/`p2`/`p3`/`p4` file
@@ -146,6 +154,22 @@ starts on a BODY row never arms search-bar dragging (motion after it falls throu
 the generic hover bucket); click-elsewhere / new-keyboard-input / Esc-cancel / session-change
 all clear a live selection; rendering wraps the selected substring in SGR reverse-video
 (`\033[7m...\033[27m`) and only when a selection is actually active.
+
+**(2026-08-18, follow-up) Editor-style deletion.** `test_backspace_deletes_active_selection` —
+Backspace with an active selection deletes the SELECTED substring from the query (not just the
+last char) and clears the selection. `test_backspace_without_selection_still_trims_last_char` —
+regression guard: Backspace with no selection still does the pre-existing single-char trim.
+`test_kill_line_empties_query` / `test_kill_line_ignores_active_selection` —
+`pane._KILL_LINE_CHAR` (`'\x15'`, Ctrl-U — a documented HYPOTHESIS for what Ghostty maps
+Cmd+Backspace to on macOS, not a confirmed capture; named constant so a rebind after live
+testing is a one-line change) empties the WHOLE query unconditionally, independent of any active
+selection. `test_kill_line_not_silently_swallowed_by_isprintable_fallthrough` — direct regression
+guard for the exact bug being fixed: asserts `'\x15'.isprintable()` is `False` (confirming the
+character would otherwise silently fall through every branch to a no-op) AND that the query
+actually gets cleared, not silently ignored. `test_editing_never_clears_matches` — plain
+backspace, selection-delete, and kill-line all leave `_proxy_search_matches` untouched (Enter
+remains the sole recompute trigger — confirmed against actual pre-existing behavior, not
+assumed, before this change: neither did plain backspace/typing).
 **Reads:** nothing external — seeds `src.proxy_display.pane` module state directly; drives the
 real `_handle_proxy_mouse`/`_handle_proxy_search_release`/`_handle_proxy_search_input`/
 `_render_proxy_search_bar` with direct `(button, col, row)` calls (not simulated raw SGR bytes —
