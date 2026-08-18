@@ -54,7 +54,7 @@ different log.
 
 ---
 
-### p2_search_feature_regression_test.py (434 LOC)
+### p2_search_feature_regression_test.py (463 LOC)
 
 **Purpose:** Regression guard for the implemented M2 search feature. Unlike `p1_*` (fully
 reimplemented, no `src/` imports), this file DOES exercise real `src/` code — via
@@ -81,6 +81,17 @@ matched substring (proves substring-only wrapping, not whole-line), and no unsub
 `format._BG_RESTORE_SENTINEL` leaks into the final rendered output (proves
 `_apply_row_backgrounds` always resolves it). See `process-docs/pane_search/` for the full
 before/after mechanism writeup.
+
+**(2026-08-18, second follow-up — live bug, exact repro) `test_sentinel_resolves_to_default_bg_
+not_empty_string_on_zebra_a_rows`.** The FIRST highlight-scope fix above was verified only
+against non-empty `chosen_bg` (`DIM_YELLOW_BG`) — `ZEBRA_BG_A = ''` (every second zebra row) was
+missed: substituting the sentinel with `''` deletes it outright, leaving the gold highlight BG
+flooding to the row's `\033[K` erase-to-EOL. This test is the EXACT byte-for-byte repro handed
+down from a live user report + self-reproduction (`_apply_row_backgrounds` called directly with
+a `('msg',5,0)` key at `initial_parent_count=0`, landing on `ZEBRA_BG_A`) — confirmed to FAIL
+against the pre-fix code and pass post-fix (verified both ways while writing it, not assumed).
+Asserts a real `\033[49m` appears between the matched text and `\033[K`, plus a sanity check
+that the non-empty-`chosen_bg` (`ZEBRA_BG_B`) case stays unaffected by the fix.
 
 **(2026-08-18, follow-up) UTF-8 multi-byte keypress fix.** `input.click_handler.read_keypress`
 read exactly 1 byte and decoded it alone — a multi-byte character (em-dash, ä/ö/ü, emoji)

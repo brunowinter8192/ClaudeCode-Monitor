@@ -124,7 +124,15 @@ def _apply_row_backgrounds(visible_lines: list, visible_keys: list, collision_en
         else:
             chosen_bg = zebra_bg
         if _BG_RESTORE_SENTINEL in line:
-            line = line.replace(_BG_RESTORE_SENTINEL, chosen_bg)
+            # chosen_bg is '' for ZEBRA_BG_A rows (no override) — substituting '' would DELETE
+            # the sentinel outright, leaving the search-highlight BG active with nothing to
+            # close it before the trailing \033[K erase-to-EOL, flooding the rest of the row
+            # gold (2026-08-18 live bug, reproduced byte-for-byte). '' only means "no override"
+            # in the LEADING f'{chosen_bg}{trunc}' position because the PRIOR row's own trailing
+            # RESET already cleared the terminal's active background by the time this row starts
+            # printing — mid-line, after a real color WAS set (the search marker), omission
+            # doesn't restore anything; it must be an explicit reset instead.
+            line = line.replace(_BG_RESTORE_SENTINEL, chosen_bg if chosen_bg else '\033[49m')
         trunc = truncate_visible(line, pane_width)
         result_lines.append(f"{chosen_bg}{trunc}\033[K{RESET}")
     return result_lines
