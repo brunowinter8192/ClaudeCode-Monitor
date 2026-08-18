@@ -14,6 +14,11 @@ Milestone 3 (`p3_*`) is drag-to-select on the search bar (press-anchors, motion-
 release-copies-to-clipboard). `p4_*` (rollout sub-milestone 2) covers the MAIN pane
 (`src/core/monitor.py`, `core/monitor_display.py`) reaching full parity with the proxy-pane
 reference — consuming `src/search_bar.py`'s shared mechanics instead of duplicating them.
+`p5_*` (rollout sub-milestone 3) covers the WORKER-PROXY pane
+(`src/proxy_display/worker_proxy_pane.py`) — the proxy pane's closest structural twin (same
+`format_proxy_block`/`render_turn` pipeline, same forwarded-log data model) — reaching the same
+parity, plus the NEW 2-row header composition (search bar row 1, the pre-existing
+worker-switcher header shifted below) and a worker-switch search-state reset.
 See `process-docs/pane_search/` for the investigation trail.
 
 ## Scripts
@@ -242,3 +247,51 @@ consistent with how `p2`/`p3` never test `run_proxy_loop`'s own while-loop dispa
 **Writes:** `dev/pane_search/md/p4_main_pane_parity_test_<timestamp>.md`.
 **Called by:** run manually — regression guard for the main pane's search bar; re-run after any change to `core/monitor.py`'s search/mouse handlers, `core/monitor_display.py`'s `_main_search`/`render_main_buffer`/`_render_search_bar`, or `src/search_bar.py`.
 **Calls out:** `src.core.monitor`, `src.core.monitor_display`, `src.search_bar`, `src.constants` — loaded via `importlib.import_module`.
+
+---
+
+### p5_worker_proxy_pane_parity_test.py (543 LOC)
+
+**Purpose:** Regression guard for the WORKER-PROXY pane (`src/proxy_display/worker_proxy_pane.py`)
+reaching search-bar parity with the proxy pane (rollout sub-milestone 3). Covers the same
+mechanics suite as `p3`/`p4` (drag-select press→motion→release, plain-click zero-copy,
+selection-delete Backspace vs plain Backspace, kill-line, editing-never-clears-matches, `n`/`N`
+wrap, Esc clears state while the bar stays visible, reverse-video selection render) retargeted at
+this pane's own thin wrappers, PLUS what's genuinely new here: the 2-ROW HEADER (search bar row
+1, `_format_worker_proxy_header`'s pre-existing click-region table shifted to row 2+ —
+`test_two_row_header_composition_and_shifts` asserts `_worker_proxy_header_regions` rows are all
+`>= 2` and `worker_proxy_line_map` body rows sit past BOTH header rows;
+`test_header_marker_click_still_selects_worker_at_shifted_row` confirms a click at the shifted
+row still selects the worker exactly as before), Enter always re-running (no unchanged-query
+gate ever existed on this pane, unlike the main pane's now-removed one — nothing to correct),
+the one-sweep `reconstruct_all_messages` merge specifically wired for this pane
+(`test_enter_triggers_reconstruction_merge_when_log_path_set` — a self-contained 2-line
+forwarded-delta JSONL fixture, mirrors `p2`'s `_fwd_line` fixture pattern — confirms an entry's
+`messages` populates from `None` and the reconstructed content becomes findable), and the
+WORKER-SWITCH reset (`test_worker_switch_resets_search_state` — drives the real
+`_refresh_worker_proxy_data` with `get_selection_file_path`/`list_workers`/`find_worker_proxy_log`
+monkeypatched to a synthetic worker-B selection, confirms `_worker_proxy_search` resets exactly
+like `pane.py`'s session-change reset).
+
+**Scope note — a companion fix landed alongside this suite, in `dev/click_ui/`, not here:**
+`dev/click_ui/p1_worker_selection_click_probe.py::test_worker_proxy_header_wrap_straddle` calls
+`_format_worker_proxy_header` DIRECTLY (bypassing `_build_worker_proxy_output`'s region-shift
+step) — before this milestone that was harmless (no search bar, row 1 = the header's own top);
+after, a raw unshifted row-1 region collided with the new search-bar press branch. Fixed by
+replicating the same `+_WP_SEARCH_BAR_LINES` shift inside that test, right after the direct call
+— see `dev/click_ui/DOCS.md`'s entry for that file. Confirmed via a full regression sweep (this
+milestone touches shared mouse-dispatch code, not just this suite's own new coverage) that this
+was the ONLY other suite affected — `p2`/`p3`/`p4`/`p3_button_click_probe`/`p2_copy_click_probe`/
+`A_render_refactor_proof` all re-ran clean untouched.
+
+**Usage (from project root):**
+```bash
+./venv/bin/python dev/pane_search/p5_worker_proxy_pane_parity_test.py
+```
+
+**Output:** PASS/FAIL per check to stdout; writes `dev/pane_search/md/p5_worker_proxy_pane_parity_test_<timestamp>.md`; exits 1 if any check fails.
+
+**Reads:** nothing external — seeds `src.proxy_display.worker_proxy_pane` module state (entries, workers list) directly; the reconstruction-merge test writes a throwaway 2-line forwarded-delta JSONL fixture under `tempfile.mkdtemp()`, removed after the check; the worker-switch test writes a throwaway IPC selection file, also removed after.
+**Writes:** `dev/pane_search/md/p5_worker_proxy_pane_parity_test_<timestamp>.md`.
+**Called by:** run manually — regression guard for the worker-proxy pane's search bar; re-run after any change to `worker_proxy_pane.py`'s search/mouse handlers, `_build_worker_proxy_output`'s header composition, `_format_worker_proxy_header`/`worker_proxy_helpers.py`, or `src/search_bar.py`.
+**Calls out:** `src.proxy_display.worker_proxy_pane`, `src.search_bar` — loaded via `importlib.import_module`.

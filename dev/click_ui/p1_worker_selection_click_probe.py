@@ -133,6 +133,17 @@ def test_worker_proxy_header_wrap_straddle():
 
     for pane_width in (200, 60, 40, 30):
         wp._format_worker_proxy_header(workers, None, pane_width, wp._worker_proxy_header_regions)
+        # (2026-08-18, rollout sub-milestone 3) _format_worker_proxy_header computes regions
+        # RELATIVE to its own top (row 1 = its own first line); the real _build_worker_proxy_output
+        # shifts them by _WP_SEARCH_BAR_LINES so the search bar owns physical row 1 and a header
+        # marker never collides with it. This test calls the helper directly (bypassing that
+        # production shift step), so it must replicate the shift itself before dispatching clicks.
+        shifted = {
+            (sc, ec, er + wp._WP_SEARCH_BAR_LINES): name
+            for (sc, ec, er), name in wp._worker_proxy_header_regions.items()
+        }
+        wp._worker_proxy_header_regions.clear()
+        wp._worker_proxy_header_regions.update(shifted)
         regions = dict(wp._worker_proxy_header_regions)
         covered = set(regions.values())
         check(f"worker-proxy wrap: all {len(workers)} markers have >=1 region at pane_width={pane_width}",

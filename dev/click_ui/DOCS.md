@@ -11,7 +11,11 @@ reverted 2026-07-30 per user decision after live-testing; `u` stays the only way
 4 covers gpu (digit keys 1-9 already covered by existing buttons; new `[refresh]`) and news (new
 `[refresh]`). (2026-08-18, unrelated proxy-pane search feature milestone: the proxy pane now HAS a
 permanent one-line header again — a search bar, not a button, see `p3_button_click_probe.py`'s
-entry below.) `md/` holds every run's report.
+entry below.) (2026-08-18, rollout sub-milestone 3: the worker-proxy pane also gained a permanent
+row-1 search bar, shifting `_worker_proxy_header_regions` down by one row — `p1_worker_selection_
+click_probe.py`'s wrap-straddle test calls `_format_worker_proxy_header` directly, bypassing the
+production shift step, so it now replicates that shift itself before dispatching clicks; see that
+module's entry below.) `md/` holds every run's report.
 
 ## Modules
 
@@ -25,7 +29,15 @@ selection file content, expand-state) as pressing the corresponding digit key. A
 worker-proxy header across pane widths (200/60/40/30, with a 16-char worker name) that force a
 marker to straddle a wrap boundary, asserting every worker still has >=1 clickable region at
 every width and that a synthetic click on EACH row-segment of a straddling marker selects that
-worker (`_register_marker_regions` regression guard).
+worker (`_register_marker_regions` regression guard). **(2026-08-18, rollout sub-milestone 3)**
+The wrap-straddle test calls `_format_worker_proxy_header` directly (regions computed RELATIVE
+to the header's own top) rather than through `_build_worker_proxy_output` (which shifts them by
+`_WP_SEARCH_BAR_LINES` for the new row-1 search bar) — the test now replicates that same shift
+itself right after the direct call, before dispatching clicks, so the synthetic coordinates match
+what `_handle_worker_proxy_mouse` actually expects (row 1 is reserved for the search bar; a
+header marker click at the OLD unshifted row 1 would otherwise be swallowed by the search-bar
+press branch instead). The click-parity test (`test_worker_proxy_header_click`) needed no change
+— it already goes through the real `_build_worker_proxy_output`, which performs the shift itself.
 **Reads:** nothing external — seeds `src.proxy_display.worker_proxy_pane._worker_proxy_workers`
 and calls `src.workers.worker_pane._build_workers_output` directly with synthetic worker lists.
 **Writes:** `md/p1_worker_selection_click_probe_<timestamp>.md`; IPC selection files under
