@@ -19,7 +19,7 @@ module's entry below.) `md/` holds every run's report.
 
 ## Modules
 
-### p1_worker_selection_click_probe.py (268 LOC)
+### p1_worker_selection_click_probe.py (279 LOC)
 
 **Purpose:** Proves, after one real render pass, that the worker-proxy header's per-worker click
 regions (`_worker_proxy_header_regions`) and the workers pane's per-worker row hit area
