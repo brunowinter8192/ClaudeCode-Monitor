@@ -33,6 +33,21 @@ turn / call, composing with `format_cache_tracker`'s sub-milestone-4 kwargs via 
 scoping derivation), a third occurrence of the sentinel fix, and a jump-to-match design that
 respects the pane's dormant pane-level scroll while self-healing via a fresh re-parse at jump
 time.
+`p8_*` (rollout sub-milestones 6-8, BUNDLED — the final milestone, one plan/Go/commit stream)
+covers WARNINGS (`src/panes/warnings_pane.py` + `warnings_render.py`), GPU
+(`src/gpu_pane/pane.py`), and NEWS (`src/news_pane/pane.py` ONLY — `log_pane.py` explicitly
+EXCLUDED per decision). Warnings: 1-level expand, a fourth sentinel occurrence — but the ONLY
+pane in the rollout whose pre-existing row-bg detection needed ZERO collateral `.startswith()`
+fix (verified by reading `warnings_render.py` at line level before assuming, per the milestone's
+own explicit requirement — it already used the substring form). GPU/news: flat, small
+live-fetched lists, NO scroll infra at all — HIGHLIGHT-ONLY, no jump-to-match, `n`/`N` cycles
+`current_idx` with zero scroll call, no sentinel needed (no per-row background at either pane).
+Both panes' mouse dispatch is inline (never factored into a standalone handler function, a
+pre-existing characteristic unrelated to search) — `search_bar.py`'s functions are called
+directly at the dispatch sites; `_render_pane`'s own row numbering in both panes stays
+UNSHIFTED, the search-bar shift for `_button_regions` applied externally in the loop — verified
+by `dev/click_ui/p4_gpu_news_button_probe.py` needing ZERO changes (it calls `_render_pane`
+directly). Rollout complete as of this milestone — all 8 tmux panes now share `src/search_bar.py`.
 See `process-docs/pane_search/` for the investigation trail.
 
 ## Scripts
@@ -385,3 +400,58 @@ retargeted at this pane's own thin wrappers, PLUS what's genuinely new here:
 **Writes:** `dev/pane_search/md/p7_workers_pane_parity_test_<timestamp>.md`.
 **Called by:** run manually — regression guard for the workers pane's search bar; re-run after any change to `worker_pane.py`'s search/mouse handlers or jump-to-match, `worker_format.py`'s `format_workers_block`/`_scope_matches_to_worker`/`_scope_current_key_to_worker`, `panes/token_search.py`, or `src/search_bar.py`.
 **Calls out:** `src.workers.worker_pane`, `src.workers.worker_format`, `src.search_bar`, `src.constants` — loaded via `importlib.import_module`.
+
+---
+
+### p8_warnings_gpu_news_parity_test.py (581 LOC)
+
+**Purpose:** Regression guard for the FINAL three panes (rollout sub-milestones 6-8, bundled)
+reaching search-bar parity: WARNINGS (`src/panes/warnings_pane.py` + `warnings_render.py`), GPU
+(`src/gpu_pane/pane.py`), NEWS (`src/news_pane/pane.py` only). Covers the same mechanics suite
+as `p3`-`p7` (drag-select, editor-style deletion, Esc, reverse-video render) retargeted at each
+pane's own thin wrappers, PLUS what's genuinely new here:
+- **`test_warnings_dim_yellow_bg_already_used_in_not_startswith`** — the milestone's own explicit
+  verification requirement, made into a permanent regression guard: introspects
+  `_format_warnings_pane`'s real source (`inspect.getsource`) and asserts it contains
+  `'DIM_YELLOW_BG in line'` and does NOT contain `'.startswith(DIM_YELLOW_BG)'` — proves the
+  "no collateral fix needed here" finding stays true even if the function is refactored later.
+- **`test_warnings_collapsed_container_mark_and_expanded_substring_mark`** — uses a MULTI-WORD
+  Bash command (`'echo unique_marker_x'`) specifically because `warnings_render.py`'s
+  PRE-EXISTING `first_word_of_call` already shows a one-word inline preview even when
+  collapsed — a single-word marker would have made the "hidden while collapsed" assertion
+  false for reasons unrelated to search (caught by a first failing run, not assumed correct).
+- **`test_warnings_sentinel_resolves_to_default_bg_not_empty_string`** — the `ZEBRA_BG_A==''`
+  repro, same shape as every prior pane, confirming the sentinel fix WAS still needed here
+  despite the already-correct `DIM_YELLOW_BG` detection (two independent findings, not one).
+- **`test_gpu_render_pane_stays_unshifted_and_button_region_shifts_externally`** /
+  **`test_news_render_pane_stays_unshifted`** — build with synthetic data, confirm
+  `_render_pane`'s own `_button_regions` row is relative to its own top (row 1), replicate the
+  EXACT external shift snippet `run_gpu_loop`/`run_news_loop` use, confirm the shifted region
+  still dispatches correctly via `_dispatch_gpu_click` (mirrors
+  `dev/click_ui/p4_gpu_news_button_probe.py`'s own established "replicate the inline dispatch"
+  convention, extended here with a row-1 search-bar-press branch).
+- **`test_gpu_highlight_only_match_no_sentinel_needed`** / **`test_news_highlight_only_match`** —
+  real Enter-triggered search (`_gpu_search_on_commit`/`_news_search_on_commit`) against
+  synthetic presets/status, confirms the matched line is highlighted with `SEARCH_CURRENT_BG`
+  and the exact substring is wrapped browser-find style — news's query targets
+  `TARGET_COLLECTION` (a stable constant) specifically to stay independent of `_is_running()`'s
+  real filesystem/subprocess check, which the on_commit callback also calls (mirroring the real
+  per-tick render's own behavior) but which this test doesn't need to control.
+- **`test_gpu_n_N_cycles_current_idx_no_scroll_infra`** / **`test_warnings_n_N_cycles_without_touching_scroll`**
+  — the "highlight-only, no jump" decision as a permanent guard: gpu has no `error_scroll_offset`
+  equivalent at all; warnings DOES have real scroll state (`error_scroll_offset`), and this test
+  specifically asserts n/N leaves it COMPLETELY untouched (only `current_idx` cycles) — proving
+  the reduced scope was a deliberate choice, not an accident of gpu/news lacking the infra to
+  begin with.
+
+**Usage (from project root):**
+```bash
+./venv/bin/python dev/pane_search/p8_warnings_gpu_news_parity_test.py
+```
+
+**Output:** PASS/FAIL per check to stdout; writes `dev/pane_search/md/p8_warnings_gpu_news_parity_test_<timestamp>.md`; exits 1 if any check fails.
+
+**Reads:** nothing external — seeds `src.panes.warnings_pane.tool_errors` / synthetic `presets`/`status` dicts directly for gpu/news (no real `rag-cli`/subprocess calls — `_render_pane`/`_gpu_search_on_commit`/`_news_search_on_commit` all take data as plain parameters).
+**Writes:** `dev/pane_search/md/p8_warnings_gpu_news_parity_test_<timestamp>.md`.
+**Called by:** run manually — regression guard for the warnings/gpu/news panes' search bars; re-run after any change to `warnings_pane.py`/`warnings_render.py`'s search handling, `gpu_pane/pane.py`'s or `news_pane/pane.py`'s `_render_pane`/inline dispatch, or `src/search_bar.py`.
+**Calls out:** `src.panes.warnings_pane`, `src.panes.warnings_render`, `src.gpu_pane.pane`, `src.news_pane.pane`, `src.search_bar`, `src.constants` — loaded via `importlib.import_module`.

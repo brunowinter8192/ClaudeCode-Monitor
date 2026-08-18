@@ -1,0 +1,80 @@
+# P7 workers pane parity regression — 20260818_201746
+
+76/76 checks passed
+
+- [x] _worker_search is a search_bar.SearchState instance
+- [x] label is 'search: '
+- [x] search bar is fixed 1-line
+- [x] row 1 shows the 'search: ' label
+- [x] no click-arrows
+- [x] row 1 is not a body line_map key
+- [x] freeze region exists and is at row 2
+- [x] freeze region row is 2 (shifted past the search bar)
+- [x] clicking the shifted freeze region still toggles frozen
+- [x] press returns True (redraw)
+- [x] press focuses the bar
+- [x] press arms dragging
+- [x] press anchors at index 1 ('e')
+- [x] motion extends sel_end only
+- [x] release returns True (redraw)
+- [x] release disarms dragging
+- [x] release copies exactly the selected substring
+- [x] release still returns True (dragging disarmed)
+- [x] NO clipboard call on a plain click
+- [x] selection cleared after a plain click
+- [x] release with no armed drag returns False
+- [x] selection exists before the elsewhere-click
+- [x] elsewhere-click reports a change (selection cleared)
+- [x] selection cleared after clicking elsewhere
+- [x] body-row press does not arm dragging
+- [x] motion after a body-row press falls through to generic hover
+- [x] selection exists before typing
+- [x] typing reports a change
+- [x] selection cleared after typing
+- [x] typed char appended at the end
+- [x] backspace reports a change
+- [x] query has the SELECTED substring removed
+- [x] selection cleared after selection-delete
+- [x] backspace reports a change
+- [x] last char trimmed
+- [x] kill-line reports a change
+- [x] query fully emptied
+- [x] matches survive plain backspace
+- [x] matches survive kill-line
+- [x] Enter reports a change
+- [x] real search found exactly the worker-level match for w1
+- [x] w1 auto-expanded by the jump
+- [x] w2 NOT auto-expanded (not a match)
+- [x] w1's header line is container-marked
+- [x] no unsubstituted _BG_RESTORE_SENTINEL leaks into the final output
+- [x] Enter reports a change
+- [x] real search found exactly the call-level match for w1
+- [x] w1 auto-expanded
+- [x] call is NOT auto-expanded (collapsed container mark, matches token_pane's decision)
+- [x] w1's collapsed call header is container-marked
+- [x] the marker text itself does NOT leak into the collapsed row
+- [x] w2's own (non-matching) expanded content carries NO search highlight
+- [x] real search found the call
+- [x] row's OUTER chosen_bg is still LIGHT_RED_BG despite the search-marker wrap preceding it
+- [x] no-op with zero matches
+- [x] n advances to idx 1
+- [x] n advances to idx 2
+- [x] n wraps back to idx 0
+- [x] N (backward) wraps to idx 2
+- [x] real search found the call
+- [x] worker_turns populated by the jump itself
+- [x] worker_turns re-populated fresh by the jump, not left empty
+- [x] w1 re-expanded by the jump
+- [x] worker_scroll_offsets computed for w1
+- [x] worker_scroll_offset (pane-level, dormant) stays exactly 0
+- [x] no crash; ghost worker's expand-state entry is a harmless inert stub
+- [x] cancel reports a change
+- [x] query cleared
+- [x] matches cleared
+- [x] focused cleared
+- [x] selection cleared
+- [x] bar still renders (never hidden)
+- [x] reverse-video ON code present
+- [x] reverse-video OFF code present
+- [x] the reversed span wraps exactly the selected substring
+- [x] no reverse-video codes when there is no selection
