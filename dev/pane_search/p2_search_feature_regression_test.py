@@ -373,6 +373,25 @@ def test_utf8_search_query_accumulation():
           '�' not in mod_pane._proxy_search_query)
 
 
+def test_kill_line_after_a_real_search_run():
+    print("\n[kill-line] Cmd+Backspace hypothesis (_KILL_LINE_CHAR) clears the query after a "
+          "REAL Enter-triggered search — matches from that run stay stale (Enter-only recompute, "
+          "unchanged M2 convention) until the user searches again")
+    _reset_pane_state()
+    entries = [_make_entry(i) for i in range(3)]
+    mod_pane.proxy_entries.extend(entries)
+    mod_pane._proxy_search_query = 'unique_marker_1'
+    mod_pane._proxy_search_focused = True
+    mod_pane._handle_proxy_search_input('\r')  # Enter -> real _run_proxy_search via the real path
+    check("real search run found the match", mod_pane._proxy_search_matches == [1])
+    mod_pane._proxy_search_focused = True
+    changed = mod_pane._handle_proxy_search_input(mod_pane._KILL_LINE_CHAR)
+    check("kill-line reports a change", changed)
+    check("query fully emptied", mod_pane._proxy_search_query == '')
+    check("matches from the prior real search run are UNCHANGED (stale until next Enter)",
+          mod_pane._proxy_search_matches == [1])
+
+
 # ORCHESTRATOR
 
 def run_probe_workflow():
@@ -389,6 +408,7 @@ def run_probe_workflow():
     test_flow_id_lazy_load_fix()
     test_utf8_multibyte_keypress()
     test_utf8_search_query_accumulation()
+    test_kill_line_after_a_real_search_run()
 
     total = len(_RESULTS)
     passed = sum(1 for _, ok in _RESULTS if ok)

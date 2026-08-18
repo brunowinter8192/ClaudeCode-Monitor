@@ -35,6 +35,12 @@ _SRCH_IDLE  = '\033[38;2;166;173;200m'   # medium gray — unfocused query text
 _PROXY_HEADER_LINES = 1  # fixed-height search bar row; unlike worker_proxy_pane's header this never wraps
 _SEARCH_BAR_LABEL = 'search: '  # single source for both the renderer and the col->char-index mapper
 
+# Kill-line binding (2026-08-18) — HYPOTHESIS, not confirmed: Cmd+Backspace is normally consumed
+# by the terminal app itself; on macOS, Ghostty most likely maps it to the kill-line control char
+# 0x15 (Ctrl-U) before it ever reaches this process. Named constant so a rebind after live
+# testing (if the real captured sequence differs) is a one-line change.
+_KILL_LINE_CHAR = '\x15'
+
 proxy_entries: List[dict] = []
 proxy_expand_states: Dict[int, bool] = {}
 proxy_line_map: Dict[int, int] = {}
@@ -67,7 +73,10 @@ _proxy_search_matches: List[int] = []       # entry_idx list, ordered by positio
 _proxy_search_match_set: Set[int] = set()   # set(_proxy_search_matches) for O(1) membership
 _proxy_search_current_idx: int = 0          # index into _proxy_search_matches for the jump target
 
-# Drag-to-select state (search bar only, row 1) — copy-only: never affects the query itself
+# Drag-to-select state (search bar only, row 1). Release always copies to clipboard (unchanged);
+# (2026-08-18 follow-up) ALSO an edit target — Backspace with an active selection deletes the
+# selected substring from the query instead of trimming the last char (see
+# _handle_proxy_search_input). No longer copy-only.
 _proxy_search_dragging: bool = False        # True between a row-1 press and its matching release
 _proxy_search_sel_anchor: Optional[int] = None  # char-boundary index [0, len(query)] where the drag started
 _proxy_search_sel_end: Optional[int] = None     # char-boundary index of the current/last drag position
@@ -248,16 +257,31 @@ def _handle_proxy_search_cancel() -> bool:
     _clear_proxy_search_selection()
     return True
 
-# Handle keyboard input while the search bar is focused; returns True if input_changed
+# Handle keyboard input while the search bar is focused; returns True if input_changed.
+# Editing NEVER clears _proxy_search_matches/_match_set (confirmed: neither did plain backspace/
+# typing before this change) — Enter remains the only recompute trigger, unchanged.
 def _handle_proxy_search_input(char: str) -> bool:
     global _proxy_search_query, _proxy_search_focused
-    # Any new input clears a lingering drag-selection highlight — track whether one existed so
-    # an otherwise-unhandled char (e.g. a stray control character) still triggers the redraw
-    # that makes the highlight disappear, instead of silently mutating state with no repaint.
+    # Any new input clears a lingering drag-selection highlight — capture its (start, end) range
+    # BEFORE clearing so Backspace can still delete it, and track whether one existed so an
+    # otherwise-unhandled char (e.g. a stray control character) still triggers the redraw that
+    # makes the highlight disappear, instead of silently mutating state with no repaint.
     had_selection = _proxy_search_sel_anchor is not None
+    sel_range = None
+    if _proxy_search_sel_anchor is not None and _proxy_search_sel_end is not None:
+        s, e = sorted((_proxy_search_sel_anchor, _proxy_search_sel_end))
+        if s != e:
+            sel_range = (s, e)
     _clear_proxy_search_selection()
+    if char == _KILL_LINE_CHAR:  # Cmd+Backspace hypothesis (see _KILL_LINE_CHAR) — kill whole line
+        _proxy_search_query = ''
+        return True
     if char in ('\x7f', '\x08'):  # backspace (DEL or BS)
-        _proxy_search_query = _proxy_search_query[:-1]
+        if sel_range is not None:
+            s, e = sel_range
+            _proxy_search_query = _proxy_search_query[:s] + _proxy_search_query[e:]
+        else:
+            _proxy_search_query = _proxy_search_query[:-1]
         return True
     if char in ('\r', '\n'):  # Enter → (re)run search, unfocus
         _run_proxy_search()
