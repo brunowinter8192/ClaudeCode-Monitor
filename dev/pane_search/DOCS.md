@@ -198,7 +198,7 @@ branches), `_handle_proxy_search_release`, `_clear_proxy_search_selection`, or
 
 ---
 
-### p4_main_pane_parity_test.py (441 LOC)
+### p4_main_pane_parity_test.py (480 LOC)
 
 **Purpose:** Regression guard for the MAIN pane (`src/core/monitor.py`, `core/monitor_display.py`)
 reaching full parity with the proxy pane's reference search-bar implementation (rollout

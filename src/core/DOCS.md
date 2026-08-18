@@ -39,7 +39,7 @@ Buffer: `monitor_display._buffer_append()` appends each event to `main_event_buf
 
 ## Modules
 
-### monitor.py (367 LOC)
+### monitor.py (373 LOC)
 
 **Purpose:** Polling orchestrator — discovers sessions, drives the streaming loop, dispatches to pane event loops by mode, and owns all shared state dicts. `run_main_loop()` runs a 24h log janitor (via `log_janitor.cleanup_old_jsonl`) for sweep-eligible logs (`hook_firing.jsonl`, `api_errors.jsonl`, `polling_state.jsonl`).
 
