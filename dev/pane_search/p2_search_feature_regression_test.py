@@ -194,6 +194,34 @@ def test_expanded_hit_marks_line():
           _BG_RESTORE_SENTINEL not in output)
 
 
+def test_sentinel_resolves_to_default_bg_not_empty_string_on_zebra_a_rows():
+    print("\n[live bug, 2026-08-18] Empty-string chosen_bg (ZEBRA_BG_A rows — every second "
+          "zebra row) must NOT delete the sentinel outright: that left the search-highlight BG "
+          "active through to \\x1b[K erase-to-EOL, flooding the rest of the row gold. Exact "
+          "user-reported + self-reproduced repro, direct call to _apply_row_backgrounds.")
+    line = (f"    {SEARCH_CURRENT_BG}62/62 im eigenen Lauf, das Diff{_BG_RESTORE_SENTINEL}")
+    # key=('msg', 5, 0) with initial_parent_count=0 lands on ZEBRA_BG_A (empty string) — the
+    # exact scenario the live bug needs to reproduce (ZEBRA_BG_B rows always restored fine).
+    out = mod_format._apply_row_backgrounds([line], [('msg', 5, 0)], set(), None, None, 120, 0)
+    rendered = out[0]
+    check("no unsubstituted _BG_RESTORE_SENTINEL left in the output", _BG_RESTORE_SENTINEL not in rendered)
+    check("a real default-bg reset (\\x1b[49m) appears after the matched text",
+          '\x1b[49m' in rendered)
+    match_end = rendered.index('Diff') + len('Diff')
+    reset_pos = rendered.find('\x1b[49m', match_end)
+    erase_pos = rendered.index('\x1b[K')
+    check("the reset sits BETWEEN the matched text and \\x1b[K — the gold BG is closed before "
+          "erase-to-EOL, so no flood reaches the end of the row",
+          match_end <= reset_pos < erase_pos)
+
+    # Sanity: a NON-empty chosen_bg (ZEBRA_BG_B, via initial_parent_count=1) must still resolve
+    # to the real color as before — this fix must not regress the already-correct case.
+    line2 = f"    {SEARCH_CURRENT_BG}matched{_BG_RESTORE_SENTINEL} trailing"
+    out2 = mod_format._apply_row_backgrounds([line2], [('msg', 6, 0)], set(), None, None, 120, 1)
+    check("non-empty chosen_bg (ZEBRA_BG_B) case unaffected by the fix",
+          mod_constants.ZEBRA_BG_B in out2[0] and out2[0].count(mod_constants.ZEBRA_BG_B) >= 2)
+
+
 def test_n_N_ordering():
     print("\n[n/N ordering] Jump forward/backward wraps around the match list")
     _reset_pane_state()
@@ -402,6 +430,7 @@ def run_probe_workflow():
     test_line_map_shift()
     test_collapsed_hit_marks_req_row()
     test_expanded_hit_marks_line()
+    test_sentinel_resolves_to_default_bg_not_empty_string_on_zebra_a_rows()
     test_n_N_ordering()
     test_esc_clears_query_bar_stays()
     test_scroll_jump_clamps()
