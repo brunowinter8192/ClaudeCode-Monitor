@@ -34,7 +34,7 @@ from .queue_controller import QueueController
 # From rag_controller.py: RagController — per-concern RAG panel controller
 from .rag_controller import RagController
 # From system.py: Ghostty terminal focus
-from .system import _focus_session
+from .system import _focus_session, _focus_worker
 # From sessions_controller.py: session snapshot cache
 from .sessions_controller import SessionsController
 # From app_settings.py: Settings load/save
@@ -90,6 +90,11 @@ class _PanelController(NSObject):
         cwd = self._app.panel._cwd_map.get(sender.tag())
         if cwd:
             _focus_session(cwd)
+
+    def focusWorker_(self, sender):
+        tmux_session_name = self._app.panel._worker_tag_map.get(sender.tag())
+        if tmux_session_name:
+            _focus_worker(tmux_session_name)
 
     def toggleAutoJump_(self, sender):
         app = self._app
