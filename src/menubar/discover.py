@@ -1,7 +1,7 @@
 # INFRASTRUCTURE
 import json, os, time
 from pathlib import Path
-from typing import List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional
 
 # From session_finder.py: Scan ~/.claude/projects directories + encode project path
 from ..session_finder import get_project_directories, encode_project_path
@@ -33,15 +33,31 @@ class SessionInfo(NamedTuple):
     tmux_session_name: str   # worker-{basename(project_path)}-{worker_name} per iterative-dev convention; '' for mains. DO NOT reconstruct from project_name (decode heuristic mismatch). (2026-08: the orchestrator-signal lookup this field originally served, app.py:_has_recent_send_signal, was removed along with auto-abort — field kept, still the canonical worker-tmux-session identifier for any future consumer.)
     desktop_no: Optional[int] = None   # macOS Mission Control desktop number (1-based); None if detection failed or session is a worker
 
+# Sub-phase durations (seconds) from the most recent list_alive_sessions() call; read via
+# get_last_session_timings(). Populated unconditionally (2 monotonic() calls/phase — near-zero
+# cost) so app.py's _tick latency instrumentation can merge it into its own phase breakdown.
+_last_timings: Dict[str, float] = {}
+
 # ORCHESTRATOR
 
 # Return list of alive CC sessions across all projects; swallows per-session errors
 def list_alive_sessions() -> List[SessionInfo]:
+    global _last_timings
     now = time.time()
+    timings: Dict[str, float] = {}
+    t0 = time.monotonic()
     _refresh_cc_proc_cache(now)
+    timings['proc_cache'] = time.monotonic() - t0
+    t0 = time.monotonic()
     _refresh_ghostty_tty_to_id(now)
+    timings['ghostty'] = time.monotonic() - t0
+    t0 = time.monotonic()
     _refresh_tmux_state(now)
+    timings['tmux_state'] = time.monotonic() - t0
+    t0 = time.monotonic()
     _refresh_bg_task_cache(now)   # one global lsof scan/tick-window for _has_active_bg (all sessions)
+    timings['bg_task_lsof'] = time.monotonic() - t0
+    t0 = time.monotonic()
     _read_hook_state(now)   # warm cache once per tick; _process_project_dir reads from cache
     _write_cwd_uuid_map()   # refresh {cwd: uuid} file for hook_writer.py delivery (change-detected)
     results = []
@@ -52,7 +68,9 @@ def list_alive_sessions() -> List[SessionInfo]:
                 results.append(info)
         except Exception:
             continue
+    timings['per_project_loop'] = time.monotonic() - t0   # incl. per-worker _tmux_window_activity calls
     # Batch desktop detection for mains (single AppleScript round-trip for the batch)
+    t0 = time.monotonic()
     main_cwds = {s.cwd for s in results if not s.is_worker and s.cwd}
     if main_cwds:
         cwd_tty_map  = {cwd: tty for _pid, (tty, cwd) in _cc_proc_cache.items() if tty and cwd}
@@ -62,7 +80,13 @@ def list_alive_sessions() -> List[SessionInfo]:
         dno_map = detect_main_desktop_numbers(cwd_uuid_map, cwd_tty_map, now)
         results = [s._replace(desktop_no=dno_map.get(s.cwd)) if not s.is_worker else s
                    for s in results]
+    timings['desktop_detection'] = time.monotonic() - t0
+    _last_timings = timings
     return results
+
+# Return sub-phase timings (seconds) from the most recent list_alive_sessions() call
+def get_last_session_timings() -> Dict[str, float]:
+    return dict(_last_timings)
 
 # FUNCTIONS
 
