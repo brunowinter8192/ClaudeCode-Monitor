@@ -40,6 +40,12 @@ def _load_carbon():
     ]
     carbon.UnregisterEventHotKey.restype  = _OSStatus
     carbon.UnregisterEventHotKey.argtypes = [ctypes.c_void_p]
+    # EventTime = double, seconds since boot — same clock domain for both calls, so their
+    # difference is a direct main-thread-stall measure (queue_delay_ms in handler bodies below).
+    carbon.GetEventTime.restype  = ctypes.c_double
+    carbon.GetEventTime.argtypes = [ctypes.c_void_p]
+    carbon.GetCurrentEventTime.restype  = ctypes.c_double
+    carbon.GetCurrentEventTime.argtypes = []
     return carbon
 
 _EventHandlerProcPtr = ctypes.CFUNCTYPE(
@@ -72,6 +78,14 @@ _ARROW_HANDLER_REF  = None   # handler_ref from InstallEventHandler
 
 # FUNCTIONS
 
+# Log main-thread-stall measure for one hotkey press: delta between the event's Carbon
+# timestamp (queued at OS level) and handler entry (already main-thread-serialized by the time
+# this runs). handler_entry_t MUST be captured as the handler's first statement.
+def _log_queue_delay(carbon, event, handler_entry_t: float, hotkey_name: str) -> None:
+    event_t = carbon.GetEventTime(event)
+    queue_delay_ms = (handler_entry_t - event_t) * 1000
+    log_menubar('latency', f'hotkey={hotkey_name} queue_delay_ms={queue_delay_ms:.1f}')
+
 # Extract EventHotKeyID from a Carbon hotkey event
 def _get_hkid(carbon, event) -> _EventHotKeyID:
     hkid = _EventHotKeyID()
@@ -89,6 +103,7 @@ def _ensure_digit_handler():
     target = carbon.GetApplicationEventTarget()
 
     def _handler(handler_ref, event, user_data):
+        _entry_t = carbon.GetCurrentEventTime()
         try:
             hkid = _get_hkid(carbon, event)
             slot = hkid.id - 1   # ids 2..10 → slots 1..9
@@ -96,6 +111,7 @@ def _ensure_digit_handler():
             if fn is None:
                 return _eventNotHandledErr
             log_menubar('hotkey', f'cmd+{slot}')
+            _log_queue_delay(carbon, event, _entry_t, f'cmd+{slot}')
             fn()
         except Exception:  # log-safe: Carbon handler must not raise
             pass
@@ -117,12 +133,15 @@ def _ensure_arrow_handler():
     target = carbon.GetApplicationEventTarget()
 
     def _handler(handler_ref, event, user_data):
+        _entry_t = carbon.GetCurrentEventTime()
         try:
             hkid = _get_hkid(carbon, event)
             fn = _ARROW_CALLBACKS.get(hkid.id)
             if fn is None:
                 return _eventNotHandledErr
-            log_menubar('hotkey', 'cmd+right' if hkid.id == _CMD_RIGHT_ID else 'cmd+left')
+            name = 'cmd+right' if hkid.id == _CMD_RIGHT_ID else 'cmd+left'
+            log_menubar('hotkey', name)
+            _log_queue_delay(carbon, event, _entry_t, name)
             fn()
         except Exception:  # log-safe: Carbon handler must not raise
             pass
@@ -145,11 +164,13 @@ def register_cmd_l(callback) -> tuple:
     target = carbon.GetApplicationEventTarget()
 
     def _handler(handler_ref, event, user_data):
+        _entry_t = carbon.GetCurrentEventTime()
         try:
             hkid = _get_hkid(carbon, event)
             if hkid.id != _CMD_L_ID:
                 return _eventNotHandledErr
             log_menubar('hotkey', 'cmd+l')
+            _log_queue_delay(carbon, event, _entry_t, 'cmd+l')
             callback()
         except Exception:  # log-safe: Carbon handler must not raise
             pass
@@ -244,11 +265,13 @@ def register_cmd_k(callback) -> tuple:
     target = carbon.GetApplicationEventTarget()
 
     def _handler(handler_ref, event, user_data):
+        _entry_t = carbon.GetCurrentEventTime()
         try:
             hkid = _get_hkid(carbon, event)
             if hkid.id != _CMD_K_ID:
                 return _eventNotHandledErr
             log_menubar('hotkey', 'cmd+k')
+            _log_queue_delay(carbon, event, _entry_t, 'cmd+k')
             callback()
         except Exception:  # log-safe: Carbon handler must not raise
             pass

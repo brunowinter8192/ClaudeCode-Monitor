@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Dict
 
 import rumps
 from AppKit import (NSAttributedString, NSBaselineOffsetAttributeName, NSFont,
@@ -13,7 +14,7 @@ from AppKit import (NSAttributedString, NSBaselineOffsetAttributeName, NSFont,
 from Foundation import NSObject, NSOperationQueue
 
 # From discover.py: Live session discovery
-from .discover import list_alive_sessions
+from .discover import list_alive_sessions, get_last_session_timings
 # From bg_timer.py: orchestrator wake-up process (worker-cli wait + legacy sleep timer) scanning and abort
 from .bg_timer import _scan_bg_sleep_timers, _abort_bg_sleep_timers
 # From focus_controller.py: FocusController — auto-focus debounce
@@ -46,6 +47,7 @@ from .panel_lifecycle import (_open_main_panel, _close_main_panel,
 
 BLINK_DURATION = 0.2   # seconds
 POLL_INTERVAL  = 1.5   # seconds
+TICK_LATENCY_THRESHOLD_MS = 200   # log a [latency] breakdown line only when total _tick duration exceeds this
 
 # FUNCTIONS
 
@@ -245,16 +247,30 @@ class CCMenuBarApp(rumps.App):
                 self.panel._initialized = True
             except AttributeError:
                 return   # _nsapp not ready yet; retry next tick
+        _tick_t0 = time.monotonic()
+        phases: Dict[str, float] = {}
         now = time.time()
+        _p0 = time.monotonic()
         try:
             sessions = self.sessions.refresh()
         except Exception:
             sessions = []
+        phases['sessions_refresh_total'] = time.monotonic() - _p0
+        phases.update(get_last_session_timings())
+        _p0 = time.monotonic()
         cwd_to_project = {s.cwd: s.project_name for s in sessions if not s.is_worker and s.cwd}
         bg_by_project = _scan_bg_sleep_timers(cwd_to_project)
+        phases['bg_timer_scan'] = time.monotonic() - _p0
+        _p0 = time.monotonic()
         self.focus.tick(sessions, now)
+        phases['focus_tick'] = time.monotonic() - _p0
+        _p0 = time.monotonic()
         self.queue.tick(sessions)
+        phases['queue_tick'] = time.monotonic() - _p0
+        _p0 = time.monotonic()
         self.rag.tick(sessions)
+        phases['rag_tick'] = time.monotonic() - _p0
+        _p0 = time.monotonic()
         if self.panel._panel_open:
             session_names = {s.name for s in sessions}
             new_abort_projs = {p for p in bg_by_project if p != 'unknown'}
@@ -280,6 +296,11 @@ class CCMenuBarApp(rumps.App):
                 self.panel.rebuild(sessions, bg_by_project)
             else:
                 _tick_log(False, sessions, self.panel._displayed_items, 'no-change')
+        phases['panel_rebuild_update'] = time.monotonic() - _p0
+        _tick_total_ms = (time.monotonic() - _tick_t0) * 1000
+        if _tick_total_ms > TICK_LATENCY_THRESHOLD_MS:
+            breakdown = ' '.join(f'{k}={v * 1000:.0f}ms' for k, v in phases.items())
+            log_menubar('latency', f'tick total={_tick_total_ms:.0f}ms {breakdown}')
 
 
 # Append one diagnostic line per tick to menubar.log; gated on MENUBAR_DIAGNOSTICS=1 env var (default OFF)

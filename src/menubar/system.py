@@ -43,7 +43,11 @@ def _acquire_singleton_lock():
 # Focus Ghostty terminal for cwd; prefers UUID-based focus, falls back to cwd-match
 def _focus_session(cwd: str) -> None:
     import datetime
+    import time
+    from .menubar_log import log_menubar
+    _t0 = time.monotonic()
     term_id = get_ghostty_terminal_id(cwd)
+    lookup_ms = (time.monotonic() - _t0) * 1000
     ts = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     if term_id:
         safe_id = term_id.replace('"', '\\"')
@@ -66,16 +70,20 @@ def _focus_session(cwd: str) -> None:
             'end tell'
         )
         label = f'cwd={cwd}'
+    _t1 = time.monotonic()
     try:
         r = subprocess.run(['osascript', '-e', script], capture_output=True, timeout=3)
+        osascript_ms = (time.monotonic() - _t1) * 1000
         out = r.stdout.decode(errors='replace').strip()
         if r.returncode != 0:
-            msg = f'{ts} ERR rc={r.returncode} {label} stderr={r.stderr.decode(errors="replace").strip()}\n'
+            msg = f'{ts} ERR rc={r.returncode} {label} stderr={r.stderr.decode(errors="replace").strip()} lookup_ms={lookup_ms:.1f} osascript_ms={osascript_ms:.1f}\n'
         elif out.startswith('MISS:'):
-            msg = f'{ts} MISS {label} reason={out[5:]}\n'
+            msg = f'{ts} MISS {label} reason={out[5:]} lookup_ms={lookup_ms:.1f} osascript_ms={osascript_ms:.1f}\n'
         else:
-            msg = f'{ts} OK {label}\n'
+            msg = f'{ts} OK {label} lookup_ms={lookup_ms:.1f} osascript_ms={osascript_ms:.1f}\n'
     except subprocess.TimeoutExpired:
-        msg = f'{ts} TIMEOUT {label}\n'
+        osascript_ms = (time.monotonic() - _t1) * 1000
+        msg = f'{ts} TIMEOUT {label} lookup_ms={lookup_ms:.1f} osascript_ms={osascript_ms:.1f}\n'
     with open('/tmp/monitor-cc-menubar_focus.log', 'a') as fh:
         fh.write(msg)
+    log_menubar('latency', f'focus lookup_ms={lookup_ms:.1f} osascript_ms={osascript_ms:.1f} {label}')
