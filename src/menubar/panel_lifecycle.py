@@ -3,10 +3,6 @@ import sys
 
 from Foundation import NSOperationQueue
 
-# From discover.py: Live session discovery
-from .discover import list_alive_sessions
-# From bg_timer.py: Background sleep-timer scanning
-from .bg_timer import _scan_bg_sleep_timers
 # From panel.py: NSPanel repositioning
 from .panel import _reposition_panel
 # From rag_controller.py: RAG panel repositioning
@@ -74,9 +70,10 @@ def _background_panel(app: 'CCMenuBarApp') -> None:
 
 # Open main panel: rebuild → reposition → show → register Cmd+→ (→RAG) + Cmd+← (→Queue wrap) + Cmd+1..9
 def _open_main_panel(app: 'CCMenuBarApp') -> None:
+    # 2026-08 (hotkey_latency M3): consumes the background discovery snapshot (app.sessions) —
+    # no direct list_alive_sessions()/_scan_bg_sleep_timers() calls on the main thread anymore.
     sessions = app.sessions.refresh()
-    cwd_to_project = {s.cwd: s.project_name for s in sessions if not s.is_worker and s.cwd}
-    bg_by_project = _scan_bg_sleep_timers(cwd_to_project)
+    bg_by_project = app.sessions.bg_by_project
     app.panel.rebuild(sessions, bg_by_project)
     _reposition_panel(app.panel._panel, app._nsapp.nsstatusitem)
     app.panel._panel.orderFrontRegardless()
