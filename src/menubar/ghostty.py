@@ -147,6 +147,13 @@ def get_ghostty_terminal_id(cwd: str) -> Optional[str]:
         return None
     return _ghostty_tty_to_id.get(tty)
 
+# Return Ghostty terminal UUID for a known tty, or None if not mapped — used by
+# system.py:_focus_worker (worker-viewer click-to-focus, 2026-08). Single-key .get() on
+# _ghostty_tty_to_id: GIL-safe cross-thread read, no lock needed (see proc_cache.py's
+# cc_proc_cache_snapshot() docstring for why plain .get() differs from dict iteration here).
+def get_ghostty_terminal_id_for_tty(tty: str) -> Optional[str]:
+    return _ghostty_tty_to_id.get(tty)
+
 # Write {cwd: uuid} map to APP_SUPPORT/ghostty_cwd_uuid.json for hook_writer.py delivery use
 # Called from discover.py:list_alive_sessions() after both caches are refreshed
 # Skips write when mapping unchanged (change-detection via _ghostty_cwd_uuid_last)

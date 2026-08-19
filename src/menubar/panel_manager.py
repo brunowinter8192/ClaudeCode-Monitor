@@ -27,6 +27,7 @@ class PanelManager:
         self._initialized: bool = False
         self._displayed_items: dict = {}
         self._cwd_map: dict = {}
+        self._worker_tag_map: dict = {}   # tag -> tmux_session_name (worker rows, click-to-focus viewer window)
         self._desktop_to_cwd: dict = {}
         self._abort_btns_by_project: dict = {}
         self._abort_project_for_tag: dict = {}
@@ -53,6 +54,7 @@ class PanelManager:
             sv.removeFromSuperview()   # removeView_ removes from arrangedSubviews only; view persists as regular subview without this
         self._displayed_items = {}
         self._cwd_map = {}
+        self._worker_tag_map = {}
         self._desktop_to_cwd = {}
         self._abort_btns_by_project = {}
         self._abort_project_for_tag = {}
@@ -153,8 +155,16 @@ class PanelManager:
                     row_idx += 1
                     self._displayed_items[s.name] = (dot_btn, badge_btn)
                 else:
+                    # Worker row: click focuses the Ghostty viewer window running
+                    # 'tmux attach -t <tmux_session_name>' — see system.py:_focus_worker.
+                    tag      = next_tag[0]; next_tag[0] += 1
                     name_btn = _make_grid_cell_btn(s.name)
                     dot_btn  = _make_grid_cell_btn(dot)
+                    for btn in (name_btn, dot_btn):
+                        btn.setTag_(tag)
+                        btn.setTarget_(self.app._panel_controller)
+                        btn.setAction_(b'focusWorker:')
+                    self._worker_tag_map[tag] = s.tmux_session_name
                     grid.addRowWithViews_([empty, empty, name_btn, dot_btn, empty])
                     grid.rowAtIndex_(row_idx).setHeight_(float(_ROW_H - 1))
                     row_idx += 1
