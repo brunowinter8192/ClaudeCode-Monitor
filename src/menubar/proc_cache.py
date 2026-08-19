@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import threading
 import time
 from pathlib import Path
 from typing import Dict, Optional, Tuple
@@ -19,7 +20,13 @@ _TASKS_BASE_REAL = str(_TASKS_BASE.resolve())
 _PROXY_LOG_DIR = Path('/Users/brunowinter2000/Documents/ai/monitor-cc/src/logs')
 
 # pid→(tty, cwd) cache for CC processes; incremental: lsof only on new PIDs
+# 2026-08 (hotkey_latency M3): discovery moved to a background thread (discovery_worker.py) —
+# _cc_proc_cache now has a genuine cross-thread reader (ghostty.py:_tty_for_cwd, called from
+# system.py:_focus_session on the main thread via click/hotkey). _cc_proc_cache_lock guards
+# every mutation of this dict; cross-thread readers MUST go through cc_proc_cache_snapshot(),
+# never touch _cc_proc_cache directly.
 _cc_proc_cache: Dict[str, Tuple[str, str]] = {}
+_cc_proc_cache_lock = threading.Lock()
 _cc_proc_last_refresh: float = 0.0
 
 # Absolute paths (real, resolved) of *.output files currently held open by any process,
@@ -77,7 +84,9 @@ def _refresh_bg_task_cache(now: float) -> None:
     _bg_task_open_paths = {line[1:] for line in r.stdout.split('\n')
                             if line.startswith('n') and line.endswith('.output')}
 
-# Update pid→(tty,cwd) cache incrementally: drop gone PIDs, lsof only for new ones
+# Update pid→(tty,cwd) cache incrementally: drop gone PIDs, lsof only for new ones.
+# lsof subprocess calls run OUTSIDE _cc_proc_cache_lock (never hold the lock across I/O — would
+# stall the cross-thread reader for the lsof duration); only the dict mutation itself is locked.
 def _refresh_cc_proc_cache(now: float) -> None:
     global _cc_proc_last_refresh
     if now - _cc_proc_last_refresh < _PROC_REFRESH_INTERVAL:
@@ -95,13 +104,12 @@ def _refresh_cc_proc_cache(now: float) -> None:
         parts = line.split(None, 2)
         if len(parts) == 3 and 'claude' in parts[2].lower() and parts[1] != '??':
             active[parts[0].strip()] = parts[1].strip()
-    # Drop entries for gone PIDs
-    for pid in list(_cc_proc_cache):
-        if pid not in active:
-            del _cc_proc_cache[pid]
+    with _cc_proc_cache_lock:
+        known_pids = set(_cc_proc_cache)
     # lsof only for PIDs not yet in cache (cwd is stable after launch)
+    new_entries: Dict[str, Tuple[str, str]] = {}
     for pid, tty in active.items():
-        if pid in _cc_proc_cache:
+        if pid in known_pids:
             continue
         try:
             r2 = subprocess.run(['lsof', '-a', '-d', 'cwd', '-p', pid],
@@ -112,10 +120,22 @@ def _refresh_cc_proc_cache(now: float) -> None:
                     continue
                 fields = line.split(None, 8)
                 if len(fields) == 9:
-                    _cc_proc_cache[pid] = (tty, fields[8])
+                    new_entries[pid] = (tty, fields[8])
                     break
         except Exception:
-            pass
+            continue
+    with _cc_proc_cache_lock:
+        for pid in list(_cc_proc_cache):
+            if pid not in active:
+                del _cc_proc_cache[pid]
+        _cc_proc_cache.update(new_entries)
+
+# Thread-safe snapshot copy of the pid→(tty,cwd) cache — the ONLY safe way to read
+# _cc_proc_cache from a thread other than the one calling _refresh_cc_proc_cache (currently:
+# ghostty.py:_tty_for_cwd, invoked from system.py:_focus_session on the main thread).
+def cc_proc_cache_snapshot() -> Dict[str, Tuple[str, str]]:
+    with _cc_proc_cache_lock:
+        return dict(_cc_proc_cache)
 
 # Refresh tmux session state via one list-sessions call; no-op within 3s TTL
 def _refresh_tmux_state(now: float) -> None:

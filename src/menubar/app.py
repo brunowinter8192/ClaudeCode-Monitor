@@ -13,10 +13,10 @@ from AppKit import (NSAttributedString, NSBaselineOffsetAttributeName, NSFont,
                     NSFontAttributeName)
 from Foundation import NSObject, NSOperationQueue
 
-# From discover.py: Live session discovery
-from .discover import list_alive_sessions, get_last_session_timings
-# From bg_timer.py: orchestrator wake-up process (worker-cli wait + legacy sleep timer) scanning and abort
-from .bg_timer import _scan_bg_sleep_timers, _abort_bg_sleep_timers
+# From bg_timer.py: orchestrator wake-up process (worker-cli wait + legacy sleep timer) abort
+from .bg_timer import _abort_bg_sleep_timers
+# From discovery_worker.py: background-thread session/bg-sleep-timer snapshot producer
+from .discovery_worker import start_discovery_worker
 # From focus_controller.py: FocusController — auto-focus debounce
 from .focus_controller import FocusController
 # From hotkey_controller.py: HotkeyController + Carbon Cmd+L / Cmd+K registration
@@ -143,13 +143,15 @@ class _PanelController(NSObject):
         rumps.quit_application()   # clean status-bar teardown; launchd starts new instance
 
     def abortBgTimer_(self, sender):
-        # Per-project abort: only kill timers for the project whose button was clicked
+        # Per-project abort: only kill timers for the project whose button was clicked.
+        # 2026-08 (hotkey_latency M3): consumes the background discovery snapshot (cheap
+        # in-memory read) instead of calling list_alive_sessions()/_scan_bg_sleep_timers()
+        # synchronously on the main thread.
         project_name = self._app.panel._abort_project_for_tag.get(sender.tag())
         if project_name is None:
             return
-        sessions = list_alive_sessions()
-        cwd_to_project = {s.cwd: s.project_name for s in sessions if not s.is_worker and s.cwd}
-        proj_bg = _scan_bg_sleep_timers(cwd_to_project).get(project_name)
+        self._app.sessions.refresh()
+        proj_bg = self._app.sessions.bg_by_project.get(project_name)
         if proj_bg:
             _abort_bg_sleep_timers(proj_bg.sleep_pids)
 
@@ -177,13 +179,15 @@ class _PanelController(NSObject):
         _save_settings(app._auto_focus, app._panel_width, app._panel_min_height)
 
     def windowDidEndLiveResize_(self, notification):
+        # 2026-08 (hotkey_latency M3): panel branch now consumes the background discovery
+        # snapshot (app.sessions) instead of calling list_alive_sessions()/_scan_bg_sleep_timers()
+        # synchronously on the main thread.
         app = self._app
         if app.rag._rag_open:
             app.rag.rebuild()
         elif app.panel._panel_open:
-            sessions = list_alive_sessions()
-            cwd_to_project = {s.cwd: s.project_name for s in sessions if not s.is_worker and s.cwd}
-            bg_by_project = _scan_bg_sleep_timers(cwd_to_project)
+            sessions = app.sessions.refresh()
+            bg_by_project = app.sessions.bg_by_project
             app.panel.rebuild(sessions, bg_by_project)
             app.hotkey.reregister_digits(app.panel._desktop_to_cwd)
         elif app.queue._queue_open:
@@ -215,6 +219,7 @@ class CCMenuBarApp(rumps.App):
         self.queue = QueueController(self)         # queue panel controller; owns all _queue_* state
         self.rag   = RagController(self)           # RAG status panel controller; owns all _rag_* state
         self.sessions = SessionsController(self)   # session snapshot cache; refresh() + .data property
+        start_discovery_worker()   # background thread: list_alive_sessions + _scan_bg_sleep_timers, ~1.5s cadence
         self._last_log_cleanup_ts: float = 0.0    # monotonic ts of last cleanup_old_lines run (0 → fires on first tick)
 
     @rumps.timer(POLL_INTERVAL)
@@ -250,17 +255,18 @@ class CCMenuBarApp(rumps.App):
         _tick_t0 = time.monotonic()
         phases: Dict[str, float] = {}
         now = time.time()
+        # 2026-08 (hotkey_latency M3): consume the background discovery snapshot (cheap in-memory
+        # read, no subprocess/AppleScript I/O) instead of running list_alive_sessions() +
+        # _scan_bg_sleep_timers() synchronously on the main thread. Their own per-cycle cost is
+        # now logged separately by discovery_worker.py as [latency] bg_refresh lines.
         _p0 = time.monotonic()
         try:
             sessions = self.sessions.refresh()
+            bg_by_project = self.sessions.bg_by_project
         except Exception:
             sessions = []
-        phases['sessions_refresh_total'] = time.monotonic() - _p0
-        phases.update(get_last_session_timings())
-        _p0 = time.monotonic()
-        cwd_to_project = {s.cwd: s.project_name for s in sessions if not s.is_worker and s.cwd}
-        bg_by_project = _scan_bg_sleep_timers(cwd_to_project)
-        phases['bg_timer_scan'] = time.monotonic() - _p0
+            bg_by_project = {}
+        phases['snapshot_consume'] = time.monotonic() - _p0
         _p0 = time.monotonic()
         self.focus.tick(sessions, now)
         phases['focus_tick'] = time.monotonic() - _p0

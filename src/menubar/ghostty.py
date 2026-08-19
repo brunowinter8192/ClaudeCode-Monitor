@@ -8,7 +8,7 @@ from typing import Dict, List, Optional
 # From paths.py: canonical APP_SUPPORT dir
 from .paths import _APP_SUPPORT
 # From proc_cache.py: CC process cache for tty→cwd lookups
-from .proc_cache import _cc_proc_cache
+from .proc_cache import _cc_proc_cache, cc_proc_cache_snapshot
 
 _GHOSTTY_TTY_REFRESH_INTERVAL = 10.0   # cooldown between new-TTY probe cycles
 _GHOSTTY_MARKER_PREFIX = '__GHT_'      # OSC 2 title marker prefix (not used by CC)
@@ -36,7 +36,18 @@ def _refresh_ghostty_tty_to_id(now: float) -> None:
     # Only probe TTYs not yet mapped — avoids title-flash on already-known terminals
     new_ttys = [t for t in all_ttys if t not in _ghostty_tty_to_id]
     if not new_ttys:
-        return  # no probe; timestamp NOT updated so next tick re-checks
+        # 2026-08 (hotkey_latency M3): re-arm the TTL here too — this is the STEADY-STATE branch
+        # (every cycle once all live TTYs are mapped), so leaving the timestamp unset meant the
+        # TTL guard above never re-armed and _ghostty_pid()+_ghostty_child_ttys() (2 ps -A calls)
+        # ran on every single discovery cycle instead of once per _GHOSTTY_TTY_REFRESH_INTERVAL.
+        # Measured live (process-docs/hotkey_latency/): ~150-165ms of ghostty-phase cost on nearly
+        # every cycle. Accepted trade-off: a newly-opened terminal's tty→uuid mapping may now lag
+        # up to _GHOSTTY_TTY_REFRESH_INTERVAL (10s) instead of being probed on the very next cycle.
+        _ghostty_tty_last_refresh = now
+        return
+    # NOTE: the `if not ghostty_pid: return` branch above has the identical shape of bug (never
+    # re-arms the TTL either) — NOT fixed here, out of this milestone's scope (only fires when
+    # Ghostty itself isn't running, not the measured steady-state case).
     # Write unique OSC 2 marker into each new TTY
     tty_marker: List[tuple] = []
     for tty in new_ttys:
@@ -117,9 +128,14 @@ def _ghostty_child_ttys(ghostty_pid: str) -> List[str]:
     except Exception:
         return []
 
-# Return tty for the CC process with the given cwd; None if not in cache
+# Return tty for the CC process with the given cwd; None if not in cache.
+# 2026-08 (hotkey_latency M3): reads via cc_proc_cache_snapshot() (lock-protected copy), NOT
+# _cc_proc_cache directly — this is called from system.py:_focus_session on the main thread
+# (click/hotkey), while the background discovery thread mutates _cc_proc_cache concurrently;
+# iterating the live dict here would risk `RuntimeError: dictionary changed size during
+# iteration` if a bg-thread refresh lands mid-loop.
 def _tty_for_cwd(cwd: str) -> Optional[str]:
-    for pid, (tty, proc_cwd) in _cc_proc_cache.items():
+    for pid, (tty, proc_cwd) in cc_proc_cache_snapshot().items():
         if proc_cwd == cwd:
             return tty
     return None
