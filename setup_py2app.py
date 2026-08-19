@@ -107,6 +107,14 @@ def _prune_bundle_bloat() -> None:
         print(f'  pruned from bundle src/: {", ".join(sorted(removed))}')
 
 
+# Detect a stable-identity cert in the keychain — no -v: self-signed roots report
+# CSSMERR_TP_NOT_TRUSTED and get filtered out by -v, so the check would false-negative.
+def _find_signing_identity(name: str) -> bool:
+    r = subprocess.run(['security', 'find-identity', '-p', 'codesigning'],
+                       capture_output=True, timeout=10)
+    return name in r.stdout.decode(errors='replace')
+
+
 # Copy dist/ bundle to ~/Applications, codesign, write launchd plist, bootout+bootstrap service
 def _install_bundle() -> None:
     label  = 'com.brunowinter.monitor-cc-menubar'
@@ -122,12 +130,20 @@ def _install_bundle() -> None:
         shutil.rmtree(dst)
     shutil.copytree(dist, dst)
     print(f'  installed: {dst}')
-    r = subprocess.run(['codesign', '-s', '-', '--deep', '--force', str(dst)],
-                       capture_output=True, timeout=30)
+    identity = 'monitor-cc Code Signing'
+    if _find_signing_identity(identity):
+        cmd = ['codesign', '--sign', identity, '--force', '--deep', str(dst)]
+        status = f'signed-with: {identity} (TCC grant survives rebuilds)'
+    else:
+        cmd = ['codesign', '-s', '-', '--deep', '--force', str(dst)]
+        status = 'signed-with: ad-hoc (Screen Recording grant will reset on rebuild)'
+        print('  WARNING: no signing identity found — TCC grant will reset on rebuild')
+    r = subprocess.run(cmd, capture_output=True, timeout=30)
     if r.returncode == 0:
         print('  codesign: ok')
     else:
         print(f'  codesign WARN (rc={r.returncode}): {r.stderr.decode(errors="replace").strip()}')
+    print(f'  {status}')
     content = tmpl.read_text(encoding='utf-8')
     content = content.replace('<PROJECT_ROOT>', str(root))
     content = content.replace('<BUNDLE_LAUNCHER>', str(exe))
