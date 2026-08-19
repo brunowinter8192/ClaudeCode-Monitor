@@ -14,6 +14,14 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_CC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MITMPROXY_CA="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
 
+# Trigger a background stale-worker sweep on every main-session start (worker-cli janitor).
+# Fully detached — never delays/blocks session start. Guarded so a machine without
+# worker-cli installed doesn't break the script.
+if command -v worker-cli &>/dev/null; then
+    nohup worker-cli janitor >/dev/null 2>&1 &
+    disown
+fi
+
 # Parse --project, --fable, --opus arguments; remaining args (incl. an explicit --model) passed to claude
 PROJECT=""
 CLAUDE_ARGS=()
