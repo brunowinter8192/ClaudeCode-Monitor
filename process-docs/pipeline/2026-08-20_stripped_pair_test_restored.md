@@ -4,7 +4,7 @@
 
 `test_stripped_msg_pair_alignment` in `dev/display/test_hover_map.py` (11-test suite for expand-model line_map correctness) failed with `ImportError: cannot import name '_parse_log_file' from src.proxy_display.parser` — the whole suite died before any test ran (10 other tests unaffected once reached).
 
-`_parse_log_file` was removed from `src/proxy_display/parser.py` as part of the forwarded-log migration (see `process-docs/pipeline/pipe04_display.md` § Proxy Pane — Forwarded-Log Migration). The display path now parses via `parse_proxy_log_forwarded` / `_parse_forwarded_log` (`src/proxy_display/forwarded_parser.py`).
+`_parse_log_file` was removed from `src/proxy_display/parser.py` as part of the forwarded-log migration (documented in this area's display-pipeline history). The display path now parses via `parse_proxy_log_forwarded` / `_parse_forwarded_log` (`src/proxy_display/forwarded_parser.py`).
 
 ## Premise check — was the old test still meaningful on a 1:1 port?
 
