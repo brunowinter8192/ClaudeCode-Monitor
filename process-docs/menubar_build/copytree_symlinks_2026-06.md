@@ -18,7 +18,7 @@ installed bundle (confirmed live via `ls -la` on `~/Applications/monitor-cc-menu
 The duplicated framework content — real files sitting where the framework's own code-signing
 expects a symlink — made `codesign --verify --deep --strict` fail with "unsealed contents
 present in the root directory of an embedded framework". That breaks the stable-identity
-signing flow (see `codesign_identity_tcc_grant.md` in this area) that preserves the Screen
+signing flow (see the stable-identity signing work in `process-docs/menubar_build/`) that preserves the Screen
 Recording TCC grant across rebuilds: a bundle that fails deep-strict verify is not a
 faithfully re-signed copy of what py2app produced.
 
@@ -43,5 +43,5 @@ This proves `shutil.copytree(..., symlinks=True)` preserves relative symlinks as
 the library-call level. NOT exercised: a full `py2app` build + real deploy to
 `~/Applications` + `codesign --verify --deep --strict` on the resulting bundle, which is the
 actual failure this fix addresses. That full build/verify cycle is orchestrator-side
-follow-up, same as the identity-signing verification gap noted in
-`codesign_identity_tcc_grant.md`.
+follow-up, same as the identity-signing verification gap noted in the stable-identity
+signing work in this area.
