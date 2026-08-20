@@ -128,7 +128,7 @@ def _install_bundle() -> None:
     uid    = os.getuid()
     if dst.exists():
         shutil.rmtree(dst)
-    shutil.copytree(dist, dst)
+    shutil.copytree(dist, dst, symlinks=True)
     print(f'  installed: {dst}')
     identity = 'monitor-cc Code Signing'
     if _find_signing_identity(identity):

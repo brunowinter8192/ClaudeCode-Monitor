@@ -288,6 +288,8 @@ Standalone macOS status-bar (menubar) application that shows all currently-runni
 
 **Gotcha — copy_package_data sweeps src/logs/:** `src/__init__.py` makes `src` a Package node in py2app's modulegraph. `copy_package_data(src)` then copies every subdirectory of `src/` that has NO `__init__.py` wholesale into the bundle — including `src/logs/` (runtime proxy logs, gitignored). In the main repo this grows to 15 GB+. `_prune_bundle_bloat()` runs post-`setup()` and removes everything from the bundle's `src/` not in `_BUNDLE_SRC_KEEP`. Whitelist must be updated if new cross-package `src.X` imports are added to `src/menubar/`.
 
+**Gotcha — copytree must preserve symlinks:** `dist/monitor-cc-menubar.app/Contents/Frameworks/Python.framework` is a correctly symlinked layout (`Python -> Versions/Current/Python`, `Resources -> Versions/Current/Resources`, `Versions/Current -> 3.14`). `_install_bundle`'s deploy copy uses `shutil.copytree(dist, dst, symlinks=True)` — plain `copytree` (default `symlinks=False`) follows and materializes each symlink as a full copy, which makes `codesign --verify --deep --strict` fail with "unsealed contents present in the root directory of an embedded framework" and breaks the stable-identity signing that preserves the Screen Recording TCC grant across rebuilds.
+
 ---
 
 ### menubar_main.py (11 LOC)
