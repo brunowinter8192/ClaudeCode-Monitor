@@ -67,6 +67,19 @@ Captures all 10 tmux panes of a running Monitor_CC session (5 windows) and combi
 
 **Output:** `json/baseline_<timestamp>.json` — dict of `{session_stem_HxW: serialized_5tuple}` for 60 cases.
 
+### test_hover_map.py (437 LOC)
+
+**Purpose:** Synthetic + real-log assertion suite for expand-model line_map correctness — every visible row maps to exactly one phys_row, monotonic, no duplicates; plus a `render_messages` `len(lines) == len(keys)` pairing check for the stripped-span dual-color overlay path.
+
+**Usage:**
+```bash
+./venv/bin/python dev/display/test_hover_map.py
+```
+
+**Output:** PASS/FAIL lines per assertion, `Results: N passed, M failed` summary; exits 1 on any failure.
+
+**Note:** `test_stripped_msg_pair_alignment` sources real entries from `src/logs/dual_log/*_forwarded.jsonl` + sibling `*_stripped.jsonl` (newest-first glob, not a hardcoded filename) — reconstructs entries via `_parse_forwarded_log(..., keep_last=None)`, builds the stripped-span accumulator via `accumulate_dual_log`, and attaches `_stripped_spans`/`_injected_spans` + ownership-lookup dicts to entries exactly as `pane.py`'s `_refresh_proxy_data` does, so `render_messages` runs its real dual-color (`use_dual=True`) path. Gracefully skips (PASS, not FAIL) when no dual-log pair with stripped content exists in `src/logs/dual_log/` — an environment/data availability gap, not a code issue.
+
 ## Documentation Tree
 
 - [jsonl_exploration/DOCS.md](jsonl_exploration/DOCS.md) — JSONL structure exploration suite (3 scripts, MD reports)
