@@ -342,29 +342,68 @@ def test_workers_scroll_reset_on_expand() -> None:
 
 def test_stripped_msg_pair_alignment() -> None:
     print("\n[render_messages] Stripped-msg lines/keys exact pairing (no line_map drift)")
-    from src.proxy_display.parser import _parse_log_file
+    from src.proxy_display.forwarded_parser import _parse_forwarded_log, _infer_model_family
+    from src.proxy_display.parser import accumulate_dual_log
     from src.proxy_display.render_messages import render_messages
     from pathlib import Path
 
     worktree_root = Path(__file__).parent.parent.parent
-    log_path = worktree_root / 'src' / 'logs' / 'api_requests_opus_monitor_cc_1776783075.jsonl'
-    if not log_path.exists():
+    dual_dir = worktree_root / 'src' / 'logs' / 'dual_log'
+    if not dual_dir.exists():
         # Running from a git worktree — navigate up to main repo (.claude/worktrees/<name>/../../../)
-        log_path = worktree_root.parent.parent.parent / 'src' / 'logs' / 'api_requests_opus_monitor_cc_1776783075.jsonl'
-    if not log_path.exists():
-        assert_true(True, "stripped_pair: log file missing — skipped")
+        dual_dir = worktree_root.parent.parent.parent / 'src' / 'logs' / 'dual_log'
+    if not dual_dir.exists():
+        assert_true(True, "stripped_pair: dual_log dir missing — skipped")
         return
 
-    entries, _ = _parse_log_file(log_path, 0)
-    stripped = [(i, e) for i, e in enumerate(entries) if e.get('stripped_msg_indices')]
-    if not stripped:
-        assert_true(True, "stripped_pair: no stripped entries in log — skipped")
+    # Newest-first: current forwarded-log architecture reconstructs messages from
+    # <log_id>_forwarded.jsonl deltas; stripped-span content lives in the sibling
+    # <log_id>_stripped.jsonl overlay (attached to entries as _stripped_spans, mirroring
+    # pane.py's accumulate_dual_log wiring — NOT entry['stripped_msg_indices'], which
+    # _parse_forwarded_log always sets to [] for forwarded-reconstructed entries).
+    fwd_candidates = sorted(dual_dir.glob('api_requests_*_forwarded.jsonl'), key=lambda p: p.stat().st_mtime, reverse=True)
+
+    tested_entries = []
+    for fwd_path in fwd_candidates:
+        stripped_path = Path(str(fwd_path).replace('_forwarded.jsonl', '_stripped.jsonl'))
+        if not stripped_path.exists():
+            continue
+        entries, _ = _parse_forwarded_log(fwd_path, 0, {}, keep_last=None)
+        acc: dict = {}
+        accumulate_dual_log(stripped_path, 0, acc)
+        stripped_fids = set()
+        for fam_acc in acc.values():
+            stripped_fids |= {fid for fid, has in fam_acc.get('_has_content_by_flow_id', {}).items() if has}
+        if not stripped_fids:
+            continue
+        for idx, entry in enumerate(entries):
+            if len(tested_entries) >= 5:
+                break
+            if entry.get('flow_id') not in stripped_fids or not entry.get('messages'):
+                continue
+            family = _infer_model_family(entry.get('model', ''))
+            fam_acc = acc.get(family)
+            if fam_acc is None:
+                continue
+            # Mirror pane.py's per-entry overlay wiring (_stripped_spans/_injected_spans +
+            # ownership lookups) so render_messages exercises the real production dual-color path.
+            entry['_stripped_spans'] = fam_acc
+            entry['_injected_spans'] = {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}}
+            entry['_strip_fns_lookup'] = fam_acc.get('_has_content_by_flow_id', {})
+            entry['_inject_fns_lookup'] = {}
+            entry['_strip_msgs_lookup'] = fam_acc.get('_msg_idx_by_flow_id', {})
+            entry['_inject_msgs_lookup'] = {}
+            prev = entries[idx - 1] if idx > 0 else None
+            tested_entries.append((idx, entry, prev))
+        if len(tested_entries) >= 5:
+            break
+
+    if not tested_entries:
+        assert_true(True, "stripped_pair: no stripped-content entries in available dual logs — skipped")
         return
 
-    tested = stripped[:5]
-    for entry_idx, entry in tested:
-        prev = entries[entry_idx - 1] if entry_idx > 0 else None
-        lines, keys = render_messages(entry, prev, entries, {entry_idx: True}, 150)
+    for entry_idx, entry, prev in tested_entries:
+        lines, keys = render_messages(entry, prev, [], {entry_idx: True}, 150)
         assert_true(
             len(lines) == len(keys),
             f"stripped_pair entry[{entry_idx}]: len(lines)={len(lines)} == len(keys)={len(keys)}"
