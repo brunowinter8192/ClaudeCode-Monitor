@@ -11,7 +11,7 @@ through the real block_gh_cli_chained.py hook via subprocess, verifying:
   - a plain non-gh-cli command is untouched
 
 Also asserts stderr shape: BLOCK cases carry the new _BLOCK_MESSAGE (combine-example +
-output-always-full-context + repo_freshness-may-join wording); PASS cases emit no stderr.
+output-always-full-context + cross-CLI-allowed wording); PASS cases emit no stderr.
 
 Usage (from project root):
     python3 dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py
@@ -54,7 +54,7 @@ CASES = [
     ('msg129_double_index_issues_still_passes', _MSG129_DOUBLE_INDEX, 0, False, 'incident msg [129]'),
     ('repo_freshness_chained_with_git_still_passes',
      'gh-cli repo_freshness unclecode crawl4ai && git log -1', 0, False,
-     'hook must not trigger — repo_freshness alone never matches _GH_SEARCH_RE'),
+     'hook must not trigger — repo_freshness alone never matches _GH_TRIGGER_RE'),
     ('plain_non_gh_cli_command_untouched', 'git status', 0, False, 'baseline no-op'),
 ]
 
@@ -95,11 +95,11 @@ def main() -> None:
     _, block_stderr = _run_hook(_MSG118_ECHO_VARIANT)
     msg_checks = [
         ('combine example present',
-         'gh-cli index_issues "q1" owner/repo && gh-cli index_issues "q2" owner/repo' in block_stderr),
+         'gh-cli index_issues "q1" owner/repo && gh-cli get_issue owner/repo 5' in block_stderr),
         ('output-always-full-context stated',
          'ALWAYS returns IN FULL' in block_stderr),
-        ('repo_freshness-may-join stated',
-         'repo_freshness may join the chain' in block_stderr),
+        ('cross-CLI-allowed stated (2026-08: subsumes the old repo_freshness-may-join wording)',
+         'Cross-CLI and multi-call chains ARE allowed' in block_stderr),
     ]
     lines.append('')
     lines.append('## _BLOCK_MESSAGE content checks (against msg118 echo-variant stderr)')
