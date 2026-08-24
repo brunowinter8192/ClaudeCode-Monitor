@@ -70,10 +70,12 @@ python3 dev/hook_smoke/test_block_gh_cli_local_path.py
 **Purpose:** Replays the exact commands from the websearch-session `repo_freshness` incident
 (`src/logs/dual_log/api_requests_opus_websearch_1786052022_original.jsonl`, messages [118]-[129])
 through the real `block_gh_cli_chained.py` hook via subprocess — asserts exit code AND stderr
-shape (BLOCK cases carry stderr, PASS cases carry none), plus 3 content checks on the rewritten
-`_BLOCK_MESSAGE` (combine example present, "always full context" wording, "repo_freshness may
-join" wording). Distinct from the smoke suite above: pins the literal incident commands
-verbatim rather than minimal synthetic variants, and asserts message CONTENT, not just exit code.
+shape (BLOCK cases carry stderr, PASS cases carry none), plus 3 content checks on the
+`_BLOCK_MESSAGE` (combine example present, "always full context" wording, "cross-CLI chains ARE
+allowed" wording — 2026-08: swapped from the old "repo_freshness may join" check, since that
+carve-out is now subsumed by the generic known-CLI check). Distinct from the smoke suite above:
+pins the literal incident commands verbatim rather than minimal synthetic variants, and asserts
+message CONTENT, not just exit code.
 **Reads:** none (commands are inlined verbatim from the incident log, not re-read from disk).
 **Writes:** `md/gh_cli_repo_freshness_incident_probe_report.md`.
 
