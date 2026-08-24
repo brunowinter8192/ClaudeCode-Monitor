@@ -16,9 +16,24 @@ CASES = [
      'rag-cli search_hybrid "q" coll | grep foo', 2),
     ("list_documents piped to head BLOCK",
      "rag-cli list_documents coll | head", 2),
-    # --- must allow: redirect (not a separator) ---
+    # --- must block: rag-cli search protected redirect (2026-08, replaces the deleted
+    # rewrite_rag_cli_search_noise.py) ---
+    ("search redirected to file BLOCK (2026-08: search now redirect-forbidden)",
+     'rag-cli search "q" coll > /tmp/out.txt', 2),
+    ("search 2>&1 BLOCK",
+     'rag-cli search "q" coll 2>&1', 2),
+    ("search piped to head BLOCK",
+     'rag-cli search "q" coll | head', 2),
+    # --- must allow: redirect (not a separator) — non-search subcommands keep it ---
     ("index redirected to file ALLOW",
      "rag-cli index --collection x > /tmp/x.txt", 0),
+    ("search standalone ALLOW",
+     'rag-cli search "q" coll', 0),
+    # --- must allow: cross-CLI combos (2026-08 relax) ---
+    ("search + gh-cli get_issue chained ALLOW (cross-CLI relax)",
+     'rag-cli search "q" coll && gh-cli get_issue owner/repo 5', 0),
+    ("search + worker-cli capture chained ALLOW (cross-CLI relax)",
+     'rag-cli search "q" coll && worker-cli capture janitor', 0),
     # --- must allow: guard before rag-cli, nothing after ---
     ("file-guard before rag-cli ALLOW",
      "[ -f .rag-docs.json ] && rag-cli update_docs .", 0),

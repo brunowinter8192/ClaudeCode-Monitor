@@ -13,8 +13,8 @@ from _fire_log import log_fire
 # `read_document`, `list_documents`, `list_collections`, etc. remain untouched.
 _RAG_RE = re.compile(r'\brag-cli\s+search\b')
 
-# Segment-end operators: terminate the rag-cli logical command (same set as
-# rewrite_rag_cli_search_noise.py's chain-boundary detection).
+# Segment-end operators: terminate the rag-cli logical command (same set used across the
+# rag-cli/gh-cli/websearch/worker-cli chained-CLI block hooks' chain-boundary detection).
 _SEGMENT_END_RE = re.compile(r'&&|\|\||[;)\n]|(?<!>)&(?![&>])')
 
 # Noise inside the segment: pipes (excluding `||`) and redirects. First match

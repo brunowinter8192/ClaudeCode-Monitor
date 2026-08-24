@@ -22,10 +22,18 @@ CASES = [
      "gh-cli index_discussions \"q\" o/r | wc -l", 2),
     ("index_releases piped to awk BLOCK",
      "gh-cli index_releases o/r | awk '{print}'", 2),
-    ("index_issues chained with rag-cli BLOCK",
-     "gh-cli index_issues \"q\" o/r && rag-cli index docs", 2),
     ("search_repos chained with echo BLOCK",
      "gh-cli search_repos \"q\" && echo done", 2),
+    ("list_issues piped to grep BLOCK (2026-08: no longer exempt)",
+     "gh-cli list_issues o/r | grep open", 2),
+    ("get_issue piped to head BLOCK (2026-08: no longer exempt)",
+     "gh-cli get_issue 123 o/r | head", 2),
+    ("get_issue redirect to file BLOCK (2026-08: replaces rewrite_gh_cli_read_noise.py)",
+     "gh-cli get_issue 123 o/r > /tmp/out.txt", 2),
+    ("list_issues 2>&1 BLOCK",
+     "gh-cli list_issues o/r 2>&1", 2),
+    ("get_issue chained with echo BLOCK",
+     "gh-cli get_issue 123 o/r && echo done", 2),
     # --- allowed: must pass ---
     ("two of the 7 chained with semicolon PASS",
      "gh-cli index_issues \"q\" o/r ; gh-cli index_discussions \"q\" o/r", 0),
@@ -35,19 +43,33 @@ CASES = [
      "gh-cli index_issues \"q\" o/r --limit 30 --offset 0", 0),
     ("standalone with --metadata-only PASS",
      "gh-cli get_file_content o/r path --metadata-only", 0),
-    ("redirect to file PASS",
+    ("redirect to file PASS (the 7 search/research tools keep redirect-allowed)",
      "gh-cli get_file_content o/r path > /tmp/out.txt", 0),
-    # --- exempt issue commands: must pass ---
-    ("list_issues piped to grep PASS exempt",
-     "gh-cli list_issues o/r | grep open", 0),
-    ("get_issue piped to head PASS exempt",
-     "gh-cli get_issue 123 o/r | head", 0),
+    # --- get_issue/list_issues: standalone + combine (2026-08, absorbed from the deleted
+    # rewrite_gh_cli_read_noise.py — now protected like the 7, not exempt) ---
+    ("get_issue standalone PASS",
+     "gh-cli get_issue 123 o/r", 0),
+    ("list_issues standalone PASS",
+     "gh-cli list_issues o/r", 0),
+    ("get_issue + list_issues combined via && PASS",
+     "gh-cli get_issue 123 o/r && gh-cli list_issues o/r", 0),
+    ("get_issue combined with index_issues PASS (same-tool combine)",
+     "gh-cli get_issue 123 o/r && gh-cli index_issues \"q\" o/r", 0),
+    # --- cross-CLI combos (2026-08 relax: index_issues+rag-cli used to BLOCK) ---
+    ("index_issues chained with rag-cli PASS (cross-CLI relax)",
+     "gh-cli index_issues \"q\" o/r && rag-cli search \"q\" coll", 0),
+    ("get_issue chained with worker-cli capture PASS (cross-CLI relax)",
+     "gh-cli get_issue 123 o/r && worker-cli capture janitor", 0),
+    ("cd guard before index_issues PASS",
+     "cd /tmp && gh-cli index_issues \"q\" o/r", 0),
     # --- shell-strip: patterns inside quoted/heredoc regions must pass ---
     ("pattern inside single-quotes PASS shell-stripped",
      "echo 'gh-cli index_issues \"q\" o/r | grep foo'", 0),
     ("pattern inside heredoc body PASS shell-stripped",
      "cat <<'EOF'\ngh-cli search_code \"q\" | grep x\nEOF", 0),
-    # --- repo_freshness as a legal chain segment (2026-08, websearch incident) ---
+    # --- repo_freshness as a legal chain segment (2026-08 websearch incident; 2026-08 cross-CLI
+    # relax subsumes the old dedicated repo_freshness carve-out into the generic
+    # is_known_cli_segment() check — same outcome, simpler mechanism) ---
     ("repo_freshness + two index_issues via && PASS (incident msg121)",
      "gh-cli repo_freshness unclecode crawl4ai && "
      "gh-cli index_issues \"Invalid IPv6 URL\" unclecode/crawl4ai --limit 30 && "

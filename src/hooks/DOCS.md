@@ -19,11 +19,21 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ### _shell_strip.py (194 LOC)
 
-**Purpose:** Shared utility — provides `_strip_non_shell_active(command)`, the position-preserving shell-region stripper used by twenty Bash-scanning hooks. Replaces heredoc bodies, single/double-quoted strings, and ANSI-C `$'...'` quotes with spaces of the same length before pattern matching runs. Command substitutions `$(...)` and backtick expressions are kept shell-active. Fail-open: any parse error returns the original command unchanged (never silently allows a blocked pattern due to a strip failure). `_strip_impl` is decomposed into 6 private scan helpers (`_scan_heredoc`, `_scan_ansi_c_quote`, `_scan_cmd_subst`, `_scan_backtick`, `_scan_single_quote`, `_scan_double_quote`), each returning `(fragment, new_i)`.
+**Purpose:** Shared utility — provides `_strip_non_shell_active(command)`, the position-preserving shell-region stripper used by twenty-two Bash-scanning hooks. Replaces heredoc bodies, single/double-quoted strings, and ANSI-C `$'...'` quotes with spaces of the same length before pattern matching runs. Command substitutions `$(...)` and backtick expressions are kept shell-active. Fail-open: any parse error returns the original command unchanged (never silently allows a blocked pattern due to a strip failure). `_strip_impl` is decomposed into 6 private scan helpers (`_scan_heredoc`, `_scan_ansi_c_quote`, `_scan_cmd_subst`, `_scan_backtick`, `_scan_single_quote`, `_scan_double_quote`), each returning `(fragment, new_i)`.
 **Reads:** n/a (pure logic module, not a standalone script).
 **Writes:** n/a.
-**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_gh_cli_chained.py`, `block_gh_cli_local_path.py`, `block_linkedin_cli_isolated.py`, `block_manual_worker_cleanup.py`, `block_pipe_scraper_isolated.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_cli_index_isolated.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_opus.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py`, `rewrite_gh_cli_read_noise.py`, `rewrite_rag_cli_search_noise.py`, `rewrite_websearch_scrape_noise.py`, `rewrite_worker_cli_capture_noise.py`, `rewrite_worker_cli_response_noise.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
+**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_gh_cli_chained.py`, `block_gh_cli_local_path.py`, `block_linkedin_cli_isolated.py`, `block_manual_worker_cleanup.py`, `block_pipe_scraper_isolated.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_cli_index_isolated.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_opus.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
 **Calls out:** stdlib only (no imports).
+
+---
+
+### _known_cli.py (34 LOC, 2026-08)
+
+**Purpose:** Shared utility — provides `is_known_cli_segment(segment)` and `is_guard_segment(segment)`, the allow-predicate pair used by the chained-CLI block hooks (`block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`) to decide whether a foreign-looking Bash segment is actually fine. 2026-08 cross-CLI relax: these hooks used to require every chained segment to be the SAME protected tool (or, for gh-cli, one of an explicit legal-segment list); now any segment invoking a `KNOWN_CLI_TOOLS` entry — `gh-cli`, `rag-cli`, `worker-cli`, `reddit-cli`, `linkedin`, `websearch` (sourced by grepping every CLI token actually referenced across `src/hooks/*.py`; `bd` deliberately excluded — retired, see `rewrite_bd_invalid_repo.py` deletion) — passes, regardless of which tool or subcommand. `is_guard_segment` recognizes `cd`, `test`, and `[ ... ]` bracket-test segments (generalizes `block_rag_cli_chained.py`'s pre-existing "cd, guards" allowance to all four hooks).
+**Reads:** n/a (pure logic module, not a standalone script).
+**Writes:** n/a.
+**Called by:** `block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py` via `sys.path` insertion + `from _known_cli import is_known_cli_segment, is_guard_segment`.
+**Calls out:** stdlib only (`re`).
 
 ---
 
@@ -89,120 +99,6 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 - Sleep inside loop body
 
 **Smoke:** `dev/hook_smoke/test_rewrite_chained_sleep.py` (31 cases: 18 strip, 13 pass-through).
-
----
-
-### rewrite_rag_cli_search_noise.py (107 LOC) (~95 LOC)
-
-**Purpose:** PreToolUse hook (Bash) — **rewrites** `rag-cli search` invocations by stripping downstream noise inside the logical command segment: pipes (`| head`, `| tail`, `| grep`, etc.), redirects (`>`, `>>`, `&>`, `<`, `2>&1`, `2>`), and single backgrounding `&`. Chains around the segment (`cd && rag-cli ...`, `rag-cli ... ; bd list`, `rag-cli ... || echo fail`) are preserved — only the rag-cli segment is cleaned. Scope is `search` only; `read_document`, `list_collections`, `server`, etc. pass through unchanged. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing.
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
-**Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when noise was stripped; nothing when no-op.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert).
-
-**Strip mechanic:**
-1. Find `\brag-cli\s+search\b` matches in the shell-stripped command.
-2. For each match, determine its segment-end by scanning forward for `;`, `&&`, `||`, `)`, `\n`, or single `&` (not part of `&&`, `&>`, or `2>&1`).
-3. Within `[match_end, segment_end)`, find the first noise marker (`|` excluding `||`, any redirect, or `2>&1`).
-4. Strip from the noise marker through segment-end. If segment-end equals end-of-command, also eat leading whitespace before the noise (avoids trailing-space artifact); otherwise preserve it as separator to the trailing chain.
-
-**Pass-through (no-op) conditions:**
-- `rag-cli search` invocation has no pipe/redirect inside its segment
-- `rag-cli` subcommand is not `search` (out of scope)
-- `rag-cli search` token appears inside a quoted string (blanked by `_strip_non_shell_active`)
-
-**Smoke:** `dev/hook_smoke/test_rewrite_rag_cli_search_noise.py` (15 cases: 9 positive strip, 6 negative no-op).
-
----
-
-### rewrite_worker_cli_response_noise.py (107 LOC)
-
-**Purpose:** PreToolUse hook (Bash) — **rewrites** `worker-cli response` invocations by stripping downstream noise inside the logical command segment: pipes (`| head`, `| tail`, `| grep`, etc.), redirects (`>`, `>>`, `&>`, `<`, `2>&1`, `2>`), and single backgrounding `&`. Chains around the segment (`cd && worker-cli response ...`, `worker-cli response ... ; bd list`, `worker-cli response ... || echo fail`) are preserved — only the response segment is cleaned. Scope is `response` only; `capture`, `status`, `list`, `send`, `merge`, `spawn`, `kill`, `revive` pass through unchanged. Critical guaranteed no-op: `worker-cli capture X | tail -40` (documented legitimate fallback) — the anchor `\bworker-cli\s+response\b` cannot match `capture`. Direct clone of `rewrite_rag_cli_search_noise.py` with anchor swapped. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing.
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
-**Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when noise was stripped; nothing when no-op.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert); `_fire_log.log_fire`.
-
-**Strip mechanic:**
-1. Find `\bworker-cli\s+response\b` matches in the shell-stripped command.
-2. For each match, determine its segment-end by scanning forward for `;`, `&&`, `||`, `)`, `\n`, or single `&` (not part of `&&`, `&>`, or `2>&1`).
-3. Within `[match_end, segment_end)`, find the first noise marker (`|` excluding `||`, any redirect, or `2>&1`).
-4. Strip from the noise marker through segment-end. If segment-end equals end-of-command, also eat leading whitespace before the noise (avoids trailing-space artifact); otherwise preserve it as separator to the trailing chain.
-
-**Pass-through (no-op) conditions:**
-- `worker-cli response` invocation has no pipe/redirect inside its segment
-- `worker-cli` subcommand is not `response` (out of scope — anchor cannot match other subcommands)
-- `worker-cli response` token appears inside a quoted string (blanked by `_strip_non_shell_active`)
-
-**Smoke:** `dev/hook_smoke/test_rewrite_worker_cli_response_noise.py` (16 cases: 9 positive strip, 7 negative no-op including the critical `worker-cli capture | tail` pass-through).
-
----
-
-### rewrite_worker_cli_capture_noise.py (109 LOC)
-
-**Purpose:** PreToolUse hook (Bash) — **rewrites** `worker-cli capture` invocations by stripping downstream pipes inside the logical command segment. Redirects (`>`, `>>`, `2>&1`, `&>`, `<`) are **preserved** — `worker-cli capture X > /tmp/file` is a legitimate pattern (save clean output to disk). Scope is `capture` only; `response`, `status`, `list`, `send`, `merge`, `spawn`, `kill`, `revive` pass through unchanged. `--raw` flag (sits before any pipe) is never inside the strip range and survives automatically. Chains around the segment (`cd && worker-cli capture ...`, `worker-cli capture ... ; echo done`) are preserved — only the capture segment is cleaned. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing. Direct clone of `rewrite_worker_cli_response_noise.py` with anchor swapped to `\bworker-cli\s+capture\b` and `_NOISE_RE` narrowed to pipe-only (`(?<!\|)\|(?!\|)`).
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
-**Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when pipe noise was stripped; nothing when no-op.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert); `_fire_log.log_fire`.
-
-**Strip mechanic:**
-1. Find `\bworker-cli\s+capture\b` matches in the shell-stripped command.
-2. For each match, determine its segment-end by scanning forward for `;`, `&&`, `||`, `)`, `\n`, or single `&` (not part of `&&`, `&>`, or `2>&1`).
-3. Within `[match_end, segment_end)`, find the first pipe `|` (excluding `||`). Redirects are not noise — no redirect patterns in `_NOISE_RE`.
-4. Strip from the pipe through segment-end. If segment-end equals end-of-command, also eat leading whitespace before the pipe (avoids trailing-space artifact); otherwise preserve it as separator to the trailing chain.
-
-**Pass-through (no-op) conditions:**
-- `worker-cli capture` invocation has no pipe inside its segment
-- `worker-cli capture X > /tmp/file` — redirect is not a pipe → no noise marker → unchanged
-- `worker-cli capture X --raw` — flag, no pipe
-- `worker-cli` subcommand is not `capture` (out of scope — anchor cannot match other subcommands)
-- `worker-cli capture` token appears inside a quoted string (blanked by `_strip_non_shell_active`)
-
-**Smoke:** `dev/hook_smoke/test_rewrite_worker_cli_capture_noise.py` (17 cases: 5 positive strip, 1 `--raw`-survives strip, 3 redirect-preserved no-op, 8 negative no-op).
-
----
-
-### rewrite_gh_cli_read_noise.py (109 LOC)
-
-**Purpose:** PreToolUse hook (Bash) — **rewrites** `gh-cli get_issue` / `gh-cli list_issues` invocations by stripping downstream pipes inside the logical command segment. Reading only PART of an issue via `| tail` / `| head` / `| grep` is fatal (missing sources/context) — the hook forces the full output through. Redirects (`>`, `>>`, `2>&1`, `&>`, `<`) are **preserved** — `gh-cli get_issue owner repo 36 > /tmp/file` is a legitimate pattern (save full output to disk). Scope is `get_issue`/`list_issues` only; `create_issue`/`update_issue` pass through unchanged — writes with a one-line confirmation, no truncation risk. Chains around the segment (`cd && gh-cli get_issue ...`, `gh-cli get_issue ... ; echo done`) are preserved — only the get_issue/list_issues segment is cleaned. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing. Direct clone of `rewrite_worker_cli_capture_noise.py` with anchor swapped to `\bgh-cli\s+(?:get_issue|list_issues)\b`; `_SEGMENT_END_RE`/`_NOISE_RE`/`_parse_command`/`_apply_ranges`/`_emit_rewrite` byte-identical to the template (pipe-only noise, generic helpers).
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
-**Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when pipe noise was stripped; nothing when no-op.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert); `_fire_log.log_fire`.
-
-**Strip mechanic:**
-1. Find `\bgh-cli\s+(?:get_issue|list_issues)\b` matches in the shell-stripped command.
-2. For each match, determine its segment-end by scanning forward for `;`, `&&`, `||`, `)`, `\n`, or single `&` (not part of `&&`, `&>`, or `2>&1`).
-3. Within `[match_end, segment_end)`, find the first pipe `|` (excluding `||`). Redirects are not noise — no redirect patterns in `_NOISE_RE`.
-4. Strip from the pipe through segment-end. If segment-end equals end-of-command, also eat leading whitespace before the pipe; otherwise preserve it as separator to the trailing chain.
-
-**Pass-through (no-op) conditions:**
-- `gh-cli get_issue`/`list_issues` invocation has no pipe inside its segment
-- `gh-cli get_issue X > /tmp/file` — redirect is not a pipe → no noise marker → unchanged
-- `gh-cli` subcommand is `create_issue`/`update_issue`/anything else (out of scope — anchor cannot match)
-- `gh-cli get_issue` token appears inside a quoted string (blanked by `_strip_non_shell_active`)
-
-**Smoke:** `dev/hook_smoke/test_rewrite_gh_cli_read_noise.py` (12 cases: 5 positive strip, 2 redirect-preserved no-op, 2 out-of-scope-command no-op, 2 bare no-op, 1 quoted-string no-op).
-
----
-
-### rewrite_websearch_scrape_noise.py (111 LOC)
-
-**Purpose:** PreToolUse hook (Bash) — **rewrites** `websearch scrape_url` invocations by stripping downstream noise inside the logical command segment: pipes (`| head`, `| tail`, `| sed`, `| grep`), redirects (`>`, `>>`, `&>`, `<`, `2>&1`, `2>`), and single backgrounding `&`. Direct clone of `rewrite_rag_cli_search_noise.py` with the anchor swapped to `\bwebsearch\s+scrape_url\b`. Rationale: `scrape_url` output is bounded (15k PruningContentFilter cap) and meant to land directly in context; a `> /tmp/file 2>&1` redirect followed by `| head` truncates the page and mixes crawl4ai browser logs into what looks like content (real incident — gave a "content stops after section 3" false impression and an apparent `=== LOG RECORD ===` leak that were both display artifacts of the truncating command, not the scraper). Scope is `scrape_url` only; `search_web`, `search_engine_drilldown` produce bounded output and pass through unchanged. Chains around the segment (`cd && scrape_url ...`, `scrape_url ... ; bd list`, `scrape_url ... || echo fail`) are preserved — only the scrape segment is cleaned. Exits 0 in all cases (fail-open rewrite hook — never blocks). Uses `_shell_strip._strip_non_shell_active` for position-preserving heredoc + quote removal before tokenizing.
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
-**Writes:** stdout (JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command`) when noise was stripped; nothing when no-op.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert); `_fire_log.log_fire`.
-
-**Strip mechanic:** identical to `rewrite_rag_cli_search_noise.py` — find `\bwebsearch\s+scrape_url\b` matches, scan forward to segment-end (`;`, `&&`, `||`, `)`, `\n`, single `&`), strip the first noise marker through segment-end. Eats leading whitespace only when the segment extends to end-of-command.
-
-**Pass-through (no-op) conditions:**
-- `websearch scrape_url` invocation has no pipe/redirect inside its segment
-- subcommand is not `scrape_url` (search_web / search_engine_drilldown out of scope)
-- `websearch scrape_url` token appears inside a quoted string (blanked by `_strip_non_shell_active`)
-
-**Smoke:** `dev/hook_smoke/test_rewrite_websearch_scrape_noise.py` (15 cases: 9 positive strip, 6 negative no-op).
 
 ---
 
@@ -322,35 +218,34 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_gh_cli_chained.py (77 LOC)
+### block_gh_cli_chained.py (95 LOC, 2026-08 cross-CLI relax + get_issue/list_issues absorbed)
 
-**Purpose:** PreToolUse hook (Bash) — blocks any of the 7 gh-cli search/research tools (`search_repos`, `search_code`, `get_repo_tree`, `get_file_content`, `index_issues`, `index_discussions`, `index_releases`) chained with any non-search command. These tools must run standalone so their full output reaches context — piping through grep/head/tail/sed/awk/wc forces Opus to reconstruct files from fragments instead of reading the complete result. Multiple gh-cli search/research calls combined in one Bash are allowed, and (2026-08, CC 2.1.223 gh-cli-search skill incident) `repo_freshness` may join such a combined chain as an additional legal segment — it is NOT one of the 7 (never triggers the hook on its own or chained with arbitrary non-research commands: `_GH_SEARCH_RE`, the trigger gate, is unchanged), it only becomes relevant once the hook is already in scope because one of the 7 is present. The 5 issue-management commands (`list_issues`, `get_issue`, `create_issue`, `update_issue`, `delete_issue`) are fully exempt. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — engages on any of the 7 gh-cli search/research tools (`search_repos`, `search_code`, `get_repo_tree`, `get_file_content`, `index_issues`, `index_discussions`, `index_releases`) OR the 2 read commands `get_issue`/`list_issues` (2026-08: absorbed from the deleted `rewrite_gh_cli_read_noise.py` — rewrite-and-strip-noise superseded by block, same incident-class reasoning as `block_websearch_scrape_chained.py`). `get_issue`/`list_issues` are PROTECTED: no redirect (`_GH_READ_SEGMENT_RE` + `_REDIRECT_RE`) — output is bounded and must land directly in context, retiring the old rewrite hook's "save full output to disk" redirect allowance. The other 7 keep their pre-existing redirect-allowed behavior unchanged. **2026-08 cross-CLI relax:** every OTHER segment in the command must now be a known CLI call (`_known_cli.is_known_cli_segment` — gh-cli, rag-cli, worker-cli, reddit-cli, linkedin, websearch, ANY subcommand) or a leading cd/guard (`_known_cli.is_guard_segment`), not specifically one of these 9 gh-cli tools — chaining `gh-cli index_issues ... && rag-cli search ...` is now allowed, where it used to block. This also subsumes the old dedicated `repo_freshness`-as-legal-segment carve-out (any gh-cli subcommand, including `repo_freshness`, `create_issue`, etc., now passes as a known-CLI segment) — simpler mechanism, same practical outcome for the incident it fixed. `create_issue`/`update_issue`/`delete_issue` are not PROTECTED (writes, one-line confirmation, no truncation risk) but ARE now checked as ordinary known-CLI segments rather than being fully hook-exempt. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
 
 **Blocked patterns:**
-- `gh-cli search_repos "q" | grep foo` — piped to a non-search command
-- `gh-cli index_issues "q" o/r && rag-cli index docs` — chained with rag-cli
+- `gh-cli search_repos "q" | grep foo` — piped to a non-CLI command
 - `gh-cli search_code "q" o/r && echo done` — chained with echo
 - `gh-cli get_file_content o/r path | head -10` — piped to head
-- `gh-cli repo_freshness o/r; echo "..."; gh-cli index_issues "q" o/r` — repo_freshness is legal but echo is not; the whole chain still blocks on the echo segment
+- `gh-cli get_issue 123 o/r | head` / `gh-cli list_issues o/r | grep open` — 2026-08: no longer exempt, protected read commands piped
+- `gh-cli get_issue 123 o/r > /tmp/out.txt` — protected read command redirected
 
 **Allowed patterns:**
 - `gh-cli index_issues "q" o/r --limit 30 --offset 0` — standalone with tool-native args
 - `gh-cli index_issues "a" o/r && gh-cli index_discussions "b" o/r` — multiple search/research calls combined
-- `gh-cli repo_freshness o/r && gh-cli index_issues "q1" o/r && gh-cli index_issues "q2" o/r` — repo_freshness joining a combined research chain
-- `gh-cli repo_freshness o/r && git log -1` — repo_freshness alone never matches the trigger gate; hook not triggered at all
-- `gh-cli get_file_content o/r path > /tmp/out.txt` — redirect is not a separator
-- `gh-cli list_issues o/r | grep open` — issue command, exempt
-- any command with none of the 7 search/research calls — not policed
+- `gh-cli get_issue 123 o/r && gh-cli list_issues o/r` — protected read commands combined with each other
+- `gh-cli repo_freshness o/r && gh-cli index_issues "q1" o/r` — any gh-cli subcommand joins a chain already in scope (via the generic known-CLI check, not a dedicated carve-out)
+- `gh-cli index_issues "q" o/r && rag-cli search "q" coll` — cross-CLI chain (2026-08 relax; used to block)
+- `gh-cli get_file_content o/r path > /tmp/out.txt` — the 7 search/research tools keep redirect-allowed
+- `cd /tmp && gh-cli index_issues "q" o/r` — leading guard
+- any command with none of the 9 protected/trigger tools — not policed
 
-**Segment split.** `_SEPARATOR_RE` splits the (quote-stripped) command on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact (no whitespace before `&`). Every non-empty segment must start with one of the 7 gh-cli search/research tools OR `repo_freshness` (`_GH_SEARCH_SEGMENT_RE`), else block. `_GH_SEARCH_RE` (the earlier trigger-gate check deciding whether the hook fires at all) intentionally does NOT include `repo_freshness` — keeps it a pure "may ride along once in scope" tool, never itself the reason the hook engages.
+**Segment split.** `_SEPARATOR_RE` splits the (quote-stripped) command on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact (no whitespace before `&`). `_GH_TRIGGER_RE` (fires the hook at all) matches the 7 + `get_issue`/`list_issues`. Per segment: `_GH_READ_SEGMENT_RE` match → check `_REDIRECT_RE`, block if present, else pass; else `is_known_cli_segment()` or `is_guard_segment()` → pass; else block.
 
-**`_BLOCK_MESSAGE` (2026-08 rewrite):** states three things explicitly that the pre-rewrite message left implicit — (1) one canonical combine example with separator syntax (`gh-cli index_issues "q1" owner/repo && gh-cli index_issues "q2" owner/repo`); (2) output always returns IN FULL to context, filtering/truncating via head/tail/grep/sed/awk/wc is not possible, narrowing is ONLY via the tool's own args (`--limit`, `--offset`, `--path`, `--metadata-only`, `--sort-by`); (3) `repo_freshness` may join the chain. Prompted by a live incident where the agent, blocked twice on a `repo_freshness && index_issues && index_issues` chain (repo_freshness wasn't a legal segment yet) and told only that calls "may be combined" with no example, overcorrected by concatenating two `index_issues` calls with NO separator at all — an argparse error downstream, not a hook block.
-
-**Smoke:** `dev/hook_smoke/test_block_gh_cli_chained.py` (21 cases: 9 block, 6 pass-standalone/two-chained/redirect, 2 exempt-issue-command, 1 single-quote strip, 1 heredoc strip, 3 repo_freshness cases — combined-chain pass, echo-variant block, repo_freshness+git pass). Incident replay probe (verbatim commands + stderr-content checks, not folded into the smoke suite): `dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py`.
+**Smoke:** `dev/hook_smoke/test_block_gh_cli_chained.py` (30 cases incl. protected-redirect/pipe blocks for get_issue/list_issues, cross-CLI-relax passes, get_issue/list_issues combine passes, repo_freshness/echo incident replay). Incident replay probe (verbatim commands + stderr-content checks, not folded into the smoke suite): `dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py`.
 
 ---
 
@@ -366,31 +261,85 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_rag_cli_chained.py (71 LOC)
+### block_rag_cli_chained.py (86 LOC, 2026-08 cross-CLI relax + search redirect absorbed)
 
-**Purpose:** PreToolUse hook (Bash) — blocks any rag-cli call when a non-rag-cli segment follows it in the same Bash invocation. **Trailing-only rule:** segments BEFORE the first `rag-cli` are unrestricted (leading `cd` / file-guards stay legal); every segment AFTER the first `rag-cli` segment must also start with `rag-cli`, else block. Redirects (`>`, `2>&1`) are NOT separators and survive as part of their segment — `rag-cli index ... > /tmp/x.txt` is one segment with no trailing non-rag-cli. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — engages on any `rag-cli` token. `rag-cli search` is PROTECTED: no redirect (`_RAG_SEARCH_SEGMENT_RE` + `_REDIRECT_RE`) — output is bounded and must land directly in context (2026-08: absorbed from the deleted `rewrite_rag_cli_search_noise.py` — rewrite-and-strip-noise superseded by block). Other rag-cli subcommands (`index`, `delete`, `list_documents`, etc.) keep their pre-existing redirect-allowed behavior unchanged. **2026-08 cross-CLI relax:** every OTHER segment (in ANY position, not just trailing) must be a known CLI call (`_known_cli.is_known_cli_segment` — gh-cli, rag-cli, worker-cli, reddit-cli, linkedin, websearch, ANY subcommand) or a `cd`/`test`/bracket-test guard (`_known_cli.is_guard_segment`) — replaces the old "trailing-only, same-tool-only" rule (`rag-cli index ... && rag-cli delete ...` allowed, `rag-cli index ... && rag-cli search ... && gh-cli get_issue ...` now ALSO allowed, where a non-rag-cli trailing segment used to block unconditionally). Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
 
 **Blocked patterns:**
 - `rag-cli index --collection x ; tail /tmp/x.txt` — rag-cli followed by tail via `;`
 - `rag-cli index --collection x && echo done` — rag-cli followed by echo via `&&`
-- `rag-cli search_hybrid "q" coll | grep foo` — rag-cli followed by grep via `|`
-- `rag-cli list_documents coll | head` — rag-cli followed by head via `|`
+- `rag-cli search "q" coll | grep foo` / `rag-cli list_documents coll | head` — piped to a non-CLI command
+- `rag-cli search "q" coll > /tmp/out.txt` — protected search command redirected
 
 **Allowed patterns:**
-- `rag-cli index --collection x > /tmp/x.txt` — redirect is not a separator, one segment
-- `[ -f .rag-docs.json ] && rag-cli update_docs .` — guard before first rag-cli, nothing after
-- `cd /some/path && rag-cli index --collection x` — cd before first rag-cli, nothing after
+- `rag-cli index --collection x > /tmp/x.txt` — non-search subcommand, redirect-allowed
+- `[ -f .rag-docs.json ] && rag-cli update_docs .` — leading guard
+- `cd /some/path && rag-cli index --collection x` — leading cd guard
 - `rag-cli delete --collection x && rag-cli index --collection x` — both segments are rag-cli
+- `rag-cli search "q" coll && gh-cli get_issue owner/repo 5` — cross-CLI chain (2026-08 relax; used to block)
 - any command with no `rag-cli` — not policed (anchor exits early)
 - `rag-cli` inside single-quoted string / heredoc body — blanked by `_strip_non_shell_active`, anchor fails
 
-**Segment split.** Same `_SEPARATOR_RE` as `block_gh_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact. `_find_first_rag_segment()` returns the index of the first segment whose stripped form `.startswith('rag-cli')`.
+**Segment split.** Same `_SEPARATOR_RE` as `block_gh_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact. Per segment: `_RAG_SEARCH_SEGMENT_RE` match → check `_REDIRECT_RE`, block if present, else pass; else `is_known_cli_segment()` or `is_guard_segment()` → pass; else block.
 
-**Smoke:** `dev/hook_smoke/test_block_rag_cli_chained.py` (11 cases: 4 block, 7 allow including redirect/guard/cd/two-rag-cli/no-rag-cli/single-quote/heredoc).
+**Smoke:** `dev/hook_smoke/test_block_rag_cli_chained.py` (17 cases incl. search-protected redirect/pipe blocks, cross-CLI-relax passes, pre-existing redirect/guard/cd/two-rag-cli/no-rag-cli/single-quote/heredoc cases).
+
+---
+
+### block_websearch_scrape_chained.py (91 LOC, 2026-08)
+
+**Purpose:** PreToolUse hook (Bash) — replaces the deleted `rewrite_websearch_scrape_noise.py`. `websearch scrape_url` is PROTECTED: no redirect (`_SCRAPE_SEGMENT_RE` + `_REDIRECT_RE`) — the page returns in full and must land directly in context. **Proven incident (2026-08-24):** `websearch scrape_url URL > /tmp/f.md 2>&1; wc -l /tmp/f.md; head -120 /tmp/f.md` — the rewrite hook silently stripped the redirect, leaving the dependent `wc`/`head` segments to hit a nonexistent file; the call exited 1 and surfaced as `[ERROR]` although the scrape succeeded. Blocking instead of rewriting forces a standalone re-issue — no dependent segment can ever desync from a silently-edited command. Same shape as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`: every OTHER segment must be a known CLI call (`_known_cli.is_known_cli_segment`) or a leading cd/guard (`_known_cli.is_guard_segment`) — `search_web`/`search_engine_drilldown` are simply `websearch` segments, not policed for redirects. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
+**Writes:** stderr (block message) on violation only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+
+**Blocked patterns:**
+- `websearch scrape_url URL > /tmp/f.md 2>&1; wc -l /tmp/f.md; head -120 /tmp/f.md` — the proven incident
+- `websearch scrape_url URL | head -50` — piped
+- `websearch scrape_url URL && echo done` — chained with a non-CLI command
+
+**Allowed patterns:**
+- `websearch scrape_url URL` — standalone
+- `websearch scrape_url URL1 && websearch scrape_url URL2` — same-tool combine (2026-08 cross-CLI relax)
+- `websearch scrape_url URL && rag-cli search "q" coll` — cross-CLI chain
+- `cd /tmp && websearch scrape_url URL` — leading cd guard
+- `websearch search_web "query"` — different subcommand, not protected
+
+**Segment split.** Same `_SEPARATOR_RE`/mechanic as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`.
+
+**Smoke:** `dev/hook_smoke/test_block_websearch_scrape_chained.py` (18 cases incl. the verbatim incident command, redirect/pipe/foreign-segment blocks, cross-CLI-relax passes).
+
+---
+
+### block_worker_cli_read_chained.py (91 LOC, 2026-08)
+
+**Purpose:** PreToolUse hook (Bash) — replaces the deleted `rewrite_worker_cli_capture_noise.py` / `rewrite_worker_cli_response_noise.py` (one hook covers both subcommands — they were direct clones of each other). `worker-cli capture`/`worker-cli response` are PROTECTED: no redirect and no pipe (`_READ_SEGMENT_RE` + `_REDIRECT_RE`) — clean, bounded output (2026-06-22 capture redesign) must land directly in context. **Retires two old allowances** documented on the deleted rewrite hooks: `worker-cli capture X > /tmp/file` ("legitimate — save clean output to disk") and `worker-cli capture X | tail -40` ("documented legitimate fallback") — both predate the capture redesign that made its output natively context-ready like `response`'s; the workaround's rationale no longer holds. Same shape as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`: every OTHER segment must be a known CLI call (`_known_cli.is_known_cli_segment`) or a leading cd/guard (`_known_cli.is_guard_segment`) — unlike `linkedin`/`websearch`/gh-cli/rag-cli-search, `cd` is a real pattern here (`worker-cli capture`/`response` resolve the target project via `resolve_project_path`, which falls back to cwd when the optional `project_path` positional is omitted). `status`, `list`, `send`, `merge`, `spawn`, `kill`, `revive`, `wait` are simply `worker-cli` segments, not policed for redirects. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
+**Writes:** stderr (block message) on violation only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+
+**Blocked patterns:**
+- `worker-cli capture janitor | tail -40` — piped (retired fallback)
+- `worker-cli capture janitor > /tmp/out.txt` — redirected (retired legitimate-use allowance)
+- `worker-cli response janitor | head -20` — piped
+- `worker-cli capture janitor && echo done` — chained with a non-CLI command
+
+**Allowed patterns:**
+- `worker-cli capture janitor` / `worker-cli response janitor` — standalone
+- `worker-cli capture janitor && worker-cli response janitor` — same-tool combine (2026-08 cross-CLI relax)
+- `worker-cli capture janitor && rag-cli search "q" coll` — cross-CLI chain
+- `cd /path/to/project && worker-cli capture janitor` — leading cd guard (real pattern — see Purpose)
+- `worker-cli status janitor` / `worker-cli list` — different subcommands, not protected
+
+**Segment split.** Same `_SEPARATOR_RE`/mechanic as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`.
+
+**Smoke:** `dev/hook_smoke/test_block_worker_cli_read_chained.py` (20 cases incl. redirect/pipe/foreign-segment blocks, cross-CLI-relax passes, cd-guard passes).
 
 ---
 
@@ -592,29 +541,6 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 - `git config` (modify — write operations); read-only flags (`--list`, `--get`, `--show-origin`, etc.) are exempt
 
 **Allowed patterns:** `git commit` (without `--amend`/`--no-verify`/`--allow-empty`); `git push` (without force flags); `git config --list|--get|...` (read-only); parse errors (fail-open).
-
----
-
-### rewrite_bd_invalid_repo.py (128 LOC)
-
-**Purpose:** PreToolUse hook (Bash) — detects `bd --repo <path>` invocations where `<path>` does not exist OR does not contain a `.beads/` subdirectory, and **auto-rewrites** by stripping the invalid `--repo <path>` token from the command. Created 2026-05-22 commit `6b37e94` after a real incident: `bd --repo /Users/brunowinter2000/Monitor_CC create ...` (typo — actual project is under `Documents/ai/`) auto-initialized an unwanted `.beads/dolt/` at the wrong path and triggered a dolt-server port collision. The hook strips invalid `--repo` flags so bd defaults to cwd (which has `.beads/`).
-**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`).
-**Writes:** stdout (single-line JSON `hookSpecificOutput.permissionDecision: "allow"` + `updatedInput.command` + `systemMessage`) on match; nothing on passthrough.
-**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** stdlib only (`json`, `os`, `re`).
-
-**Detection:** regex `_REPO_TOKEN_RE` matches `--repo /path`, `--repo=/path`, `--repo "/path with spaces"`, `--repo '/path'`. Multiple `--repo` flags in one command and chained bd commands all detected in a single regex pass.
-
-**Path validation (per detected `--repo` arg):**
-1. Skip if path contains shell metachars (`$`, `` ` ``, `\`, `*`, `?`, `{`) — unresolvable at hook time, let through.
-2. Resolve `~` and absolute via `os.path.expanduser` + `os.path.abspath`.
-3. Validate: `os.path.isdir(resolved)` AND `os.path.isdir(resolved + '/.beads')`. Both required — either failure marks the `--repo` invalid.
-
-**Rewrite logic:** span-based substitution removes only the matched `--repo <path>` spans from the original command (no regex-replace, no quoting complexity). Other args, flags, redirections, pipes preserved exactly. At most a double-space remains where the token was — harmless for shell.
-
-**Allowed (passthrough):** `bd` calls without `--repo` (uses cwd default); `bd --repo <valid-path-with-beads>`; non-bd commands; shell-meta paths (`$PROJ_ROOT` etc.); parse errors (fail-open).
-
-**Live verification (2026-05-22):** `bd --repo /Users/brunowinter2000/Wrong/Path create --title "test" --type task` produced bead `Monitor_CC-ggh6` (correct project prefix from cwd-default), `/Users/brunowinter2000/Wrong/` not auto-initialized.
 
 ---
 
@@ -858,9 +784,9 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ---
 
-### hook_setup.py (244 LOC)
+### hook_setup.py (240 LOC)
 
-**Purpose:** Idempotent installer with three defense layers. **Layer 1 — Worktree Guard:** `_guard_not_worktree()` checks `Path(__file__).resolve().parts` for consecutive `.claude`/`worktrees` components; exits 2 with a clear error message (stderr) if running from a worktree — preventing dead-path registration. **Layer 2 — Stale-hook Sweep:** `_sweep_stale_hooks()` iterates ALL event keys in `settings["hooks"]` (not only `PreToolUse`), checks every `python3 <path>` entry, and removes any whose script path fails `os.path.exists()`; drops now-empty groups, saves atomically, then runs the normal add-loop. **Layer 3 — Two-Condition Install Gate:** `decide_entries()` (pure, injectable `git_query_fn` + `tree_query_fn`) partitions `_HOOK_SCRIPTS` into installable vs. skipped BEFORE the add-loop runs. A script installs only when BOTH: (a) `_script_on_main()` confirms it's committed on `main` (`git cat-file -e main:src/hooks/<script>`, cached `_main_branch_resolves()` check first); (b) `_script_in_worktree()` confirms `os.path.exists(_HOOKS_DIR / script)` — present in the CURRENT working tree, at the exact path about to be registered. Condition (a) prevents the incident this layer was built for: a hook merged into `integration`, auto-registered via `.githooks/post-merge` using its absolute working-tree path, then orphaned machine-wide the moment the tree checked out `main` — every Bash call on every project failed with `[Errno 2] No such file or directory` until the entry was removed by hand. Condition (b) closes the mirror-image hole found in review: (a) alone lets a script that IS on `main` but was deleted/renamed in the CURRENT tree (while its `_HOOK_SCRIPTS` entry stayed) pass the gate and get registered as a dead path — same outage, entering from the other side; note `_sweep_stale_hooks()` runs BEFORE this gate, so without condition (b) the sweep would remove that exact dead entry and the install loop would immediately put it back. Main-branch presence is checked first — a script failing it never reaches the tree check, so a script missing from both reports the main-branch reason. Decision is per-script (cached by filename, shared across a script's multiple matcher entries) — one unmergeable/deleted script never blocks the other 42. `_report_skipped()` prints one deduped stderr line per skipped script naming it and the reason. Re-running heals stale entries from any source (worktree accident, repo move, feature-branch script since merged, etc.). Runs completely silent on success — no stdout output; stderr only for error conditions (worktree guard, JSON parse failure, skipped-script lines).
+**Purpose:** Idempotent installer with three defense layers. **Layer 1 — Worktree Guard:** `_guard_not_worktree()` checks `Path(__file__).resolve().parts` for consecutive `.claude`/`worktrees` components; exits 2 with a clear error message (stderr) if running from a worktree — preventing dead-path registration. **Layer 2 — Stale-hook Sweep:** `_sweep_stale_hooks()` iterates ALL event keys in `settings["hooks"]` (not only `PreToolUse`), checks every `python3 <path>` entry, and removes any whose script path fails `os.path.exists()`; drops now-empty groups, saves atomically, then runs the normal add-loop. **Layer 3 — Two-Condition Install Gate:** `decide_entries()` (pure, injectable `git_query_fn` + `tree_query_fn`) partitions `_HOOK_SCRIPTS` into installable vs. skipped BEFORE the add-loop runs. A script installs only when BOTH: (a) `_script_on_main()` confirms it's committed on `main` (`git cat-file -e main:src/hooks/<script>`, cached `_main_branch_resolves()` check first); (b) `_script_in_worktree()` confirms `os.path.exists(_HOOKS_DIR / script)` — present in the CURRENT working tree, at the exact path about to be registered. Condition (a) prevents the incident this layer was built for: a hook merged into `integration`, auto-registered via `.githooks/post-merge` using its absolute working-tree path, then orphaned machine-wide the moment the tree checked out `main` — every Bash call on every project failed with `[Errno 2] No such file or directory` until the entry was removed by hand. Condition (b) closes the mirror-image hole found in review: (a) alone lets a script that IS on `main` but was deleted/renamed in the CURRENT tree (while its `_HOOK_SCRIPTS` entry stayed) pass the gate and get registered as a dead path — same outage, entering from the other side; note `_sweep_stale_hooks()` runs BEFORE this gate, so without condition (b) the sweep would remove that exact dead entry and the install loop would immediately put it back. Main-branch presence is checked first — a script failing it never reaches the tree check, so a script missing from both reports the main-branch reason. Decision is per-script (cached by filename, shared across a script's multiple matcher entries) — one unmergeable/deleted script never blocks the other 38. `_report_skipped()` prints one deduped stderr line per skipped script naming it and the reason. Re-running heals stale entries from any source (worktree accident, repo move, feature-branch script since merged, etc.). Runs completely silent on success — no stdout output; stderr only for error conditions (worktree guard, JSON parse failure, skipped-script lines).
 **Reads:** `~/.claude/settings.json`; local `main` branch git state (`git rev-parse --verify`, `git cat-file -e`); working-tree filesystem (`os.path.exists`).
 **Writes:** `~/.claude/settings.json` (atomic via temp + `os.replace()`; up to two saves per run — one after sweep if stale entries found, one after add-loop if new entries installed).
 **Called by:** User manually (`python3 src/hooks/hook_setup.py` from Monitor_CC root). Never imported.

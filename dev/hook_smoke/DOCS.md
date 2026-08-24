@@ -35,9 +35,9 @@ python3 dev/hook_smoke/test_block_broad_grep.py
 
 ---
 
-### test_block_gh_cli_chained.py (101 LOC)
+### test_block_gh_cli_chained.py (123 LOC, 2026-08 cross-CLI relax + get_issue/list_issues absorbed)
 
-**Purpose:** 21-case smoke for `block_gh_cli_chained.py`. Verifies 9 blocked cases (each of the 7 search/research tools piped/chained with a non-search command), 6 pass cases (two search tools chained together, standalone with tool-native args, redirect to file), 2 exempt issue-command passes (`list_issues` / `get_issue` piped to grep/head), 2 shell-strip passes (pattern inside single-quotes, pattern inside heredoc body), and 3 `repo_freshness`-as-legal-segment cases (2026-08, CC 2.1.223 websearch incident): `repo_freshness && index_issues && index_issues` PASS (the fixed retry), the same chain with `echo` segments interleaved still BLOCK (echo isn't a legal segment), `repo_freshness && git log` PASS (hook never triggers — `repo_freshness` alone is outside `_GH_SEARCH_RE`'s scope).
+**Purpose:** 30-case smoke for `block_gh_cli_chained.py`. Verifies: blocked cases for each of the 7 search/research tools piped/chained with a non-CLI command; `get_issue`/`list_issues` piped/redirected/chained-with-echo BLOCK (2026-08: absorbed from the deleted `rewrite_gh_cli_read_noise.py`, no longer exempt); standalone/tool-native-args/redirect-to-file passes for the 7; `get_issue`/`list_issues` standalone and combined-with-each-other/combined-with-`index_issues` passes; cross-CLI-relax passes (`index_issues && rag-cli search`, `get_issue && worker-cli capture`, leading `cd` guard); 2 shell-strip passes (single-quotes, heredoc body); 3 `repo_freshness` cases (2026-08 websearch incident, now resolved via the generic known-CLI check rather than a dedicated carve-out): `repo_freshness && index_issues && index_issues` PASS, the same chain with `echo` segments interleaved still BLOCK (echo isn't a known-CLI segment), `repo_freshness && git log` PASS (hook never triggers — `repo_freshness` alone is outside `_GH_TRIGGER_RE`'s scope).
 
 **Usage:**
 ```bash
@@ -70,10 +70,12 @@ python3 dev/hook_smoke/test_block_gh_cli_local_path.py
 **Purpose:** Replays the exact commands from the websearch-session `repo_freshness` incident
 (`src/logs/dual_log/api_requests_opus_websearch_1786052022_original.jsonl`, messages [118]-[129])
 through the real `block_gh_cli_chained.py` hook via subprocess — asserts exit code AND stderr
-shape (BLOCK cases carry stderr, PASS cases carry none), plus 3 content checks on the rewritten
-`_BLOCK_MESSAGE` (combine example present, "always full context" wording, "repo_freshness may
-join" wording). Distinct from the smoke suite above: pins the literal incident commands
-verbatim rather than minimal synthetic variants, and asserts message CONTENT, not just exit code.
+shape (BLOCK cases carry stderr, PASS cases carry none), plus 3 content checks on the
+`_BLOCK_MESSAGE` (combine example present, "always full context" wording, "cross-CLI chains ARE
+allowed" wording — 2026-08: swapped from the old "repo_freshness may join" check, since that
+carve-out is now subsumed by the generic known-CLI check). Distinct from the smoke suite above:
+pins the literal incident commands verbatim rather than minimal synthetic variants, and asserts
+message CONTENT, not just exit code.
 **Reads:** none (commands are inlined verbatim from the incident log, not re-read from disk).
 **Writes:** `md/gh_cli_repo_freshness_incident_probe_report.md`.
 
@@ -86,9 +88,9 @@ python3 dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py
 
 ---
 
-### test_block_rag_cli_chained.py (79 LOC)
+### test_block_rag_cli_chained.py (94 LOC, 2026-08 cross-CLI relax + search redirect absorbed)
 
-**Purpose:** 11-case smoke for `block_rag_cli_chained.py`. Verifies 4 blocked cases (rag-cli followed via `;`, `&&`, `|` by tail/echo/grep/head), and 7 allow cases (redirect to file, file-guard before rag-cli, cd before rag-cli, two rag-cli calls chained, no rag-cli at all, rag-cli inside single-quotes, rag-cli inside heredoc body).
+**Purpose:** 17-case smoke for `block_rag_cli_chained.py`. Verifies: blocked cases (rag-cli followed via `;`, `&&`, `|` by tail/echo/grep/head), `rag-cli search` redirect/`2>&1`/pipe BLOCK (2026-08: absorbed from the deleted `rewrite_rag_cli_search_noise.py`), and allow cases (non-search redirect to file, `search` standalone, cross-CLI-relax — `search && gh-cli get_issue`, `search && worker-cli capture`, file-guard before rag-cli, cd before rag-cli, two rag-cli calls chained, no rag-cli at all, rag-cli inside single-quotes, rag-cli inside heredoc body).
 
 **Usage:**
 ```bash
@@ -161,72 +163,29 @@ python3 dev/hook_smoke/test_log_janitor.py
 
 ---
 
-### test_rewrite_rag_cli_search_noise.py (139 LOC)
+### test_block_websearch_scrape_chained.py (100 LOC, 2026-08)
 
-**Purpose:** 15-case smoke for `rewrite_rag_cli_search_noise.py`. Verifies 9 positive-strip cases (`| head`, `| tail`, `| grep`, `> redirect`, `2>&1`, `2>&1 | head`, `cd &&` chain, trailing `; bd list` chain, `|| echo fail` chain) and 6 negative no-op cases (bare search_hybrid, cd chain no noise, trailing chain no pipe, `list_collections | head` out of scope, `read_document | head` out of scope, search_hybrid inside quoted echo).
+**Purpose:** 18-case smoke for `block_websearch_scrape_chained.py` (replaces the deleted `rewrite_websearch_scrape_noise.py`). Verifies the proven incident command verbatim (`scrape_url URL > /tmp/f.md 2>&1; wc -l /tmp/f.md; head -120 /tmp/f.md` BLOCK), redirect/`2>&1`/pipe/foreign-segment BLOCK cases, standalone/`search_web`-untouched PASS, and cross-CLI-relax PASS cases (two `scrape_url` calls chained, `scrape_url && rag-cli search`, `scrape_url && gh-cli get_issue`, leading cd guard), plus quoted-mention shell-strip and malformed-stdin fail-open.
 
 **Usage (from project root):**
 ```bash
-python3 dev/hook_smoke/test_rewrite_rag_cli_search_noise.py
+python3 dev/hook_smoke/test_block_websearch_scrape_chained.py
 ```
 
-**Expected output:** `All 15 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** `All 18 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
 
 ---
 
-### test_rewrite_worker_cli_capture_noise.py (152 LOC)
+### test_block_worker_cli_read_chained.py (105 LOC, 2026-08)
 
-**Purpose:** 17-case smoke for `rewrite_worker_cli_capture_noise.py`. Verifies 5 positive-strip cases (`| tail -40`, `| grep bar`, `| head -20 | sed`, `cd && ... | tail ; echo done` chain, `| wc -l`), 1 `--raw`-survives case (`--raw | tail -40` → `--raw` preserved), 3 redirect-preserved no-op cases (`> /tmp/x.txt`, `>> /tmp/x.txt`, `2>&1` all UNCHANGED), and 8 negative no-op cases (bare capture, `--raw` no-pipe, `response | tail` out-of-scope, wrong subcommands, chains without noise, quoted capture inside send-message).
-
-**Critical assertions:** `> /tmp/x.txt` UNCHANGED (redirect preserved), `--raw | tail -40` → `--raw` (flag survives), `worker-cli send w "... capture foo | tail"` UNCHANGED (shell-strip blanks quoted region).
+**Purpose:** 20-case smoke for `block_worker_cli_read_chained.py` (replaces the deleted `rewrite_worker_cli_capture_noise.py` / `rewrite_worker_cli_response_noise.py`). Verifies pipe/redirect BLOCK on both `capture` and `response` (incl. the retired `capture | tail -40` fallback and `capture > file` allowance), foreign-segment BLOCK, standalone/`--raw`/out-of-scope-subcommand PASS, and cross-CLI-relax PASS cases (`capture && response` combine, `capture && rag-cli search`, leading cd guard — a real pattern here since `worker-cli capture`/`response` fall back to cwd via `resolve_project_path` when `project_path` is omitted), plus quoted-mention shell-strip and malformed-stdin fail-open.
 
 **Usage (from project root):**
 ```bash
-python3 dev/hook_smoke/test_rewrite_worker_cli_capture_noise.py
+python3 dev/hook_smoke/test_block_worker_cli_read_chained.py
 ```
 
-**Expected output:** `All 17 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
-
----
-
-### test_rewrite_gh_cli_read_noise.py (127 LOC)
-
-**Purpose:** 12-case smoke for `rewrite_gh_cli_read_noise.py`. Verifies 5 positive-strip cases (`get_issue | tail -40`, `2>&1 | tail -40` with `2>&1` preserved, `list_issues | head`, `| tail ; echo done` chain, `cd && get_issue | tail` chain prefix), 2 redirect-preserved no-op cases (`> /tmp/x`, `>> /tmp/x` both UNCHANGED), 2 out-of-scope-command no-op cases (`create_issue | tail`, `update_issue | tail` — writes, not covered), 2 bare no-op cases (`get_issue`/`list_issues` with no pipe), and 1 quoted-string no-op case (`worker-cli send w "... gh-cli get_issue x | tail"` UNCHANGED).
-
-**Critical assertions:** `> /tmp/x` UNCHANGED (redirect preserved), `create_issue`/`update_issue` UNCHANGED (anchor excludes writes), quoted send-message UNCHANGED (shell-strip blanks quoted region).
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/test_rewrite_gh_cli_read_noise.py
-```
-
-**Expected output:** `All 12 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
-
----
-
-### test_rewrite_worker_cli_response_noise.py (144 LOC)
-
-**Purpose:** 16-case smoke for `rewrite_worker_cli_response_noise.py`. Verifies 9 positive-strip cases (`| head`, `| tail`, `| grep`, `> redirect`, `2>&1`, `2>&1 | head`, `cd &&` chain, trailing `; bd list` chain, `|| echo fail` chain) and 7 negative no-op cases (bare response, **`worker-cli capture X | tail -40` critical pass-through**, `worker-cli status`, `worker-cli list`, cd chain no noise, trailing chain no pipe, response inside quoted echo).
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/test_rewrite_worker_cli_response_noise.py
-```
-
-**Expected output:** `All 16 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
-
----
-
-### test_rewrite_websearch_scrape_noise.py (139 LOC)
-
-**Purpose:** 15-case smoke for `rewrite_websearch_scrape_noise.py`. Verifies 9 positive-strip cases (`| head`, `| tail`, `| sed`, `2>&1`, `2>&1 | head`, `> redirect`, `cd &&` chain, trailing `; echo done` chain, `|| echo fail` chain) and 6 negative no-op cases (bare `scrape_url`, cd chain no noise, trailing chain no pipe, `search_web | head` out of scope, `search_engine_drilldown | head` out of scope, `scrape_url` inside quoted echo).
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/test_rewrite_websearch_scrape_noise.py
-```
-
-**Expected output:** `All 15 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** `All 20 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
 
 ---
 
