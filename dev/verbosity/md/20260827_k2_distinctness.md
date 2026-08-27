@@ -169,6 +169,24 @@ echo assignments unchanged, only the position measure changes.
 of 6, i.e. four exchanges before the end) sits more than two positions from the end — the
 single exception, not the pattern.
 
+**Full list of all 30 redundant exchanges (reproducibility)**
+
+Turn number, the redundant exchange's index within that turn, and its offset from the end.
+Both distribution tables above are computed directly from this list; nothing else feeds them.
+
+| Turn | Index | Offset | | Turn | Index | Offset | | Turn | Index | Offset |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 3 | 1 | 4 | | 59 | 5 | 0 | | 114 | 2 | 2 |
+| 9 | 3 | 0 | | 63 | 10 | 0 | | 114 | 4 | 0 |
+| 10 | 5 | 0 | | 64 | 5 | 0 | | 115 | 5 | 0 |
+| 11 | 7 | 0 | | 69 | 3 | 0 | | 116 | 4 | 2 |
+| 12 | 6 | 0 | | 70 | 4 | 0 | | 116 | 6 | 0 |
+| 17 | 3 | 0 | | 73 | 3 | 1 | | 117 | 2 | 1 |
+| 18 | 4 | 0 | | 108 | 9 | 1 | | 118 | 6 | 1 |
+| 20 | 11 | 0 | | 112 | 2 | 1 | | 121 | 8 | 0 |
+| 23 | 3 | 1 | | 112 | 3 | 0 | | 123 | 5 | 0 |
+| 56 | 2 | 1 | | 113 | 4 | 0 | | 125 | 5 | 0 |
+
 **Section 2, re-indexed from the end**
 
 Same computation as Section 2 — fraction of exchanges at a given position that are distinct —

@@ -15,6 +15,11 @@ re-run of code.
   analog), and the ten lowest-distinctness turns quoted in full with per-exchange cluster
   labels. States the measured corpus-wide distinctness (0.952) against a pre-registered
   prediction and flags the turns that required a judgment call beyond the stated criterion.
+  Section 2a re-runs the position aggregate indexed from the END of each turn instead of the
+  start, with the full 30-row list of redundant exchanges (turn, index, end-offset) that both
+  distribution tables are computed from — this discriminates a "redundancy grows with depth"
+  reading from a "redundancy is a closing-exchange role effect" reading; the probe rules out
+  the former (see `process-docs/verbosity/` for the write-up).
 
 ## Gotchas
 The source transcript (`/tmp/k2_turns.md`) is not checked into this repo — it is a
