@@ -128,16 +128,81 @@ over turns long enough to have an exchange at that index.
 | 10 | 3 | 2 | 0.667 |
 | 11 | 1 | 0 | 0.000 |
 
-Redundancy grows with position, matching Chen's finding, but not smoothly. Indices 0–3
-(present in every turn, since the minimum length is 4) are almost entirely distinct — the
-first four exchanges of a turn are near-never redundant with each other in this corpus.
-The drop is concentrated at indices 5–6 (0.79 / 0.79): this is exactly where the recurring
-"Zusammenfassung meiner Zweifel" / closing-recap exchange tends to sit in 6–7-exchange turns,
-echoing a caveat already given earlier in the same turn. Indices 7–8 recover somewhat because
-turns that reach that length are mostly long autonomous-worker-review turns (63, 108, 110,
-121) with genuinely many distinct findings, not recaps. Indices 9–11 have only 1–3 data
-points each and should be read as anecdote, not trend — index 11's 0/1 is a single turn
-(turn 20's closing exchange), not a real 0% rate.
+This table by itself does not establish that redundancy is driven by absolute position.
+Indices 0–3 (present in every turn, since the minimum length is 4) are almost entirely
+distinct, and there is a visible dip at indices 5–6 (0.793 / 0.786) followed by a partial
+recovery at 7–8. A from-start "redundancy grows with depth" reading and a from-end "the
+closing exchange is where redundancy lives, and its start-index just tracks turn length"
+reading both predict this exact shape, since most turns in this corpus are 4–8 exchanges
+long and their endings cluster in that index range regardless of which mechanism is true.
+Section 2a runs the probe that discriminates between the two, and the result overturns the
+from-start reading: redundancy concentrates almost entirely in the last two exchanges of a
+turn (90% of all 30 redundant exchanges sit at end-offset 0 or 1) — the dip seen here is an
+artifact of where turn-endings happen to fall in start-index terms, not evidence that index
+5–6 is itself special.
+
+## 2a. Redundancy by position from the END (discriminating probe)
+
+Two mechanisms predict the same dip in Section 2. Mechanism 1 (position): redundancy grows
+the deeper into a turn you go, independent of role. Mechanism 2 (role): the redundant
+exchange is specifically the closing decision-question or closing doubts-recap — the LAST or
+second-to-last exchange of a turn — and the start-index at which that lands is just a
+function of turn length. The two are indistinguishable from Section 2 alone.
+
+To discriminate, every one of the 30 redundant (echoed) exchanges identified in Section 1 was
+re-indexed by its offset from the end of its own turn: offset 0 = the turn's last exchange,
+offset 1 = second-to-last, and so on. No exchange was re-labeled — this reuses the same 30
+echo assignments unchanged, only the position measure changes.
+
+**Distribution of the 30 redundant exchanges by end-offset**
+
+| End-offset | Redundant exchanges | Share |
+|---|---|---|
+| 0 (last exchange) | 20 | 66.7% |
+| 1 (second-to-last) | 7 | 23.3% |
+| 2 | 2 | 6.7% |
+| 3 | 0 | 0.0% |
+| 4 | 1 | 3.3% |
+| 5 or deeper | 0 | 0.0% |
+
+27 of 30 redundant exchanges (90%) sit at end-offset 0 or 1. Exactly one (turn 3, its index 1
+of 6, i.e. four exchanges before the end) sits more than two positions from the end — the
+single exception, not the pattern.
+
+**Section 2, re-indexed from the end**
+
+Same computation as Section 2 — fraction of exchanges at a given position that are distinct —
+with position now counted from the end of each turn. Eligible-turn counts per end-offset are
+identical to Section 2's eligible-turn counts per start-index (both use the threshold "turn
+length > k"), so the two tables are directly comparable row-for-row.
+
+| End-offset | Turns with this offset | Distinct at this offset | Fraction |
+|---|---|---|---|
+| 0 | 126 | 106 | 0.841 |
+| 1 | 126 | 119 | 0.944 |
+| 2 | 126 | 124 | 0.984 |
+| 3 | 126 | 126 | 1.000 |
+| 4 | 56 | 55 | 0.982 |
+| 5 | 29 | 29 | 1.000 |
+| 6 | 14 | 14 | 1.000 |
+| 7 | 10 | 10 | 1.000 |
+| 8 | 6 | 6 | 1.000 |
+| 9 | 3 | 3 | 1.000 |
+| 10 | 3 | 3 | 1.000 |
+| 11 | 1 | 1 | 1.000 |
+
+**Verdict: the role reading wins, the position reading is wrong.**
+
+From the end, the curve is clean and steep: 0.841 at the very last exchange, 0.944 one before
+it, 0.984 two before it, and 1.000 — zero redundancy anywhere in this 626-exchange corpus —
+from three-before-the-end outward, with a single exception at offset 4. A genuine
+depth-of-turn effect would not produce this: it would spread redundant exchanges across the
+middle of long turns too, and it does not — turns 63, 108, 110, 121 (8–11 exchanges each)
+have at most one echo, and where they have one it sits at that turn's own end (offset 0 or 1
+in Section 1's labels), not scattered through the middle. Redundancy in this corpus is a
+property of the closing exchange's role — re-confirming a decision already argued, or
+re-listing doubts already stated — not of how deep into the turn that exchange happens to
+fall.
 
 ## 3. Ten lowest-distinctness turns, quoted in full
 
