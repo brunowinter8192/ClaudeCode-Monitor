@@ -162,7 +162,7 @@ class RagController:
         state = 'ON' if app._auto_focus else 'OFF'
         self._rag_toggle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'Sessions \u00b7 [RAG]     Auto-Jump: {state}',
+                f'Sessions \u00b7 [RAG] \u00b7 Models     Auto-Jump: {state}',
                 {NSFontAttributeName: _MENLO()}))
         required_h = _TOP_BAR_H + _LABEL_H + _LABEL_H   # top-bar + separator + status line
         self._resize_rag_panel(max(app._panel_min_height, required_h))
