@@ -171,15 +171,23 @@ class ModelController:
             NSAttributedString.alloc().initWithString_attributes_(
                 f'Worker:  {self._pending_worker}', {NSFontAttributeName: _MENLO()}))
 
-    # Advance pending main model to the next fixed-order value; in-place title update only
+    # Advance pending main model to the next fixed-order value; in-place title update only.
+    # AppKit-safety boundary: catches + logs, never raises — same shape as handle_apply.
     def handle_cycle_main(self) -> None:
-        self._pending_main = _next_model(self._pending_main)
-        self._refresh_cycle_titles()
+        try:
+            self._pending_main = _next_model(self._pending_main)
+            self._refresh_cycle_titles()
+        except Exception as exc:
+            print(f'[menubar] model cycle (main) failed: {exc}', file=sys.stderr)
 
-    # Advance pending worker model to the next fixed-order value; in-place title update only
+    # Advance pending worker model to the next fixed-order value; in-place title update only.
+    # AppKit-safety boundary: catches + logs, never raises — same shape as handle_apply.
     def handle_cycle_worker(self) -> None:
-        self._pending_worker = _next_model(self._pending_worker)
-        self._refresh_cycle_titles()
+        try:
+            self._pending_worker = _next_model(self._pending_worker)
+            self._refresh_cycle_titles()
+        except Exception as exc:
+            print(f'[menubar] model cycle (worker) failed: {exc}', file=sys.stderr)
 
     # Persist the currently displayed pair to disk. AppKit-safety boundary: catches + logs,
     # never raises, so a write failure cannot propagate into the ObjC action-dispatch chain.
