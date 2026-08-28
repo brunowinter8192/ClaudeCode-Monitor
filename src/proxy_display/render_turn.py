@@ -62,9 +62,11 @@ def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symb
     _fid = entry.get('flow_id', '')
     _has_strip = entry.get('_strip_fns_lookup', {}).get(_fid, False)
     _has_inj   = entry.get('_inject_fns_lookup', {}).get(_fid, False)
+    _has_think = entry.get('has_thinking_delta', False)
     _badge_parts = []
     if _has_strip: _badge_parts.append(f'{YELLOW}strip{SOFT_RESET}')
     if _has_inj:   _badge_parts.append(f'{GREEN}inject{SOFT_RESET}')
+    if _has_think: _badge_parts.append(f'{GREEN}🧠{SOFT_RESET}')
     tag_badge = (' ' + ' '.join(_badge_parts)) if _badge_parts else ''
     body = f"{WHITE}{req_symbol} {num_label} {model_short} {msg_count}msg{eff_str}{think_str}{mods_str}{warn_str}{haiku_info}{tag_badge}{SOFT_RESET}"
     if is_search_match:
