@@ -4,8 +4,8 @@
 
 A thinking content block inside an expanded REQ used to print its full text unconditionally,
 hard-truncated to the pane width by `truncate_visible`. Two problems: no toggle (now that
-thinking summaries are non-empty — see `2026-08-28_summarized_display_activation.md` in this
-area — every expanded REQ floods with reasoning text nobody asked for), and truncation instead of
+thinking summaries are non-empty, a configuration change recorded elsewhere in
+`process-docs/thinking/` — every expanded REQ floods with reasoning text nobody asked for), and truncation instead of
 wrapping (real thinking text is typically one 250-600 char line with no newlines, so most of it
 was simply cut off at a ~180-cell pane width).
 
