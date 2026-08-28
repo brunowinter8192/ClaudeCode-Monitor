@@ -65,7 +65,12 @@ def _apply_delta_to_list(prev_list: list, delta_dict: dict, count: int) -> list:
 # Build a proxy-display entry dict from a forwarded_delta header + reconstructed section data.
 # message_summaries: list of summary dicts (for messages_total_chars; messages key NOT set here —
 # assigned from the deque window after parse completes).
-def _extract_forwarded_fields(fwd_entry: dict, system: list, tools: list, message_summaries: list) -> dict:
+# delta_messages: summary dicts for ONLY the messages THIS request newly added/changed (not the
+# full accumulated list) — drives has_thinking_delta. is_first requests treat the entire message
+# list as "delta" (deliberate: a proxy-session restart mid-conversation re-sends everything in one
+# shot, so there is no narrower "newly added" slice to point at; this can make the brain badge
+# light up once on such a restart even though no assistant turn just happened — accepted edge case).
+def _extract_forwarded_fields(fwd_entry: dict, system: list, tools: list, message_summaries: list, delta_messages: list) -> dict:
     entry: dict = {}
     entry['timestamp'] = fwd_entry.get('timestamp', '')
     entry['request_id'] = fwd_entry.get('request_id', '')
@@ -79,6 +84,10 @@ def _extract_forwarded_fields(fwd_entry: dict, system: list, tools: list, messag
     entry['is_first'] = fwd_entry.get('is_first', False)
     entry['message_count'] = fwd_entry.get('counts', {}).get('messages', 0)
     entry['messages_total_chars'] = sum(s.get('chars', 0) for s in message_summaries)
+    entry['has_thinking_delta'] = any(
+        any(b.get('type') == 'thinking' for b in s.get('blocks', []))
+        for s in delta_messages if isinstance(s, dict)
+    )
 
     sys_list = system if isinstance(system, list) else []
     entry['system_blocks'] = [
@@ -169,11 +178,16 @@ def _parse_forwarded_log(fwd_path: Path, last_pos: int, acc_by_family: dict, kee
                         _summarize_fwd_message(m) if isinstance(m, dict) else {}
                         for m in raw_msgs
                     ]
+                    # is_first has no narrower "newly added" slice — a proxy-session restart
+                    # mid-conversation re-sends the whole history in one shot, so the entire
+                    # list stands in as the delta (see _extract_forwarded_fields docstring).
+                    delta_summaries = new_summaries
                 else:
                     prev = prev_acc if prev_acc else {'system': [], 'tools': [], 'messages': []}
                     new_system = _apply_delta_to_list(prev['system'], fwd_e.get('system_delta') or {}, sys_cnt)
                     new_tools = _apply_delta_to_list(prev['tools'], fwd_e.get('tools_delta') or {}, tools_cnt)
                     new_summaries = list(prev['messages'])
+                    delta_summaries = []
                     for idx_str, raw_msg in (fwd_e.get('messages_delta') or {}).items():
                         i = int(idx_str)
                         while len(new_summaries) <= i:
@@ -181,6 +195,7 @@ def _parse_forwarded_log(fwd_path: Path, last_pos: int, acc_by_family: dict, kee
                         new_summaries[i] = (
                             _summarize_fwd_message(raw_msg) if isinstance(raw_msg, dict) else {}
                         )
+                        delta_summaries.append(new_summaries[i])
                     if len(new_summaries) > msg_cnt:
                         new_summaries = new_summaries[:msg_cnt]
                     elif len(new_summaries) < msg_cnt:
@@ -190,7 +205,7 @@ def _parse_forwarded_log(fwd_path: Path, last_pos: int, acc_by_family: dict, kee
                     'tools': new_tools,
                     'messages': new_summaries,
                 }
-                entry = _extract_forwarded_fields(fwd_e, new_system, new_tools, new_summaries)
+                entry = _extract_forwarded_fields(fwd_e, new_system, new_tools, new_summaries, delta_summaries)
                 entry['_fwd_req_idx'] = req_idx
                 entry['flow_id'] = fwd_e.get('flow_id', '')
                 entry['diff_from_prev'] = _compute_diff(prev_messages_for_diff, new_summaries)
