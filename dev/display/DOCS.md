@@ -69,7 +69,7 @@ Captures all 10 tmux panes of a running Monitor_CC session (5 windows) and combi
 
 ### test_hover_map.py (437 LOC)
 
-**Purpose:** Synthetic + real-log assertion suite for expand-model line_map correctness — every visible row maps to exactly one phys_row, monotonic, no duplicates; plus a `render_messages` `len(lines) == len(keys)` pairing check for the stripped-span dual-color overlay path.
+**Purpose:** Synthetic + real-log assertion suite for expand-model line_map correctness — every visible row maps to exactly one phys_row, monotonic, no duplicates; plus a `render_messages` `len(lines) == len(keys)` pairing check for the stripped-span dual-color overlay path. `render_messages()` call passes `entry_idx` as of 2026-08-28 (thinking-expander milestone signature bump: `render_messages(entry_idx, entry, ...)`), mechanical update only.
 
 **Usage:**
 ```bash

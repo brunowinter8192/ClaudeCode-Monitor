@@ -403,7 +403,7 @@ def test_stripped_msg_pair_alignment() -> None:
         return
 
     for entry_idx, entry, prev in tested_entries:
-        lines, keys = render_messages(entry, prev, [], {entry_idx: True}, 150)
+        lines, keys = render_messages(entry_idx, entry, prev, [], {entry_idx: True}, 150)
         assert_true(
             len(lines) == len(keys),
             f"stripped_pair entry[{entry_idx}]: len(lines)={len(lines)} == len(keys)={len(keys)}"

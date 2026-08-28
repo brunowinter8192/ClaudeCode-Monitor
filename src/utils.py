@@ -146,3 +146,45 @@ def truncate_visible(line: str, pane_width: int) -> str:
         width += cw
         i += 1
     return line[:i] + '\u2026'
+
+# Word-wrap plain text to width_cells terminal cells (cell-aware, consistent with
+# truncate_visible/_cell_width \u2014 NOT a character count). Breaks on spaces; a single word wider
+# than width_cells is hard-split mid-word. Always returns at least one line (possibly '').
+def wrap_visible(text: str, width_cells: int) -> list:
+    if width_cells <= 0:
+        return [text]
+    words = text.split(' ')
+    lines = []
+    current = ''
+    current_w = 0
+    for word in words:
+        word_w = sum(_cell_width(ch) for ch in word)
+        if current and current_w + 1 + word_w > width_cells:
+            lines.append(current)
+            current = ''
+            current_w = 0
+        if word_w > width_cells:
+            if current:
+                lines.append(current)
+                current = ''
+                current_w = 0
+            buf = ''
+            buf_w = 0
+            for ch in word:
+                cw = _cell_width(ch)
+                if buf and buf_w + cw > width_cells:
+                    lines.append(buf)
+                    buf = ''
+                    buf_w = 0
+                buf += ch
+                buf_w += cw
+            current = buf
+            current_w = buf_w
+        elif current:
+            current = f"{current} {word}"
+            current_w = current_w + 1 + word_w
+        else:
+            current = word
+            current_w = word_w
+    lines.append(current)
+    return lines

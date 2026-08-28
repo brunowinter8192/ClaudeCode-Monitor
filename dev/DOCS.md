@@ -34,7 +34,7 @@ cd Monitor_CC/
 - [pane_error_log/DOCS.md](pane_error_log/DOCS.md) — Regression coverage for the shared exception-safe pane-error sink (`src/pane_error_log.py`) and the exception guard on all 9 pane event loops — catch+log+continue, `KeyboardInterrupt`/`SystemExit` passthrough, failing-log-write safety, sink size-capping
 - [click_ui/DOCS.md](click_ui/DOCS.md) — Click-UI milestone series (every pane control mouse-clickable) — Milestone 1: worker-selection click-region parity vs. digit keys, worker-proxy header + workers pane
 - [hotkey_latency/DOCS.md](hotkey_latency/DOCS.md) — Menubar hotkey-lag investigation tooling: `GetEventTime`/`GetCurrentEventTime` probe + `menubar.log` `[latency]` line parser/report generator; measurement only, no `src/` behavior change
-- [thinking/DOCS.md](thinking/DOCS.md) — Verification for the proxy pane's per-request 🧠 brain-marker badge (`has_thinking_delta`) — renders a real `_forwarded` dual-log through the actual parse+render path, delta vs. cumulative cross-check
+- [thinking/DOCS.md](thinking/DOCS.md) — Verification for the proxy pane's thinking display features: the per-request 🧠 brain-marker badge (`has_thinking_delta`, delta vs. cumulative cross-check) and the thinking-block drill-down + wrapping in the expanded REQ view (collapsed/expanded/byte-identical checks against a pre-change git snapshot) — both render through the real parse+render path against a real `_forwarded` dual-log
 
 ## session_analysis/
 

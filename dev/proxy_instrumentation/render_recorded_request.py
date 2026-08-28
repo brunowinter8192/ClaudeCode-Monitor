@@ -66,9 +66,9 @@ def _build_entries_and_spans(entries: list, line_idx: int):
     return target, prev_same, prev_idx
 
 # Call the real render_messages() and return (lines, keys)
-def _render(target: dict, prev_same: dict) -> tuple:
+def _render(entry_idx: int, target: dict, prev_same: dict) -> tuple:
     from src.proxy_display.render_messages import render_messages
-    return render_messages(target, prev_same, [], {}, pane_width=200)
+    return render_messages(entry_idx, target, prev_same, [], {}, pane_width=200)
 
 _ANSI_RE = __import__('re').compile(r'\x1b\[[0-9;]*m')
 _MSG_HEADER_RE = __import__('re').compile(r'^ {4}\[(\s*\d+)\]')
@@ -102,7 +102,7 @@ def main() -> None:
     print(f"=== Request b6e4f411 (dual-log line {target_line}) — msg 276 strip+inject spans ===")
     target, prev_same, prev_idx = _build_entries_and_spans(entries, target_line)
     print(f"message_count={target.get('message_count')} prev_same message_count={prev_same.get('message_count')} (prev_idx={prev_idx})")
-    lines, keys = _render(target, prev_same)
+    lines, keys = _render(target_line, target, prev_same)
     assert len(lines) == len(keys)
     print(f"total rendered lines: {len(lines)}")
     for i, ln in enumerate(lines):
@@ -119,7 +119,7 @@ def main() -> None:
     print(f"\n=== Control: message 274, introduced by request at dual-log line {control_line} ===")
     control, control_prev, control_prev_idx = _build_entries_and_spans(entries, control_line)
     print(f"message_count={control.get('message_count')} prev_same message_count={control_prev.get('message_count')} (prev_idx={control_prev_idx})")
-    c_lines, c_keys = _render(control, control_prev)
+    c_lines, c_keys = _render(control_line, control, control_prev)
     assert len(c_lines) == len(c_keys)
     print("--- msg 274 slice ---")
     for ln in _slice_message(c_lines, 274):
