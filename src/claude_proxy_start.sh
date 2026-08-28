@@ -3,16 +3,20 @@
 # Usage: ./src/claude_proxy_start.sh [--project <path>] [--fable | --opus] [claude args...]
 #
 # --fable maps to --model claude-fable-5; --opus maps to --model claude-opus-5.
-# Precedence: an explicit --model (anywhere in the args, before or after a shortcut) always wins
-# over --fable/--opus. If both --fable and --opus are given (no explicit --model), the LAST one
-# wins. No shortcut and no --model at all: no --model is injected — behavior is byte-identical to
-# before this flag existed (native CC default model).
+# Precedence, highest first: (1) an explicit --model (anywhere in the args, before or after a
+# shortcut) always wins; (2) --fable/--opus — if both given with no explicit --model, the LAST
+# one wins; (3) "main" from ~/.claude/shared-rules/model_selection.json (2026-08, model-selector
+# milestone 3 — the menubar's Models tab writes this file); (4) nothing — no --model is injected
+# at all, byte-identical to today's no-flag behavior. A missing/unreadable file, malformed JSON,
+# or a missing/empty "main" key all fall through to (4) silently — this launcher must never fail
+# because of that file.
 # --opus requires claude-opus-5 (introduced in CC 2.1.219) — the pinned binary is CC 2.1.223
 # (bumped 2026-08-06, monitor-cc #63), so --opus is fully functional as of this pin.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_CC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 MITMPROXY_CA="$HOME/.mitmproxy/mitmproxy-ca-cert.pem"
+MODEL_SELECTION_FILE="${MODEL_SELECTION_FILE:-$HOME/.claude/shared-rules/model_selection.json}"
 
 # Trigger a background stale-worker sweep on every main-session start (worker-cli janitor).
 # Fully detached — never delays/blocks session start. Guarded so a machine without
@@ -55,8 +59,20 @@ done
 PROJECT="${PROJECT:-$(pwd)}"
 # Append the shortcut-derived --model only if the user didn't pass --model explicitly — explicit
 # always wins, regardless of whether it appeared before or after the shortcut in the arg list.
+# Third tier: no explicit --model AND no shortcut — fall back to "main" from the shared model-
+# selection config (menubar Models tab). jq is used here because it's already a real dependency
+# of the sibling worker-spawn script that reads this same file — hand-parsing JSON with grep/sed
+# would be more fragile exactly where robustness matters (the malformed-JSON degradation case).
+# command -v jq guards a machine without jq installed (same idiom as the worker-cli guard above);
+# a missing/unreadable file, malformed JSON, or a missing/empty "main" key all leave CONFIG_MODEL
+# empty, so no --model is injected — degrades silently to case 4, never aborts the launcher.
 if [ -z "$HAS_EXPLICIT_MODEL" ] && [ -n "$SHORTCUT_MODEL" ]; then
     CLAUDE_ARGS+=("--model" "$SHORTCUT_MODEL")
+elif [ -z "$HAS_EXPLICIT_MODEL" ] && [ -z "$SHORTCUT_MODEL" ] && command -v jq &>/dev/null && [ -f "$MODEL_SELECTION_FILE" ]; then
+    CONFIG_MODEL="$(jq -r '.main // empty' "$MODEL_SELECTION_FILE" 2>/dev/null)"
+    if [ -n "$CONFIG_MODEL" ]; then
+        CLAUDE_ARGS+=("--model" "$CONFIG_MODEL")
+    fi
 fi
 
 # Generate session_id from project path: first 8 chars of md5 (matches monitor.py hash logic)
