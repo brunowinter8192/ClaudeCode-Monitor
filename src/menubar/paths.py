@@ -7,8 +7,6 @@ SETTINGS_FILE             = _APP_SUPPORT / "settings.json"
 HOOKS_FILE                = _APP_SUPPORT / "hooks.json"
 HOOKS_LOCK                = _APP_SUPPORT / "hooks.lock"
 PID_FILE                  = _APP_SUPPORT / "menubar.pid"
-QUEUE_FILE                = _APP_SUPPORT / "msg_queue.json"
-QUEUE_LOCK                = _APP_SUPPORT / "queue.lock"
 GHOSTTY_CWD_UUID_FILE     = _APP_SUPPORT / "ghostty_cwd_uuid.json"
 ORCHESTRATOR_SIGNALS_FILE = _APP_SUPPORT / "orchestrator_signals.json"  # {tmux_session_name: send_unix_ts}; written by worker-cli send
 
@@ -43,8 +41,8 @@ def _migrate_from_old_bundle_id() -> None:
     if not _old.exists():
         return
     _APP_SUPPORT.mkdir(parents=True, exist_ok=True)
-    for fname in ("settings.json", "hooks.json", "hooks.lock", "msg_queue.json",
-                  "queue.lock", "ghostty_cwd_uuid.json", "orchestrator_signals.json",
+    for fname in ("settings.json", "hooks.json", "hooks.lock",
+                  "ghostty_cwd_uuid.json", "orchestrator_signals.json",
                   "menubar.pid", "menubar.log", "cwd_desktop.json"):
         old_f = _old / fname
         new_f = _APP_SUPPORT / fname
