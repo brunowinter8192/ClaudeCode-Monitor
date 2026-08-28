@@ -1,4 +1,4 @@
-# Models tab — cycle + I/O verification — 2026-08-28T19:59:38
+# Models tab — cycle + I/O verification — 2026-08-28T20:35:24
 
 ## 1. Cycle logic
 claude-opus-5 -> claude-fable-5
