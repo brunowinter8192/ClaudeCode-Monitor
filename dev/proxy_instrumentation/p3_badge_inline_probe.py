@@ -113,7 +113,7 @@ def _render_body(entries: list, idx: int) -> str:
     prev = _prev_same_family(entries, idx)
     if prev is not None:
         _ensure_messages_loaded(prev)
-    lines, _keys = render_messages(entries[idx], prev, entries, {}, 200)
+    lines, _keys = render_messages(idx, entries[idx], prev, entries, {}, 200)
     return '\n'.join(lines)
 
 

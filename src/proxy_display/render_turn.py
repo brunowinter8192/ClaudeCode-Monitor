@@ -128,7 +128,7 @@ def _render_req_expanded(entry_idx: int, entry: dict, entries: list, is_standalo
     t_lines, t_keys = render_tools(entry_idx, entry, _section_ref, expand_states, pane_width)
     lines.extend(t_lines)
     keys.extend(t_keys)
-    m_lines, m_keys = render_messages(entry, _section_ref, entries, expand_states, pane_width)
+    m_lines, m_keys = render_messages(entry_idx, entry, _section_ref, entries, expand_states, pane_width)
     lines.extend(m_lines)
     keys.extend(m_keys)
     lines = _mark_search_lines(lines, search_query, is_search_current)

@@ -5,6 +5,12 @@ from ..constants import (
     SOFT_RESET, RED, WHITE, DIM, DIM_YELLOW_BG, DIM_GREEN_BG, LIGHT_RED_BG, RESET,
 )
 from ..proxy.strip_vocab import attribute_chunk, classify_req
+# From utils.py: cell-aware word-wrap (thinking-block content only — see _wrap_thinking_text)
+from ..utils import wrap_visible
+
+# Indent used for a block's content lines (thinking + every other block type) — kept as a
+# module constant since _wrap_thinking_text needs its exact cell width to size the wrap.
+_BLOCK_CONTENT_INDENT = "        "
 
 _SUSPECT_TAG_RE = re.compile(
     r'(<(?:new-diagnostics|persisted-output|system-reminder|task-notification)>)'
@@ -138,8 +144,26 @@ def _lookup_spans(entry: dict, msg_idx: int, bidx, use_dual: bool) -> tuple:
         s_blk = []
     return i_blk, s_blk
 
-# Render block-header + span content for one block, returning (lines, keys)
-def _render_block_spans(msg_idx: int, bidx: int, blk: dict, entry: dict, use_dual: bool) -> tuple:
+# Wrap thinking-block full_text to pane_width cells (indent-aware — the caller's indent is
+# prepended to every rendered line by _render_span_content, so the wrap budget subtracts it).
+# Existing '\n' breaks are kept as paragraph boundaries; each paragraph is word-wrapped on its
+# own via utils.wrap_visible. Real thinking text is typically one paragraph with no newlines,
+# but the reconstruction never guarantees that.
+def _wrap_thinking_text(full_text: str, indent: str, pane_width: int) -> str:
+    width_cells = max(1, pane_width - len(indent))
+    out_lines = []
+    for para in full_text.split('\n'):
+        out_lines.extend(wrap_visible(para.expandtabs(8), width_cells))
+    return '\n'.join(out_lines)
+
+# Render block-header + span content for one block, returning (lines, keys).
+# entry_idx/expand_states/pane_width: consulted ONLY for btype=='thinking' — builds the
+# ('think', entry_idx, msg_idx, bidx) drill-down key (default COLLAPSED, header-only) and
+# wraps the content to pane_width when expanded, via _wrap_thinking_text. Every other block
+# type ignores these three params entirely and renders exactly as before this milestone
+# (same header string, same unconditional _render_span_content call, unwrapped) — see
+# DOCS.md's byte-identical guarantee for this path.
+def _render_block_spans(entry_idx: int, msg_idx: int, bidx: int, blk: dict, entry: dict, use_dual: bool, expand_states: dict, pane_width: int) -> tuple:
     lines = []
     keys = []
     btype = blk.get('type', 'text')
@@ -148,19 +172,29 @@ def _render_block_spans(msg_idx: int, bidx: int, blk: dict, entry: dict, use_dua
     full_text = blk.get('full_text', blk.get('preview', ''))
     if btype == 'thinking':
         sig_chars = blk.get('sig_chars', 0)
-        lines.append(f"      {DIM}[{bidx}] {btype:<12} text:{bchars:>5,}c sig:{sig_chars:>4,}c{bcc}{SOFT_RESET}")
-    else:
-        lines.append(f"      {DIM}[{bidx}] {btype:<12} {bchars:>6,}c{bcc}{SOFT_RESET}")
+        think_key = ('think', entry_idx, msg_idx, bidx)
+        is_think_expanded = expand_states.get(think_key, False)
+        think_symbol = '▼' if is_think_expanded else '▶'
+        lines.append(f"      {DIM}{think_symbol} [{bidx}] {btype:<12} text:{bchars:>5,}c sig:{sig_chars:>4,}c{bcc}{SOFT_RESET}")
+        keys.append(think_key)
+        if is_think_expanded:
+            i_blk, s_blk = _lookup_spans(entry, msg_idx, bidx, use_dual)
+            wrapped_text = _wrap_thinking_text(full_text, _BLOCK_CONTENT_INDENT, pane_width)
+            content_lines, content_keys = _render_span_content(wrapped_text, i_blk, s_blk, _BLOCK_CONTENT_INDENT)
+            lines.extend(content_lines)
+            keys.extend(content_keys)
+        return lines, keys
+    lines.append(f"      {DIM}[{bidx}] {btype:<12} {bchars:>6,}c{bcc}{SOFT_RESET}")
     keys.append(None)
     i_blk, s_blk = _lookup_spans(entry, msg_idx, bidx, use_dual)
-    content_lines, content_keys = _render_span_content(full_text, i_blk, s_blk, "        ")
+    content_lines, content_keys = _render_span_content(full_text, i_blk, s_blk, _BLOCK_CONTENT_INDENT)
     lines.extend(content_lines)
     keys.extend(content_keys)
     return lines, keys
 
 # Branch-1 body: new messages in range [prev_msg_count, len(messages)), returning (lines, keys)
 # Also pre-renders stripped messages from [fdi, prev_msg_count) skipped by the main loop
-def _render_new_messages(entry: dict, messages: list, prev_msg_count: int, fdi: int, stripped_indices: set, use_dual: bool) -> tuple:
+def _render_new_messages(entry_idx: int, entry: dict, messages: list, prev_msg_count: int, fdi: int, stripped_indices: set, use_dual: bool, expand_states: dict, pane_width: int) -> tuple:
     lines = []
     keys = []
     if fdi >= 0 and not use_dual:
@@ -185,7 +219,7 @@ def _render_new_messages(entry: dict, messages: list, prev_msg_count: int, fdi: 
             keys.append(None)
         if blocks:
             for bidx, blk in enumerate(blocks):
-                b_lines, b_keys = _render_block_spans(msg_idx, bidx, blk, entry, use_dual)
+                b_lines, b_keys = _render_block_spans(entry_idx, msg_idx, bidx, blk, entry, use_dual, expand_states, pane_width)
                 lines.extend(b_lines)
                 keys.extend(b_keys)
         else:
@@ -198,7 +232,7 @@ def _render_new_messages(entry: dict, messages: list, prev_msg_count: int, fdi: 
 
 # Branch-2 body: modified messages in range [diff_start, len(messages)) + removed tail, returning (lines, keys, diff_start)
 # Also pre-renders stripped messages from [fdi, diff_start) skipped by the main loop
-def _render_modified_messages(entry: dict, messages: list, prev_entry_for_delta, fdi: int, stripped_indices: set, use_dual: bool) -> tuple:
+def _render_modified_messages(entry_idx: int, entry: dict, messages: list, prev_entry_for_delta, fdi: int, stripped_indices: set, use_dual: bool, expand_states: dict, pane_width: int) -> tuple:
     lines = []
     keys = []
     prev_messages = prev_entry_for_delta.get('messages', []) if prev_entry_for_delta is not None else []
@@ -231,7 +265,7 @@ def _render_modified_messages(entry: dict, messages: list, prev_entry_for_delta,
             keys.append(None)
         if blocks:
             for bidx, blk in enumerate(blocks):
-                b_lines, b_keys = _render_block_spans(msg_idx, bidx, blk, entry, use_dual)
+                b_lines, b_keys = _render_block_spans(entry_idx, msg_idx, bidx, blk, entry, use_dual, expand_states, pane_width)
                 lines.extend(b_lines)
                 keys.extend(b_keys)
         else:
@@ -255,7 +289,7 @@ def _render_modified_messages(entry: dict, messages: list, prev_entry_for_delta,
 # system-role message CC overwrites in place, which the forwarded reconstruction sees no delta
 # for since post-strip content is unchanged). No-op when the entry carries no ownership lookups
 # (synthetic fixtures) or none of its own indices fall outside the window.
-def _render_flow_extra_messages(entry: dict, messages: list, covered_from: int) -> tuple:
+def _render_flow_extra_messages(entry_idx: int, entry: dict, messages: list, covered_from: int, expand_states: dict, pane_width: int) -> tuple:
     lines = []
     keys = []
     fid = entry.get('flow_id', '')
@@ -274,7 +308,7 @@ def _render_flow_extra_messages(entry: dict, messages: list, covered_from: int) 
         keys.append(None)
         if blocks:
             for bidx, blk in enumerate(blocks):
-                b_lines, b_keys = _render_block_spans(msg_idx, bidx, blk, entry, True)
+                b_lines, b_keys = _render_block_spans(entry_idx, msg_idx, bidx, blk, entry, True, expand_states, pane_width)
                 lines.extend(b_lines)
                 keys.extend(b_keys)
         else:
@@ -286,7 +320,7 @@ def _render_flow_extra_messages(entry: dict, messages: list, covered_from: int) 
     return lines, keys
 
 # Render new/modified/removed messages for an expanded request entry, returning (lines, keys)
-def render_messages(entry: dict, prev_entry_for_delta, entries: list, expand_states: dict, pane_width: int) -> tuple:
+def render_messages(entry_idx: int, entry: dict, prev_entry_for_delta, entries: list, expand_states: dict, pane_width: int) -> tuple:
     messages = entry.get('messages', [])
     stripped_indices = set(entry.get('stripped_msg_indices', []))
     prev_msg_count = prev_entry_for_delta.get('message_count', 0) if prev_entry_for_delta is not None else 0
@@ -296,12 +330,12 @@ def render_messages(entry: dict, prev_entry_for_delta, entries: list, expand_sta
         fdi = 0
     use_dual = '_stripped_spans' in entry
     if prev_msg_count < len(messages):
-        lines, keys = _render_new_messages(entry, messages, prev_msg_count, fdi, stripped_indices, use_dual)
+        lines, keys = _render_new_messages(entry_idx, entry, messages, prev_msg_count, fdi, stripped_indices, use_dual, expand_states, pane_width)
         covered_from = prev_msg_count
     else:
-        lines, keys, covered_from = _render_modified_messages(entry, messages, prev_entry_for_delta, fdi, stripped_indices, use_dual)
+        lines, keys, covered_from = _render_modified_messages(entry_idx, entry, messages, prev_entry_for_delta, fdi, stripped_indices, use_dual, expand_states, pane_width)
     if use_dual:
-        extra_lines, extra_keys = _render_flow_extra_messages(entry, messages, covered_from)
+        extra_lines, extra_keys = _render_flow_extra_messages(entry_idx, entry, messages, covered_from, expand_states, pane_width)
         lines = extra_lines + lines
         keys = extra_keys + keys
     return lines, keys
