@@ -10,17 +10,27 @@ from _fire_log import log_fire
 _DEV_PATH = re.compile(r'/dev/')
 # Any line starting with `from src.` or `import src.` (the only ways to import the src package)
 _SRC_IMPORT = re.compile(r'^(?:from\s+src\.|import\s+src\.)', re.MULTILINE)
+# A dev/ file living under a `tests/` directory segment — pytest's own test-suite convention,
+# not any one project's naming — whose filename also matches pytest's own discovery pattern
+# (test_*.py, *_test.py, conftest.py) is a regression suite, not a self-contained probe: it
+# exists specifically to import and exercise the live src/ tree. Both must hold — a `tests/`
+# dir alone would exempt a stray probe dropped there, and pytest-shaped naming alone would
+# exempt a renamed probe outside an actual test directory.
+_TEST_DIR = re.compile(r'/tests/')
+_TEST_FILENAME = re.compile(r'/(?:test_[^/]+\.py|[^/]+_test\.py|conftest\.py)$')
 
 _BLOCK_MESSAGE = "dev/ scripts may not import from src/ — copy the logic into the dev/ module or import from another pN_ module\n"
 
 # ORCHESTRATOR
 
-# Read Write or Edit tool_input; exit 2 + stderr if a dev/ file introduces a src/ import
+# Read Write or Edit tool_input; exit 2 + stderr if a dev/ probe file introduces a src/ import
 def block_dev_imports_src_workflow() -> None:
     file_path, content, session_id = _parse_targets()
     if file_path is None or content is None:
         sys.exit(0)
     if not _DEV_PATH.search(file_path):
+        sys.exit(0)
+    if _is_regression_test_file(file_path):
         sys.exit(0)
     if _SRC_IMPORT.search(content):
         print(_BLOCK_MESSAGE, file=sys.stderr, end="")
@@ -29,6 +39,10 @@ def block_dev_imports_src_workflow() -> None:
     sys.exit(0)
 
 # FUNCTIONS
+
+# True when file_path is a pytest-shaped test file under a tests/ directory (regression suite, not a probe)
+def _is_regression_test_file(file_path: str) -> bool:
+    return bool(_TEST_DIR.search(file_path) and _TEST_FILENAME.search(file_path))
 
 # Parse stdin JSON; return (file_path, content_to_check, session_id); (None, None, None) on error
 def _parse_targets():
