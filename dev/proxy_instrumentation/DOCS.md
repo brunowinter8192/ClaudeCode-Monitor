@@ -15,6 +15,9 @@ invariant/verification suite instead).
 
 **Purpose:** Reconstructs the pane render for one specific recorded request (by `request_id`)
 straight from the on-disk dual-log, verifying a span-render fix for block-less messages.
+`_render` takes `entry_idx` as of 2026-08-28 (thinking-expander milestone bumped
+`render_messages`'s signature to `(entry_idx, entry, ...)`) — passes `target_line`/`control_line`,
+mechanical update only, no behavior change to this script's own checks.
 **Reads:** `src/logs/dual_log/api_requests_opus_posts_1785266871_{forwarded,stripped,injected}.jsonl`
 (hardcoded stem/request_id — one-off verification, not parameterized).
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_messages}`.
@@ -36,7 +39,9 @@ and the neighbor-bleed fix end-to-end — `accumulate_dual_log` -> pane-style en
 `_build_req_header_line` + `render_messages` — against the CC 2.1.223 recorded session with
 mid-conversation system messages (deferred-tools notice, task-tools nag, bg-notification), plus
 a synthetic fields-only delta line (`fields_delta` must not badge) and a full-session
-collapsed-header sweep (`⚠S` badge must never render).
+collapsed-header sweep (`⚠S` badge must never render). `_render_body`'s `render_messages()` call
+passes `idx` as `entry_idx` as of 2026-08-28 (thinking-expander milestone signature bump),
+mechanical update only.
 **Reads:** `src/logs/dual_log/api_requests_opus_websearch_1786052022_{forwarded,stripped,injected}.jsonl`.
 **Writes:** `md/badge_inline_probe_report.md`.
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn,render_messages,format}`.

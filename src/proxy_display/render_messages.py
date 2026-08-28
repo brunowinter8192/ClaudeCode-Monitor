@@ -149,6 +149,15 @@ def _lookup_spans(entry: dict, msg_idx: int, bidx, use_dual: bool) -> tuple:
 # Existing '\n' breaks are kept as paragraph boundaries; each paragraph is word-wrapped on its
 # own via utils.wrap_visible. Real thinking text is typically one paragraph with no newlines,
 # but the reconstruction never guarantees that.
+# KNOWN LIMITATION (unmeasured): the string this function returns feeds into
+# _render_span_content as its full_text argument, but that function IGNORES full_text entirely
+# whenever i_blk is new-format span data (a list of (tag, text) tuples) — it renders i_blk's own
+# span_text chunks instead. A thinking block that carries strip/inject spans at its own
+# (msg_idx, bidx) coordinate would therefore render those spans UNWRAPPED, silently bypassing
+# this wrap. A probe of the real dual-log for this milestone found zero such coordinates, but
+# the probe's own correctness was never independently verified — this is recorded as a known,
+# unmeasured gap, not as evidence the case cannot occur. Not fixed here (out of this
+# milestone's scope — see process-docs/thinking/ for the full note).
 def _wrap_thinking_text(full_text: str, indent: str, pane_width: int) -> str:
     width_cells = max(1, pane_width - len(indent))
     out_lines = []
