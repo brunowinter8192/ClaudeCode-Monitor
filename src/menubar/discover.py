@@ -29,7 +29,7 @@ class SessionInfo(NamedTuple):
     project_name: str        # project this session belongs to (for grouping); basename(live proc_cwd) for mains, basename(project_path_from_cwd) for workers; falls back to _decode_dir_name when worker cwd unavailable
     is_worker: bool          # True if session lives under .claude/worktrees/
     cwd: str                 # full working directory (non-empty for mains; '' for workers)
-    session_id: str          # JSONL stem = CC session identifier (key for msg_queue.json)
+    session_id: str          # JSONL stem = CC session identifier (key for hook state lookup)
     tmux_session_name: str   # worker-{basename(project_path)}-{worker_name} per iterative-dev convention; '' for mains. DO NOT reconstruct from project_name (decode heuristic mismatch). (2026-08: the orchestrator-signal lookup this field originally served, app.py:_has_recent_send_signal, was removed along with auto-abort — field kept, still the canonical worker-tmux-session identifier for any future consumer.)
     desktop_no: Optional[int] = None   # macOS Mission Control desktop number (1-based); None if detection failed or session is a worker
 

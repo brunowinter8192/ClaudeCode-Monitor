@@ -29,8 +29,6 @@ from .panel import (ICON_NORMAL, ICON_BLINK, ICON_BASELINE_OFFSET,
                     _MENLO)
 # From panel_manager.py: PanelManager — main-session panel lifecycle controller
 from .panel_manager import PanelManager
-# From queue_controller.py: QueueController — per-concern queue panel controller
-from .queue_controller import QueueController
 # From rag_controller.py: RagController — per-concern RAG panel controller
 from .rag_controller import RagController
 # From system.py: Ghostty terminal focus
@@ -42,7 +40,6 @@ from .app_settings import _load_settings, _save_settings
 # From panel_lifecycle.py: Panel open/close/background/cycle
 from .panel_lifecycle import (_open_main_panel, _close_main_panel,
                                _open_rag_panel, _close_rag_panel,
-                               _open_queue_panel, _close_queue_panel,
                                _deferred_close_open, _background_panel)
 
 BLINK_DURATION = 0.2   # seconds
@@ -68,16 +65,11 @@ class _PanelController(NSObject):
                 app.panel._panel.orderFrontRegardless()
             elif app.rag._rag_open:
                 app.rag._rag_panel.orderFrontRegardless()
-            elif app.queue._queue_open:
-                app.queue._queue_panel.orderFrontRegardless()
             app._panel_backgrounded = False
             return
         # Cmd+L closes whichever panel is open; if none → open main
         if app.rag._rag_open:
             _close_rag_panel(app)
-            return
-        if app.queue._queue_open:
-            _close_queue_panel(app)
             return
         if app.panel._panel_open:
             _close_main_panel(app)
@@ -103,15 +95,11 @@ class _PanelController(NSObject):
         state = 'ON' if app._auto_focus else 'OFF'
         app.panel._toggle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'[Sessions] \u00b7 RAG \u00b7 Queue     Auto-Jump: {state}',
+                f'[Sessions] \u00b7 RAG     Auto-Jump: {state}',
                 {NSFontAttributeName: _MENLO()}))
         app.rag._rag_toggle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'Sessions \u00b7 [RAG] \u00b7 Queue     Auto-Jump: {state}',
-                {NSFontAttributeName: _MENLO()}))
-        app.queue._queue_toggle_btn.setAttributedTitle_(
-            NSAttributedString.alloc().initWithString_attributes_(
-                f'Sessions \u00b7 RAG \u00b7 [Queue]     Auto-Jump: {state}',
+                f'Sessions \u00b7 [RAG]     Auto-Jump: {state}',
                 {NSFontAttributeName: _MENLO()}))
 
     def killApp_(self, sender):
@@ -160,22 +148,6 @@ class _PanelController(NSObject):
         if proj_bg:
             _abort_bg_sleep_timers(proj_bg.sleep_pids)
 
-    def addQueueRow_(self, sender):
-        self._app.queue.handle_add_row(sender.tag())
-
-    def toggleQueueEntry_(self, sender):
-        self._app.queue.handle_toggle_entry(sender.tag())
-
-    def removeQueueEntry_(self, sender):
-        self._app.queue.handle_remove_entry(sender.tag())
-
-    def commitQueueField_(self, sender):
-        self._app.queue.handle_commit_field(sender.tag(), str(sender.stringValue()))
-
-    def controlTextDidEndEditing_(self, notification):
-        tf = notification.object()
-        self._app.queue.handle_text_end_editing(tf.tag(), str(tf.stringValue()))
-
     def windowDidResize_(self, notification):
         frame = notification.object().frame()
         app   = self._app
@@ -195,9 +167,6 @@ class _PanelController(NSObject):
             bg_by_project = app.sessions.bg_by_project
             app.panel.rebuild(sessions, bg_by_project)
             app.hotkey.reregister_digits(app.panel._desktop_to_cwd)
-        elif app.queue._queue_open:
-            sessions = app.sessions.refresh()
-            app.queue.rebuild(sessions)
 
 
 # macOS menubar app — polls CC sessions every 1.5s, NSPanel sticky-toggle via Cmd+L / bar click
@@ -221,7 +190,6 @@ class CCMenuBarApp(rumps.App):
                 lambda: _background_panel(self)))
         self.hotkey = HotkeyController(self)
         self._panel_backgrounded: bool = False   # True while active panel is orderBack_'d behind other windows
-        self.queue = QueueController(self)         # queue panel controller; owns all _queue_* state
         self.rag   = RagController(self)           # RAG status panel controller; owns all _rag_* state
         self.sessions = SessionsController(self)   # session snapshot cache; refresh() + .data property
         start_discovery_worker()   # background thread: list_alive_sessions + _scan_bg_sleep_timers, ~1.5s cadence
@@ -247,9 +215,6 @@ class CCMenuBarApp(rumps.App):
                 self.panel._toggle_btn.setTarget_(self._panel_controller)
                 self.panel._toggle_btn.setAction_(b'toggleAutoJump:')
                 self.panel._panel.setDelegate_(self._panel_controller)
-                self.queue._queue_panel.setDelegate_(self._panel_controller)
-                self.queue._queue_toggle_btn.setTarget_(self._panel_controller)
-                self.queue._queue_toggle_btn.setAction_(b'toggleAutoJump:')
                 self.rag._rag_panel.setDelegate_(self._panel_controller)
                 self.rag._rag_toggle_btn.setTarget_(self._panel_controller)
                 self.rag._rag_toggle_btn.setAction_(b'toggleAutoJump:')
@@ -275,9 +240,6 @@ class CCMenuBarApp(rumps.App):
         _p0 = time.monotonic()
         self.focus.tick(sessions, now)
         phases['focus_tick'] = time.monotonic() - _p0
-        _p0 = time.monotonic()
-        self.queue.tick(sessions)
-        phases['queue_tick'] = time.monotonic() - _p0
         _p0 = time.monotonic()
         self.rag.tick(sessions)
         phases['rag_tick'] = time.monotonic() - _p0

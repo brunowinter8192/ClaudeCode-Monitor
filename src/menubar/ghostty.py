@@ -154,7 +154,7 @@ def get_ghostty_terminal_id(cwd: str) -> Optional[str]:
 def get_ghostty_terminal_id_for_tty(tty: str) -> Optional[str]:
     return _ghostty_tty_to_id.get(tty)
 
-# Write {cwd: uuid} map to APP_SUPPORT/ghostty_cwd_uuid.json for hook_writer.py delivery use
+# Write {cwd: uuid} map to APP_SUPPORT/ghostty_cwd_uuid.json (external/future consumers)
 # Called from discover.py:list_alive_sessions() after both caches are refreshed
 # Skips write when mapping unchanged (change-detection via _ghostty_cwd_uuid_last)
 def _write_cwd_uuid_map() -> None:

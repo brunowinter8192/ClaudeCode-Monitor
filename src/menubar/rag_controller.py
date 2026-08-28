@@ -60,7 +60,7 @@ def _make_rag_nspanel():
     cv.addSubview_(stack)
     return panel, stack, toggle_btn
 
-# Position RAG panel flush below the NSStatusItem button (same logic as queue panel)
+# Position RAG panel flush below the NSStatusItem button (same logic as the main panel)
 def _reposition_rag_panel(panel, nsstatusitem) -> None:
     btn_win = nsstatusitem.button().window()
     if btn_win is None:
@@ -162,7 +162,7 @@ class RagController:
         state = 'ON' if app._auto_focus else 'OFF'
         self._rag_toggle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'Sessions \u00b7 [RAG] \u00b7 Queue     Auto-Jump: {state}',
+                f'Sessions \u00b7 [RAG]     Auto-Jump: {state}',
                 {NSFontAttributeName: _MENLO()}))
         required_h = _TOP_BAR_H + _LABEL_H + _LABEL_H   # top-bar + separator + status line
         self._resize_rag_panel(max(app._panel_min_height, required_h))
@@ -172,7 +172,7 @@ class RagController:
         self._rag_sv.addView_inGravity_(label, 1)
         self._rag_status_label = label
 
-    # Resize RAG panel anchored at top edge; mirrors queue_controller._resize_panel pattern
+    # Resize RAG panel anchored at top edge; mirrors panel_manager._resize_panel pattern
     def _resize_rag_panel(self, new_h: float) -> None:
         w     = self.app._panel_width
         frame = self._rag_panel.frame()
