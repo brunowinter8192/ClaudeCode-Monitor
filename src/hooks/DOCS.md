@@ -483,17 +483,17 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_dev_imports_src.py (55 LOC)
+### block_dev_imports_src.py (69 LOC, 2026-08 regression-suite exemption)
 
-**Purpose:** PreToolUse hook (Write + Edit) — blocks dev/ scripts that import from `src/`. dev/ modules are self-contained pipeline probes; importing from `src/` breaks isolation and makes dev/ non-runnable without the full production tree. Fires on Write and Edit for files under a `dev/` path. Exits 2 + stderr. Exits 0 on any parse error (fail-open).
+**Purpose:** PreToolUse hook (Write + Edit) — blocks dev/ scripts that import from `src/`. dev/ modules are self-contained pipeline probes; importing from `src/` breaks isolation and makes dev/ non-runnable without the full production tree. Fires on Write and Edit for files under a `dev/` path. **2026-08 exemption:** a `dev/` file is NOT a probe — and is skipped entirely, imports allowed — when it sits under a `tests/` directory segment AND its filename matches pytest's own discovery convention (`test_*.py`, `*_test.py`, or `conftest.py`). A regression suite is the categorical opposite of a probe: it exists to import and exercise the live `src/` tree, and the exemption keys off pytest's own naming convention rather than any one project's directory layout (e.g. `websearch`'s `dev/tests/`). Both conditions are required — a bare `tests/` dir doesn't exempt a stray probe someone drops there, and pytest-shaped naming alone doesn't exempt a renamed probe outside an actual test directory. Exits 2 + stderr on an unexempted match. Exits 0 on any parse error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {file_path, content|new_string}}`).
 **Writes:** stderr (block message with fix) on match only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Write and PreToolUse/Edit entries). Never imported.
 **Calls out:** stdlib only (`json`, `re`).
 
-**Blocked patterns:** Write or Edit where `file_path` matches `/dev/` AND the written content contains `^from src\.` or `^import src\.`.
+**Blocked patterns:** Write or Edit where `file_path` matches `/dev/` AND the written content contains `^from src\.` or `^import src\.` AND the file is NOT a pytest-shaped test file under a `tests/` directory.
 
-**Allowed patterns:** files outside `dev/`; dev/ files without `src/` imports; parse errors (fail-open).
+**Allowed patterns:** files outside `dev/`; dev/ files without `src/` imports; a `dev/.../tests/test_*.py` (or `*_test.py`/`conftest.py`) file with `src/` imports — regression suite, not a probe; parse errors (fail-open).
 
 ---
 
