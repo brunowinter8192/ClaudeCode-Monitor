@@ -1,7 +1,8 @@
 # INFRASTRUCTURE
 from pathlib import Path
 
-_APP_SUPPORT = Path("~/Library/Application Support/com.brunowinter.monitor-cc-menubar").expanduser()
+_APP_SUPPORT  = Path("~/Library/Application Support/com.brunowinter.monitor-cc-menubar").expanduser()
+_SHARED_RULES = Path("~/.claude/shared-rules").expanduser()   # cross-repo config, outside every repository
 
 SETTINGS_FILE             = _APP_SUPPORT / "settings.json"
 HOOKS_FILE                = _APP_SUPPORT / "hooks.json"
@@ -9,6 +10,7 @@ HOOKS_LOCK                = _APP_SUPPORT / "hooks.lock"
 PID_FILE                  = _APP_SUPPORT / "menubar.pid"
 GHOSTTY_CWD_UUID_FILE     = _APP_SUPPORT / "ghostty_cwd_uuid.json"
 ORCHESTRATOR_SIGNALS_FILE = _APP_SUPPORT / "orchestrator_signals.json"  # {tmux_session_name: send_unix_ts}; written by worker-cli send
+MODEL_SELECTION_FILE      = _SHARED_RULES / "model_selection.json"      # {main, worker} model IDs; menubar writes, a later milestone adds readers
 
 # FUNCTIONS
 

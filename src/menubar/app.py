@@ -31,6 +31,8 @@ from .panel import (ICON_NORMAL, ICON_BLINK, ICON_BASELINE_OFFSET,
 from .panel_manager import PanelManager
 # From rag_controller.py: RagController — per-concern RAG panel controller
 from .rag_controller import RagController
+# From model_controller.py: ModelController — per-concern Models panel controller
+from .model_controller import ModelController
 # From system.py: Ghostty terminal focus
 from .system import _focus_session, _focus_worker
 # From sessions_controller.py: session snapshot cache
@@ -40,6 +42,7 @@ from .app_settings import _load_settings, _save_settings
 # From panel_lifecycle.py: Panel open/close/background/cycle
 from .panel_lifecycle import (_open_main_panel, _close_main_panel,
                                _open_rag_panel, _close_rag_panel,
+                               _open_models_panel, _close_models_panel,
                                _deferred_close_open, _background_panel)
 
 BLINK_DURATION = 0.2   # seconds
@@ -65,11 +68,16 @@ class _PanelController(NSObject):
                 app.panel._panel.orderFrontRegardless()
             elif app.rag._rag_open:
                 app.rag._rag_panel.orderFrontRegardless()
+            elif app.models._models_open:
+                app.models._models_panel.orderFrontRegardless()
             app._panel_backgrounded = False
             return
         # Cmd+L closes whichever panel is open; if none → open main
         if app.rag._rag_open:
             _close_rag_panel(app)
+            return
+        if app.models._models_open:
+            _close_models_panel(app)
             return
         if app.panel._panel_open:
             _close_main_panel(app)
@@ -95,11 +103,15 @@ class _PanelController(NSObject):
         state = 'ON' if app._auto_focus else 'OFF'
         app.panel._toggle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'[Sessions] \u00b7 RAG     Auto-Jump: {state}',
+                f'[Sessions] \u00b7 RAG \u00b7 Models     Auto-Jump: {state}',
                 {NSFontAttributeName: _MENLO()}))
         app.rag._rag_toggle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'Sessions \u00b7 [RAG]     Auto-Jump: {state}',
+                f'Sessions \u00b7 [RAG] \u00b7 Models     Auto-Jump: {state}',
+                {NSFontAttributeName: _MENLO()}))
+        app.models._models_toggle_btn.setAttributedTitle_(
+            NSAttributedString.alloc().initWithString_attributes_(
+                f'Sessions \u00b7 RAG \u00b7 [Models]     Auto-Jump: {state}',
                 {NSFontAttributeName: _MENLO()}))
 
     def killApp_(self, sender):
@@ -148,6 +160,15 @@ class _PanelController(NSObject):
         if proj_bg:
             _abort_bg_sleep_timers(proj_bg.sleep_pids)
 
+    def cycleMainModel_(self, sender):
+        self._app.models.handle_cycle_main()
+
+    def cycleWorkerModel_(self, sender):
+        self._app.models.handle_cycle_worker()
+
+    def applyModelSelection_(self, sender):
+        self._app.models.handle_apply()
+
     def windowDidResize_(self, notification):
         frame = notification.object().frame()
         app   = self._app
@@ -162,6 +183,8 @@ class _PanelController(NSObject):
         app = self._app
         if app.rag._rag_open:
             app.rag.rebuild()
+        elif app.models._models_open:
+            app.models.rebuild()
         elif app.panel._panel_open:
             sessions = app.sessions.refresh()
             bg_by_project = app.sessions.bg_by_project
@@ -190,7 +213,8 @@ class CCMenuBarApp(rumps.App):
                 lambda: _background_panel(self)))
         self.hotkey = HotkeyController(self)
         self._panel_backgrounded: bool = False   # True while active panel is orderBack_'d behind other windows
-        self.rag   = RagController(self)           # RAG status panel controller; owns all _rag_* state
+        self.rag    = RagController(self)           # RAG status panel controller; owns all _rag_* state
+        self.models = ModelController(self)          # Models panel controller; owns all _models_* state
         self.sessions = SessionsController(self)   # session snapshot cache; refresh() + .data property
         start_discovery_worker()   # background thread: list_alive_sessions + _scan_bg_sleep_timers, ~1.5s cadence
         self._last_log_cleanup_ts: float = 0.0    # monotonic ts of last cleanup_old_lines run (0 → fires on first tick)
@@ -218,6 +242,9 @@ class CCMenuBarApp(rumps.App):
                 self.rag._rag_panel.setDelegate_(self._panel_controller)
                 self.rag._rag_toggle_btn.setTarget_(self._panel_controller)
                 self.rag._rag_toggle_btn.setAction_(b'toggleAutoJump:')
+                self.models._models_panel.setDelegate_(self._panel_controller)
+                self.models._models_toggle_btn.setTarget_(self._panel_controller)
+                self.models._models_toggle_btn.setAction_(b'toggleAutoJump:')
                 _set_bar_icon(self, ICON_NORMAL)   # replace setTitle_ with attributed version
                 self.panel._initialized = True
             except AttributeError:

@@ -78,7 +78,7 @@ class PanelManager:
         state = 'ON' if self.app._auto_focus else 'OFF'
         self._toggle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'[Sessions] \u00b7 RAG     Auto-Jump: {state}',
+                f'[Sessions] \u00b7 RAG \u00b7 Models     Auto-Jump: {state}',
                 {NSFontAttributeName: _MENLO()}))
         self._panel_sv.addView_inGravity_(_make_line_separator(pw), 1)
         if not sorted_sessions:
