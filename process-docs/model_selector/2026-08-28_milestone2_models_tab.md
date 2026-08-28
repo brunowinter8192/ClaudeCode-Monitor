@@ -103,7 +103,9 @@ pattern in all three rather than wondering why one is guarded and two aren't.
 
 ## Hazard reference
 
-See `process-docs/model_selector/2026-08-28_milestone1_queue_removal.md` for the
-`setup_py2app.py` deploy-from-worktree hazard (builds, installs to `~/Applications`, AND
-relaunches the live app in one command) — still in force, and the reason this milestone's
-verification stopped at import + ring-logic tests rather than a build.
+`setup_py2app.py` builds, installs to `~/Applications`, AND relaunches the live app in one
+command, so running it from a worktree deploys unmerged code over the running menubar. That
+hazard is recorded in `process-docs/model_selector/` and is the reason this milestone's
+verification stopped at import + ring-logic tests rather than a build. Observed follow-on:
+after such a run the LaunchAgent was left unloaded and the app stayed dead until it was
+re-bootstrapped by hand.
