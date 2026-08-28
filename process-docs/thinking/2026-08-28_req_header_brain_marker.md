@@ -84,5 +84,5 @@ the badge condition; it is a natural consequence of the data, not a special case
 ## Not touched
 
 Expanded-view block rendering (a separate milestone covers the thinking-text expander inside a
-REQ — see the `2026-08-28_summarized_display_activation.md` entry in this area for the underlying
-gate that makes thinking text non-empty at all), the token pane, and strip/inject behavior.
+REQ; the two configuration gates that make thinking text non-empty at all are recorded elsewhere
+in `process-docs/thinking/`), the token pane, and strip/inject behavior.
