@@ -87,9 +87,9 @@ terminal text to stdout.
 
 ---
 
-### timeline.py (177 LOC)
+### timeline.py (205 LOC)
 
-**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator both `search` and the full-turn dump build on), single-turn full extraction, request-boundary derivation from the `_forwarded` delta stream, and `load_timeline` as the one call that assembles everything a render needs.
+**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator both `search` and the full-turn dump build on), single-turn full extraction, request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), and `load_timeline` as the one call that assembles everything a render needs.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
 **Writes:** Nothing — returns row lists, a generator, and one data dict.
 **Called by:** `__main__.py`, `search.py`.
@@ -107,9 +107,9 @@ terminal text to stdout.
 
 ---
 
-### render.py (190 LOC)
+### render.py (206 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview with a `▶` anchor mark and NO request markers, and the full-content window dump), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview with a `▶` anchor mark, an HH:MM:SS request-time column and NO request markers, and the full-content window dump whose turn headers carry the same time), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -204,6 +204,21 @@ or `--before 0` is raised to 30; only values above it are honoured. The mode exi
 surrounds a turn, and a reader who narrows the window defeats that without noticing. Read mode
 (`--full`) is the opposite: both bounds are REQUIRED explicit numbers with no floor, because there
 the caller is paying for every dumped character.
+
+**`expand`'s time column is the REQUEST's time, not a per-message time.** A turn shows when the
+request that FIRST carried it was sent — derived by walking `_forwarded`'s `counts.messages` chain,
+where turn N belongs to the earliest request whose count exceeds N. Turns that arrived in the same
+request therefore share one timestamp, which is why the column typically repeats in threes
+(assistant / user / system). It is a send time, not a per-turn duration, and nothing in the dual
+logs offers the latter.
+
+**A `?` in the time column means a restart discarded the chain, not that data is missing.**
+`build_turn_times` walks only the chain from the LAST restart onward and leaves every turn below
+that restart's message count unmapped — the requests that first carried those messages described a
+different message list and cannot be walked against the final one. Measured: 766/766 turns mapped
+in a restart-free session, 504/506 in the `/clear` session with exactly turns 0 and 1 unmapped.
+Same conservative stance as the timeline's WARNING; do not "fix" it by falling back to the
+pre-restart requests.
 
 **Request markers belong to `timeline`, not to `expand`.** The overview used to interleave the
 same `── REQ n ──` lines; they were dropped 2026-08-29 because `expand` navigates by turn index and
