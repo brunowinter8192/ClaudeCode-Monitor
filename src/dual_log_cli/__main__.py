@@ -6,13 +6,15 @@ Commands:
     sessions --since D --until D   bound that listing by start day, inclusive, YYYY-MM-DD
     timeline <session>       deduplicated turn timeline of one session, from its last request line
     timeline <s> --turn N --full   full content of one turn
-    search <session> <term>  find a term in that timeline, each match reported once
+    search <term> [scope]    find a term across the deduplicated timelines, each match reported once
+                             scope matches a session's context OR stem; omit it to search all
 
 Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli sessions
     ./venv/bin/python -m src.dual_log_cli timeline api_requests_opus_gh_cli_1787995963
     ./venv/bin/python -m src.dual_log_cli timeline gh_cli_1787995963 --turn 402 --full
-    ./venv/bin/python -m src.dual_log_cli search gh_cli_1787939513 "worker-cli merge"
+    ./venv/bin/python -m src.dual_log_cli search "worker-cli merge" gh_cli_1787939513
+    ./venv/bin/python -m src.dual_log_cli search Reißleine websearch --since 2026-08-28
 
 <session> is a full stem or any unambiguous substring of one. The log directory is resolved from
 MONITOR_CC_ROOT, else from the repo root, else from the main checkout when run inside a worktree.
@@ -78,9 +80,14 @@ def _parse_args(argv: list) -> argparse.Namespace:
     timeline.add_argument("session", help="session stem or unambiguous substring")
     timeline.add_argument("--turn", type=int, default=None, help="restrict output to one turn index")
     timeline.add_argument("--full", action="store_true", help="with --turn: print the turn's full content")
-    search = sub.add_parser("search", help="find a term in one session's deduplicated timeline")
-    search.add_argument("session", help="session stem or unambiguous substring")
+    search = sub.add_parser("search", help="find a term across the deduplicated timelines")
     search.add_argument("term", help="literal term to look for (no regex)")
+    search.add_argument("scope", nargs="?", default="", metavar="SCOPE",
+                        help="only sessions whose context OR stem contains this text; omit to search all")
+    search.add_argument("--since", default="", metavar="YYYY-MM-DD",
+                        help="only sessions started on or after this day (inclusive)")
+    search.add_argument("--until", default="", metavar="YYYY-MM-DD",
+                        help="only sessions started on or before this day (inclusive)")
     search.add_argument("--case-sensitive", action="store_true", help="match case exactly (default: ignore case)")
     return parser.parse_args(argv)
 
@@ -94,12 +101,20 @@ def _valid_day(value: str) -> bool:
     return True
 
 
-# sessions — inventory built from the _forwarded streams only, optionally date-bounded
-def _run_sessions(dual_log_dir, args: argparse.Namespace) -> int:
+# Exit code 2 plus a stderr line for a malformed day flag; 0 when both are fine
+def _reject_bad_days(args: argparse.Namespace) -> int:
     for flag, value in (("--since", args.since), ("--until", args.until)):
         if value and not _valid_day(value):
             print(f"{flag}: {value!r} is not a valid date, expected YYYY-MM-DD", file=sys.stderr)
             return 2
+    return 0
+
+
+# sessions — inventory built from the _forwarded streams only, optionally date-bounded
+def _run_sessions(dual_log_dir, args: argparse.Namespace) -> int:
+    code = _reject_bad_days(args)
+    if code:
+        return code
     sessions = filter_sessions(
         list_sessions(dual_log_dir),
         context=args.context,
@@ -121,16 +136,33 @@ def _load_for(dual_log_dir, session_arg: str) -> tuple:
     return load_timeline(session), 0
 
 
-# search — same last-request reconstruction as timeline, so every match is deduplicated
+# search — scoped like `sessions`, then the same last-request reconstruction per session, so every
+# match is deduplicated. A session whose timeline cannot be loaded is skipped, not fatal: one
+# truncated log must not hide the matches in the other sixty.
 def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
     if not args.term.strip():
         print("search term is empty", file=sys.stderr)
         return 2
-    data, code = _load_for(dual_log_dir, args.session)
-    if data is None:
+    code = _reject_bad_days(args)
+    if code:
         return code
-    hits = find_matches(data["payload"], args.term, args.case_sensitive)
-    sys.stdout.write(render_search(data, args.term, args.case_sensitive, hits))
+    sessions = filter_sessions(
+        list_sessions(dual_log_dir),
+        scope=args.scope,
+        since=args.since,
+        until=args.until,
+    )
+    results, skipped = [], 0
+    for session in sessions:
+        try:
+            data = load_timeline(session)
+        except Exception:
+            skipped += 1
+            continue
+        hits = find_matches(data["payload"], args.term, args.case_sensitive)
+        if hits:
+            results.append((session, hits))
+    sys.stdout.write(render_search(args.term, args.case_sensitive, results, skipped))
     return 0
 
 

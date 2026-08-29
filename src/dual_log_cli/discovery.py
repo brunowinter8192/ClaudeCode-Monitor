@@ -135,20 +135,28 @@ def list_sessions(dual_log_dir: Path, project_map: dict = None) -> list:
     return sessions
 
 
-# Keep the sessions matching every active criterion (AND): a case-insensitive substring of the
-# rendered context value, and an inclusive [since, until] window on the start day.
+# Keep the sessions matching every active criterion (AND). Two selector flavours, both optional
+# and both case-insensitive substrings:
+#   context — matches the rendered context value only. `sessions <CONTEXT>` uses this.
+#   scope   — matches the context OR the stem, so one argument covers both "a whole project incl.
+#             its workers" and "this one session". `search <term> <SCOPE>` uses this.
+# Plus an inclusive [since, until] window on the start day.
 #
 # Days are compared on the YYYY-MM-DD prefix of the ISO start timestamp — lexicographic order
 # equals calendar order for that format, so no timezone maths is involved. A session with no
-# start timestamp cannot be placed on a calendar, so an active DATE filter drops it; a context
-# filter alone still keeps it, because its context is known either way.
-def filter_sessions(sessions: list, context: str = "", since: str = "", until: str = "") -> list:
-    if not context and not since and not until:
+# start timestamp cannot be placed on a calendar, so an active DATE filter drops it; a context or
+# scope filter alone still keeps it, because both of its match targets are known either way.
+def filter_sessions(sessions: list, context: str = "", scope: str = "",
+                    since: str = "", until: str = "") -> list:
+    if not context and not scope and not since and not until:
         return sessions
     needle = context.lower()
+    scope_needle = scope.lower()
     kept = []
     for session in sessions:
         if needle and needle not in session.get("context", "").lower():
+            continue
+        if scope_needle and not _matches_scope(session, scope_needle):
             continue
         if since or until:
             day = (session.get("start") or "")[:10]
@@ -160,6 +168,12 @@ def filter_sessions(sessions: list, context: str = "", since: str = "", until: s
                 continue
         kept.append(session)
     return kept
+
+
+# True when the lowercased scope needle appears in the session's context or in its stem
+def _matches_scope(session: dict, scope_needle: str) -> bool:
+    return (scope_needle in session.get("context", "").lower()
+            or scope_needle in session.get("stem", "").lower())
 
 
 # Resolve a stem or unambiguous substring to exactly one session stem
