@@ -1,7 +1,8 @@
 """dual_log_cli — read-only inspector for src/logs/dual_log/.
 
 Commands:
-    sessions                 list every session (stem, context, start, requests, size), newest first
+    sessions                 list every session (start, context, stem), newest first
+    sessions --since D --until D   bound that listing by start day, inclusive, YYYY-MM-DD
     timeline <session>       deduplicated turn timeline of one session, from its last request line
     timeline <s> --turn N --full   full content of one turn
     search <session> <term>  find a term in that timeline, each match reported once
@@ -21,11 +22,13 @@ Every access is read-only — nothing under src/logs/dual_log/ is written, creat
 import argparse
 import os
 import sys
+from datetime import datetime
 
 from .discovery import (
     AmbiguousSessionError,
     UnknownSessionError,
     build_session,
+    filter_sessions,
     group_streams,
     list_sessions,
     resolve_dual_log_dir,
@@ -45,7 +48,7 @@ def main(argv: list) -> int:
         print(f"dual_log directory not found: {dual_log_dir}", file=sys.stderr)
         return 2
     if args.command == "sessions":
-        return _run_sessions(dual_log_dir)
+        return _run_sessions(dual_log_dir, args)
     if args.command == "search":
         return _run_search(dual_log_dir, args)
     return _run_timeline(dual_log_dir, args)
@@ -62,7 +65,11 @@ def _parse_args(argv: list) -> argparse.Namespace:
         epilog=__doc__,
     )
     sub = parser.add_subparsers(dest="command", required=True)
-    sub.add_parser("sessions", help="list all sessions, newest first")
+    sessions = sub.add_parser("sessions", help="list all sessions, newest first")
+    sessions.add_argument("--since", default="", metavar="YYYY-MM-DD",
+                          help="only sessions started on or after this day (inclusive)")
+    sessions.add_argument("--until", default="", metavar="YYYY-MM-DD",
+                          help="only sessions started on or before this day (inclusive)")
     timeline = sub.add_parser("timeline", help="render one session as a turn timeline")
     timeline.add_argument("session", help="session stem or unambiguous substring")
     timeline.add_argument("--turn", type=int, default=None, help="restrict output to one turn index")
@@ -74,9 +81,23 @@ def _parse_args(argv: list) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-# sessions — inventory built from the _forwarded streams only
-def _run_sessions(dual_log_dir) -> int:
-    sys.stdout.write(render_sessions(list_sessions(dual_log_dir)))
+# A day flag must be exactly YYYY-MM-DD — strptime rejects both bad shapes and impossible dates
+def _valid_day(value: str) -> bool:
+    try:
+        datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return False
+    return True
+
+
+# sessions — inventory built from the _forwarded streams only, optionally date-bounded
+def _run_sessions(dual_log_dir, args: argparse.Namespace) -> int:
+    for flag, value in (("--since", args.since), ("--until", args.until)):
+        if value and not _valid_day(value):
+            print(f"{flag}: {value!r} is not a valid date, expected YYYY-MM-DD", file=sys.stderr)
+            return 2
+    sessions = filter_sessions(list_sessions(dual_log_dir), args.since, args.until)
+    sys.stdout.write(render_sessions(sessions))
     return 0
 
 
