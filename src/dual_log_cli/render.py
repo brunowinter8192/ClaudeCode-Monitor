@@ -142,12 +142,12 @@ def _skipped_lines(skipped: int) -> list:
     return ["", f"({skipped} session{'s' if skipped != 1 else ''} skipped — timeline could not be loaded)"]
 
 
-# expand overview: classifier lines only — turn index, role, type, chars — for the window, with
-# the timeline's REQ markers interleaved and the anchor turn marked. No block sub-lines and no
-# previews: this mode answers "what is around this turn", and every turn in the window is listed.
+# expand overview: classifier lines only — turn index, role, type, chars — for the window, with the
+# anchor turn marked. No block sub-lines, no previews, and no REQ boundary markers: this mode
+# navigates by turn index, so the request view is noise here (timeline keeps it). Every turn in the
+# window is listed.
 def render_expand_overview(data: dict, anchor: int, start: int, end: int) -> str:
     turns = data["turns"]
-    grouped = boundaries_by_index(data["boundaries"])
     lines = [
         f"session   {data['session']['stem']}",
         f"context   {data['session']['context']}",
@@ -155,9 +155,6 @@ def render_expand_overview(data: dict, anchor: int, start: int, end: int) -> str
         "",
     ]
     for turn in turns[start:end + 1]:
-        opening = grouped.get(turn["index"])
-        if opening:
-            lines.append(_boundary_line(opening))
         marker = "▶" if turn["index"] == anchor else " "
         lines.append(
             f"{marker} #{turn['index']:<4} {turn['role']:9} {turn['type']:16} "
