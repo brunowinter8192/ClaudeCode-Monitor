@@ -8,6 +8,10 @@ import os
 #                Record includes: reason (stderr text). No rewritten field.
 #   "rewrite"  — hook exited 0 + emitted updatedInput JSON. Agent runs the modified input silently.
 #                Record includes: rewritten (description of change). No reason field.
+#   "feedback" — PostToolUseFailure hook exited 0 + emitted hookSpecificOutput.additionalContext.
+#                The tool call already ran and already failed; nothing is blocked or modified —
+#                the agent receives an extra instruction alongside the error it already sees.
+#                Record includes: reason (the message text), like "block". No rewritten field.
 #   "ui-notice" — RESERVED for future hooks that only produce a UI side-effect (e.g. Monitor annotation).
 #                NO API impact — agent sees neither an error nor a modified input.
 #                Filter from FP analysis: jq 'select(.decision != "ui-notice")' hook_firing.jsonl
@@ -34,7 +38,7 @@ def log_fire(hook_name: str, decision: str, tool_name: str, command: str,
             "command": command or "",
             "session": session_id or "",
         }
-        if decision == "block":
+        if decision in ("block", "feedback"):
             record["reason"] = reason or ""
         else:
             record["rewritten"] = rewritten or ""

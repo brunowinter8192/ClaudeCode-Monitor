@@ -11,10 +11,15 @@ _HOOKS_DIR     = Path(__file__).resolve().parent
 _REPO_ROOT     = _HOOKS_DIR.parent.parent
 _HOOK_TIMEOUT  = 5
 _MAIN_BRANCH   = "main"
+_DEFAULT_EVENT = "PreToolUse"
 
-# Hook scripts to install: (script_filename, PreToolUse matcher)
+# Hook scripts to install: (script_filename, matcher) — registers under PreToolUse — or
+# (script_filename, matcher, event) to register under another hook event.
 # block_path_typo registers under Bash + Read + Write + Edit — the same hook script
 # inspects tool_name internally to pick the right field (command vs file_path).
+# PostToolUseFailure fires ONLY on a failed tool call (measured: successes go to PostToolUse and
+# never reach this event), which is what makes feedback_bash_error's "untouched on success"
+# guarantee structural rather than a condition it has to test for.
 _HOOK_SCRIPTS = [
     ("block_dangerous_kill.py",          "Bash"),
     ("rewrite_chained_sleep.py",         "Bash"),
@@ -54,11 +59,13 @@ _HOOK_SCRIPTS = [
     ("block_linkedin_cli_isolated.py",   "Bash"),
     ("block_pipe_scraper_isolated.py",   "Bash"),
     ("block_rag_cli_document_repeat.py", "Bash"),
+    ("feedback_bash_error.py",           "Bash", "PostToolUseFailure"),
 ]
 
 # ORCHESTRATOR
 
-# Install PreToolUse safety hooks into ~/.claude/settings.json; idempotent; supports mixed matchers (Bash/Edit/Read)
+# Install safety hooks into ~/.claude/settings.json; idempotent; supports mixed matchers
+# (Bash/Edit/Read/Write) and mixed events (PreToolUse, PostToolUseFailure)
 def hook_setup_workflow() -> None:
     _guard_not_worktree()
     settings = _load_settings()
@@ -67,13 +74,14 @@ def hook_setup_workflow() -> None:
         _save_settings(settings)
     installable, skipped = decide_entries(_HOOK_SCRIPTS, _script_on_main, _script_in_worktree)
     _report_skipped(skipped)
-    hook_entries = [(f"python3 {_HOOKS_DIR / s}", m) for s, m in installable]
     hooks = settings.setdefault("hooks", {})
-    pre = hooks.setdefault("PreToolUse", [])
     installed = 0
-    for command, matcher in hook_entries:
-        if not _already_installed(pre, command, matcher):
-            _add_hook(pre, command, matcher)
+    for entry in installable:
+        script, matcher, event = _unpack_entry(entry)
+        command = f"python3 {_HOOKS_DIR / script}"
+        bucket = hooks.setdefault(event, [])
+        if not _already_installed(bucket, command, matcher):
+            _add_hook(bucket, command, matcher)
             installed += 1
     if installed:
         _save_settings(settings)
@@ -95,17 +103,27 @@ def hook_setup_workflow() -> None:
 # check, so "missing from BOTH" reports the main-branch reason.
 # Decision is cached per script filename — multiple matcher entries for the same script (e.g.
 # block_path_typo.py under Bash/Read/Write/Edit) run each query once and share the verdict.
+# Entries pass through in the SHAPE they arrived — a 2-tuple stays a 2-tuple, a 3-tuple keeps its
+# event — so the gate stays agnostic of the event dimension it does not judge.
 def decide_entries(hook_scripts: list, git_query_fn, tree_query_fn) -> tuple:
     to_install, skipped, cache = [], [], {}
-    for script, matcher in hook_scripts:
+    for entry in hook_scripts:
+        script, matcher, _event = _unpack_entry(entry)
         if script not in cache:
             cache[script] = _script_verdict(script, git_query_fn, tree_query_fn)
         install, reason = cache[script]
         if install:
-            to_install.append((script, matcher))
+            to_install.append(entry)
         else:
             skipped.append((script, matcher, reason))
     return to_install, skipped
+
+
+# Normalize a _HOOK_SCRIPTS entry to (script, matcher, event); a 2-tuple means PreToolUse
+def _unpack_entry(entry) -> tuple:
+    script, matcher = entry[0], entry[1]
+    event = entry[2] if len(entry) > 2 else _DEFAULT_EVENT
+    return script, matcher, event
 
 # Resolve one script's install verdict: (True, None) to install, or (False, reason) to skip.
 def _script_verdict(script: str, git_query_fn, tree_query_fn) -> tuple:
