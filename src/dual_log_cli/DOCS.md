@@ -15,7 +15,7 @@ proxy appends to them live during a session.
 `__init__.py` is a package marker only — no exports. The entry path is the module runner:
 
 ```bash
-./venv/bin/python -m src.dual_log_cli sessions [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+./venv/bin/python -m src.dual_log_cli sessions [CONTEXT] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ./venv/bin/python -m src.dual_log_cli timeline <stem-or-substring> [--turn N [--full]]
 ./venv/bin/python -m src.dual_log_cli search <stem-or-substring> <term> [--case-sensitive]
 ```
@@ -40,9 +40,9 @@ streams the same blocks through the matcher → `render` emits plain terminal te
 
 ## Modules
 
-### __main__.py (162 LOC)
+### __main__.py (170 LOC)
 
-**Purpose:** argparse dispatch for the three subcommands plus the `--since` / `--until` / `--turn` / `--full` / `--case-sensitive` variants, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
+**Purpose:** argparse dispatch for the three subcommands plus the optional `CONTEXT` positional and the `--since` / `--until` / `--turn` / `--full` / `--case-sensitive` variants, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
 **Writes:** stdout (rendered text), stderr (resolution, range and empty-term errors). Never touches the log directory.
 **Called by:** the user, via `python -m src.dual_log_cli` or `bin/duallog`.
@@ -50,9 +50,9 @@ streams the same blocks through the matcher → `render` emits plain terminal te
 
 ---
 
-### discovery.py (155 LOC)
+### discovery.py (162 LOC)
 
-**Purpose:** Log-directory resolution, stem grouping, context parsing, the session inventory, the inclusive start-day window (`filter_sessions`), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
+**Purpose:** Log-directory resolution, stem grouping, context parsing, the session inventory, all session selection in one place (`filter_sessions` — context substring AND inclusive start-day window), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
 **Reads:** `MONITOR_CC_ROOT`; the dual_log directory listing; each stem's `_forwarded.jsonl` in full; `stat().st_size` of all six streams.
 **Writes:** Nothing — returns dicts.
 **Called by:** `__main__.py`, and indirectly by `timeline.load_timeline` through the session dict it is handed.
@@ -146,9 +146,16 @@ theoretical, and it only reproduces on some sessions.
 **The date filter compares ISO string prefixes, which only works because the format is fixed.**
 `filter_sessions` slices `YYYY-MM-DD` off the `_forwarded` timestamp and compares lexicographically
 — identical to calendar order for that exact format, and no timezone maths. If the timestamp source
-ever changes shape or width, the filter keeps running and silently returns wrong sets. A session
-whose start timestamp is empty is dropped by any active filter, since it cannot be placed on a
-calendar.
+ever changes shape or width, the filter keeps running and silently returns wrong sets.
+
+**The two `sessions` filters treat a missing start timestamp differently, on purpose.** A DATE
+filter drops such a session — it cannot be placed on a calendar. A CONTEXT filter keeps it, because
+its context is known either way. Collapsing both into one "skip incomplete sessions" rule would
+silently hide sessions from a context query.
+
+**The context filter matches the RENDERED context value, family prefix included.** That is what
+makes `opus/` and `worker/` usable as selectors, and they partition the corpus exactly (measured:
+31 + 32 = 63). Matching only the name part would break both.
 
 **A search hit is one (turn, block) pair, never one occurrence.** A block containing the term N
 times stays one hit carrying `×N`. Changing that granularity changes every reported hit count, so
