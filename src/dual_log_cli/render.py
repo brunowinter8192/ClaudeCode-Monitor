@@ -117,6 +117,30 @@ def render_timeline(data: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Search result: header plus one line per matching block
+def render_search(data: dict, term: str, case_sensitive: bool, hits: list, stats: dict) -> str:
+    mode = "case-sensitive" if case_sensitive else "case-insensitive"
+    lines = [
+        f"session   {data['session']['stem']}",
+        f'term      "{term}"  ({mode})',
+        f"scope     {stats['turns']} turns, {stats['blocks']} blocks, "
+        f"{fmt_chars(stats['chars'])} chars — last {data['family']} request",
+        f"hits      {len(hits)} in {stats['hit_turns']} turns "
+        f"({stats['occurrences']} occurrences)",
+        "",
+    ]
+    if not hits:
+        lines.append("no match")
+        return "\n".join(lines) + "\n"
+    label_width = max(len(hit["label"]) for hit in hits)
+    for hit in hits:
+        lines.append(
+            f"#{hit['turn']:<4} {hit['role']:9} {hit['label']:{label_width}}  "
+            f"×{hit['count']:<3} {hit['snippet']}"
+        )
+    return "\n".join(lines) + "\n"
+
+
 # Full content of one turn, block by block
 def render_turn_full(data: dict, turn_index: int, blocks: list) -> str:
     if not blocks:

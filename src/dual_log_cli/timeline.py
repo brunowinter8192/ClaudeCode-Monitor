@@ -77,6 +77,33 @@ def build_turns(payload: dict) -> list:
     return turns
 
 
+# Stream every block of every turn as {turn, role, block, label, text}. A generator, so a
+# 14 MB payload is never doubled by holding all full_text values at once — build_turns drops
+# them for exactly the same reason.
+def iter_block_texts(payload: dict):
+    for index, message in enumerate(payload.get("messages", []) or []):
+        summary = _summarize_message(message)
+        role = summary.get("role", "?")
+        blocks = summary.get("blocks", [])
+        if blocks:
+            for position, block in enumerate(blocks):
+                yield {
+                    "turn": index,
+                    "role": role,
+                    "block": position,
+                    "label": _block_label(block),
+                    "text": block.get("full_text", "") or "",
+                }
+        else:
+            yield {
+                "turn": index,
+                "role": role,
+                "block": 0,
+                "label": summary.get("type", "text"),
+                "text": summary.get("content_preview", "") or "",
+            }
+
+
 # Full content of one turn: [(label, chars, full_text), ...]
 def full_turn(payload: dict, turn_index: int) -> list:
     messages = payload.get("messages", []) or []
