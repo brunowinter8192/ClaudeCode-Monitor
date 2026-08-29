@@ -16,7 +16,9 @@ proxy appends to them live during a session.
 
 ```bash
 ./venv/bin/python -m src.dual_log_cli sessions [CONTEXT] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
-./venv/bin/python -m src.dual_log_cli timeline <stem-or-substring> [--turn N [--full]]
+./venv/bin/python -m src.dual_log_cli timeline <stem-or-substring>
+./venv/bin/python -m src.dual_log_cli expand <stem-or-substring> <turn> [--before N] [--after N]
+./venv/bin/python -m src.dual_log_cli expand <stem> <turn> --full --before N --after N [--only CLASSIFIER]
 ./venv/bin/python -m src.dual_log_cli search <term> [SCOPE] [--since D] [--until D] [--case-sensitive]
 ```
 
@@ -38,14 +40,16 @@ in the main checkout.
 parses only that line → `timeline` builds turn rows via `proxy.message_summary` plus request
 boundaries from `_forwarded.counts.messages`. `search` selects a SET of sessions the same way
 `sessions` does (scope + date window), then repeats that per-session reconstruction for each one
-and streams its blocks through the matcher, skipping any session whose timeline will not load →
-`render` emits plain terminal text to stdout.
+and streams its blocks through the matcher, skipping any session whose timeline will not load.
+`expand` reuses the timeline of one session and slices an anchor-centred window out of its turn
+rows — classifier lines by default, full block content with `--full` → `render` emits plain
+terminal text to stdout.
 
 ## Modules
 
-### __main__.py (203 LOC)
+### __main__.py (271 LOC)
 
-**Purpose:** argparse dispatch for the three subcommands plus the optional `CONTEXT` / `SCOPE` positionals and the `--since` / `--until` / `--turn` / `--full` / `--case-sensitive` variants, the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
+**Purpose:** argparse dispatch for the four subcommands plus the optional `CONTEXT` / `SCOPE` positionals and the `--since` / `--until` / `--before` / `--after` / `--full` / `--only` / `--case-sensitive` variants, `expand`'s two-mode argument rules (`_run_expand` / `_run_expand_full` / `_window`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
 **Writes:** stdout (rendered text), stderr (resolution, range and empty-term errors). Never touches the log directory.
 **Called by:** the user, via `python -m src.dual_log_cli` or `bin/duallog`.
@@ -103,9 +107,9 @@ and streams its blocks through the matcher, skipping any session whose timeline 
 
 ---
 
-### render.py (160 LOC)
+### render.py (193 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), full-turn dump, and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview with interleaved REQ markers and a `▶` anchor mark, and the full-content window dump), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -194,6 +198,23 @@ times stays one hit carrying `×N`. Changing that granularity changes every repo
 it is a contract, not a formatting detail. Since 2026-08-29 the header no longer states the totals,
 so hits, turns and occurrences are read off the lines — the `×N` markers are the only place the
 occurrence count survives.
+
+**`expand`'s 30 is a FLOOR in overview mode, not a default.** An explicitly smaller `--before 5`
+or `--before 0` is raised to 30; only values above it are honoured. The mode exists to show what
+surrounds a turn, and a reader who narrows the window defeats that without noticing. Read mode
+(`--full`) is the opposite: both bounds are REQUIRED explicit numbers with no floor, because there
+the caller is paying for every dumped character.
+
+**`--only` matches the MESSAGE-level classifier, not block types.** A turn whose message type is
+`tool_use` typically also carries `thinking` and `text` blocks, yet `--only thinking` will not
+select it — the filter compares against the turn's role and its message type, the same two values
+the overview lines print. That keeps overview and read mode talking about the same units; a
+block-level filter would need a different flag and a different output shape.
+
+**`timeline --turn N [--full]` no longer exists** (removed 2026-08-29). `expand <s> <t> --full
+--before 0 --after 0` is the replacement for a single-turn read. Unlike `search`'s argument flip,
+this break is LOUD — argparse rejects `--turn` as an unrecognized argument with exit 2 — because
+the flag was deleted rather than reinterpreted.
 
 **`search` takes the TERM FIRST, and the old order fails silently.** The 2026-08-29 redesign
 flipped `search <session> <term>` to `search <term> [scope]`. Both arguments stay structurally
