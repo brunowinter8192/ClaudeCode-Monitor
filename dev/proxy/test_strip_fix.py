@@ -17,7 +17,8 @@ Coverage:
 
 Run: python3 dev/proxy/test_strip_fix.py
 """
-import sys, os
+import sys, os, json
+from pathlib import Path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', '..'))
 os.environ.setdefault('MONITOR_CC_ROOT', os.path.join(os.path.dirname(__file__), '..', '..'))
 
@@ -920,6 +921,161 @@ def w29_interrupt_marker_pass_tool_use_wording():
     check('W29_marker_block_emptied', new_msgs[0]['content'][1]['text'] == '.')
 
 
+# ── TOTAL_TOKENS DELTA-SKIP TESTS (strip_inject_delta.py, 2026-08-29) ─────────
+# Newer CC appends a fresh role='system' '<total_tokens>N tokens left</total_tokens>' message to the
+# END of the history on every request. _apply_role_system_strip nukes it to '.' (correct, unchanged),
+# but the nuke lands on a NEW message index each request, so its loc_key is new each request and the
+# delta writer's hash dedup structurally cannot suppress it — a messages_delta entry was written on
+# virtually every request, so the REQ-header badge (has_content = delta presence) and the expanded
+# view's olive/green spans became permanent noise burying the rare real strip. Fix: skip the class in
+# _process_messages_section, on BOTH the stripped and the injected side. Anchored full-match on a
+# single stripped span under role='system' — the same string is routinely QUOTED inside tool_result /
+# role='user' / role='assistant' content (175 such quotes vs 575 genuine nukes in
+# src/logs/dual_log/api_requests_opus_monitor_cc_1788011077_original.jsonl), and those keep their
+# entries. These tests drive the real _build_stripped_injected_deltas with real ops from
+# _ops_from_content_change, i.e. the production path — not a hand-built ops fixture.
+_sid_mod = __import__('importlib').import_module('src.proxy.strip_inject_delta')
+_build_deltas = _sid_mod._build_stripped_injected_deltas
+_ro_mod = __import__('importlib').import_module('src.proxy.rule_ops')
+_ops_from_content_change = _ro_mod._ops_from_content_change
+
+_TT_MSG = '<total_tokens>14979724 tokens left</total_tokens>'
+
+
+# Build (stripped_entry, injected_entry) for a single-message payload nuked to `new_content`,
+# with ops recorded exactly as the production passes record them (full_replace for a '.' nuke).
+def _deltas_for_single_msg(role: str, old_content, new_content, full_replace: bool = True) -> tuple:
+    orig = {'model': 'claude-opus-4', 'system': [], 'tools': [],
+            'messages': [{'role': role, 'content': old_content}]}
+    fwd = {'model': 'claude-opus-4', 'system': [], 'tools': [],
+           'messages': [{'role': role, 'content': new_content}]}
+    all_ops = {0: _ops_from_content_change(old_content, new_content, full_replace=full_replace)}
+    s_entry, i_entry, _new_s, _new_i = _build_deltas(
+        orig, fwd, 'rid-test', None, None, 'claude-opus-4', all_ops,
+    )
+    return s_entry, i_entry
+
+
+# TT01 — the target class: role='system' total_tokens nuke produces NO entry on either side
+def tt01_role_system_total_tokens_no_delta_entry():
+    s, i = _deltas_for_single_msg('system', _TT_MSG, '.')
+    check('TT01_no_stripped_messages_delta', s['messages_delta'] == {}, repr(s['messages_delta']))
+    check('TT01_no_injected_messages_delta', i['messages_delta'] == {}, repr(i['messages_delta']))
+    check('TT01_no_stripped_fn_map', s['fn_map'] == {}, repr(s['fn_map']))
+    check('TT01_no_injected_fn_map', i['fn_map'] == {}, repr(i['fn_map']))
+
+
+# TT02 — has_content (the badge signal) computes False for such an entry, via the REAL parser
+def tt02_total_tokens_entry_has_content_false():
+    import tempfile
+    from src.proxy_display.parser import accumulate_dual_log
+    s, _i = _deltas_for_single_msg('system', _TT_MSG, '.')
+    s['flow_id'] = 'tt_flow'
+    with tempfile.NamedTemporaryFile('w', suffix='.jsonl', delete=False) as f:
+        f.write(json.dumps(s) + '\n')
+        tmp = Path(f.name)
+    acc: dict = {}
+    try:
+        accumulate_dual_log(tmp, 0, acc)
+    finally:
+        tmp.unlink()
+    hc = acc.get('opus', {}).get('_has_content_by_flow_id', {}).get('tt_flow')
+    midx = acc.get('opus', {}).get('_msg_idx_by_flow_id', {}).get('tt_flow')
+    check('TT02_has_content_false', hc is False, f'got {hc!r}')
+    check('TT02_no_msg_idx_tracked', midx == set(), f'got {midx!r}')
+
+
+# TT03 — FP guard: role='user' QUOTING the exact same string keeps its normal entries
+def tt03_role_user_quoting_total_tokens_still_delta():
+    s, i = _deltas_for_single_msg('user', _TT_MSG, '.')
+    check('TT03_stripped_entry_present', s['messages_delta'] == {'0': {'0': [_TT_MSG]}}, repr(s['messages_delta']))
+    check('TT03_injected_entry_present', i['messages_delta'] != {}, repr(i['messages_delta']))
+
+
+# TT04 — FP guard: the marker inside a tool_result under role='user' keeps its entries
+def tt04_total_tokens_in_tool_result_still_delta():
+    old = tool_result_str(f'log line:\n{_TT_MSG}\nend')
+    new = tool_result_str('.')
+    s, i = _deltas_for_single_msg('user', old, new)
+    check('TT04_stripped_entry_present', s['messages_delta'] != {}, repr(s['messages_delta']))
+    check('TT04_injected_entry_present', i['messages_delta'] != {}, repr(i['messages_delta']))
+
+
+# TT05 — every OTHER role='system' '.'-nuke still produces its entries (rare, real signal)
+def tt05_other_role_system_nukes_still_delta():
+    cases = [
+        ('nag', "<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>"),
+        ('deferred', '<system-reminder>\nThe following deferred tools are now available via ToolSearch.\n</system-reminder>'),
+        ('date', "<system-reminder>\nThe date has changed. Today's date is now 2026-04-22.\n</system-reminder>"),
+        ('midconv', 'Some mid-conversation notice from Claude Code.'),
+    ]
+    for label, body in cases:
+        s, i = _deltas_for_single_msg('system', body, '.')
+        check(f'TT05_{label}_stripped_entry_present', s['messages_delta'] == {'0': {'0': [body]}}, repr(s['messages_delta']))
+        check(f'TT05_{label}_injected_entry_present', i['messages_delta'] != {}, repr(i['messages_delta']))
+        check(f'TT05_{label}_rs_attribution', s['fn_map'] == {'msg.0.0': '_apply_role_system_strip'}, repr(s['fn_map']))
+
+
+# TT06 — near-miss anchoring: only the EXACT whole-block marker is skipped
+def tt06_anchoring_near_misses_still_delta():
+    near = [
+        ('prefix', f'note: {_TT_MSG}'),
+        ('suffix', f'{_TT_MSG} and more text'),
+        ('no_digits', '<total_tokens>many tokens left</total_tokens>'),
+        ('wrong_wording', '<total_tokens>123 tokens remaining</total_tokens>'),
+    ]
+    for label, body in near:
+        s, _i = _deltas_for_single_msg('system', body, '.')
+        check(f'TT06_{label}_entry_present', s['messages_delta'] != {}, f'{label}: {s["messages_delta"]!r}')
+    # surrounding whitespace IS tolerated (the strip records the raw block text)
+    s2, _ = _deltas_for_single_msg('system', f'\n  {_TT_MSG}  \n', '.')
+    check('TT06_whitespace_padded_skipped', s2['messages_delta'] == {}, repr(s2['messages_delta']))
+
+
+# TT07 — mixed request: a total_tokens nuke AND a real strip in the SAME request. The real strip
+# must survive at its own index; only the total_tokens block disappears. This is why the skip sits
+# per-BLOCK and not per-message (1 such mixed request exists in the 1788011077 session).
+def tt07_mixed_request_keeps_real_strip():
+    nag = "<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>"
+    orig = {'model': 'claude-opus-4', 'system': [], 'tools': [], 'messages': [
+        {'role': 'user', 'content': nag},
+        {'role': 'system', 'content': _TT_MSG},
+    ]}
+    fwd = {'model': 'claude-opus-4', 'system': [], 'tools': [], 'messages': [
+        {'role': 'user', 'content': '.'},
+        {'role': 'system', 'content': '.'},
+    ]}
+    all_ops = {
+        0: _ops_from_content_change(nag, '.', full_replace=True),
+        1: _ops_from_content_change(_TT_MSG, '.', full_replace=True),
+    }
+    s, i, _ns, _ni = _build_deltas(orig, fwd, 'rid-mixed', None, None, 'claude-opus-4', all_ops)
+    check('TT07_real_strip_kept', s['messages_delta'] == {'0': {'0': [nag]}}, repr(s['messages_delta']))
+    check('TT07_tt_block_dropped', '1' not in s['messages_delta'], repr(s['messages_delta']))
+    check('TT07_injected_tt_dropped', '1' not in i['messages_delta'], repr(i['messages_delta']))
+
+
+# TT08 — hash-state: the skipped loc_key is absent from the returned hash state, and a LATER real
+# strip at that same loc_key still emits (None != new hash — the reasoning behind skipping the
+# hash writes rather than keeping them).
+def tt08_hash_state_omits_skipped_and_later_strip_still_emits():
+    orig = {'model': 'claude-opus-4', 'system': [], 'tools': [],
+            'messages': [{'role': 'system', 'content': _TT_MSG}]}
+    fwd = {'model': 'claude-opus-4', 'system': [], 'tools': [],
+           'messages': [{'role': 'system', 'content': '.'}]}
+    ops = {0: _ops_from_content_change(_TT_MSG, '.', full_replace=True)}
+    _s, _i, new_s, new_i = _build_deltas(orig, fwd, 'r1', None, None, 'claude-opus-4', ops)
+    check('TT08_loc_key_absent_stripped', 'msg.0.0' not in new_s, repr(new_s))
+    check('TT08_loc_key_absent_injected', 'msg.0.0' not in new_i, repr(new_i))
+    # next request: same index now carries a real notice -> must still produce an entry
+    body = 'Some mid-conversation notice from Claude Code.'
+    orig2 = {'model': 'claude-opus-4', 'system': [], 'tools': [],
+             'messages': [{'role': 'system', 'content': body}]}
+    ops2 = {0: _ops_from_content_change(body, '.', full_replace=True)}
+    s2, _i2, _ns2, _ni2 = _build_deltas(orig2, fwd, 'r2', new_s, new_i, 'claude-opus-4', ops2)
+    check('TT08_later_real_strip_emits', s2['messages_delta'] == {'0': {'0': [body]}}, repr(s2['messages_delta']))
+
+
 if __name__ == '__main__':
     tests = [
         t01_task_tools_nag_real_text_block, t02_task_tools_nag_fp_code_literal, t03_task_tools_nag_tool_result_preserved,
@@ -955,6 +1111,11 @@ if __name__ == '__main__':
         w27_interrupt_marker_embedded_in_longer_text_untouched, w28_interrupt_marker_pass_role_gate_and_mod,
         w29_interrupt_marker_pass_tool_use_wording,
         w30_role_system_mid_turn_user_msg_preserved_whole,
+        tt01_role_system_total_tokens_no_delta_entry, tt02_total_tokens_entry_has_content_false,
+        tt03_role_user_quoting_total_tokens_still_delta, tt04_total_tokens_in_tool_result_still_delta,
+        tt05_other_role_system_nukes_still_delta, tt06_anchoring_near_misses_still_delta,
+        tt07_mixed_request_keeps_real_strip,
+        tt08_hash_state_omits_skipped_and_later_strip_still_emits,
     ]
 
     print(f'Running {len(tests)} tests...\n')
