@@ -1,6 +1,7 @@
 # INFRASTRUCTURE
 import json
 import os
+import re
 import time
 from pathlib import Path
 from typing import Optional
@@ -12,7 +13,56 @@ from .forwarded_parser import (
     _lazy_load_messages_forwarded, parse_proxy_log_forwarded, reconstruct_all_messages,
 )
 
+# Newer CC appends a fresh role='system' "<total_tokens>N tokens left</total_tokens>" message to the
+# END of the message history on EVERY request; `_apply_role_system_strip` nukes it to "." (correct).
+# The nuke lands at a NEW message index each request, so its loc_key is new each request and the
+# write-side hash dedup structurally cannot suppress it — a messages_delta entry is written on
+# virtually every request. Anchored FULL-match, never substring-anywhere: the same string is
+# routinely quoted inside real content. Read-side note: the dual-log line carries no role, so the
+# write side's second anchor (role=='system') is not available here — the full-match on a single
+# stripped text is doing the whole job, which holds because no strip pass removes a bare, otherwise
+# empty total_tokens marker from a non-system message.
+_TOTAL_TOKENS_NUKE_RE = re.compile(r"^<total_tokens>\d+ tokens left</total_tokens>$")
+
 # FUNCTIONS
+
+# Does this line's messages_delta carry anything BADGE-worthy? Badge-only helper — the overlay
+# dicts and _msg_idx_by_flow_id are populated from the raw delta regardless, so the expanded view
+# keeps rendering every span this filters out here.
+# Two classes are not substantial (2026-08-29):
+#   - stripped side: a message whose blocks' stripped texts amount to exactly ONE text full-matching
+#     the total_tokens marker — the per-request CC token-budget nuke, noise on nearly every request.
+#   - injected side: a block whose injected spans are only ".", the API-required empty-block filler
+#     that `strip_sr.py` / `_apply_role_system_strip` leave behind. Not a real injection (same
+#     principle the fn_map "." skips already encode write-side), so a nag/deferred/total_tokens nuke
+#     badges `strip` alone instead of `strip inject`.
+# Everything else counts, so a real content injection and a real strip badge exactly as before.
+def _msgs_delta_is_substantial(msgs_delta: dict, entry_type: str) -> bool:
+    is_injected = entry_type == 'injected_delta'
+    for blks in (msgs_delta or {}).values():
+        if not isinstance(blks, dict):
+            continue
+        if is_injected:
+            for spans in blks.values():
+                if not isinstance(spans, list):
+                    continue
+                texts = [
+                    s[1] for s in spans
+                    if isinstance(s, (list, tuple)) and len(s) == 2 and s[0] == 'injected' and s[1]
+                ]
+                if texts and ' '.join(texts) != '.':
+                    return True
+        else:
+            texts = [
+                t for blk in blks.values() if isinstance(blk, list)
+                for t in blk if isinstance(t, str)
+            ]
+            if len(texts) == 1 and _TOTAL_TOKENS_NUKE_RE.match(texts[0].strip()):
+                continue
+            if texts:
+                return True
+    return False
+
 
 # Estimate token count from char count (chars/3.5 heuristic, ~±15%)
 def _chars_to_tokens(chars: int) -> int:
@@ -89,10 +139,12 @@ def _find_dual_log_paths(main_log_path: Optional[Path]) -> tuple:
 # acc_by_family: {family -> {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}}}
 # Mutates acc_by_family IN-PLACE so all proxy_entries holding a reference see updates
 # automatically. is_first -> .clear() + .update() on existing section dicts (preserves refs).
-# '_has_content_by_flow_id': per-flow_id bool — did THIS line's delta carry any content, for
-# the header badge. Derived from system/tools/messages_delta (fields_delta excluded — a
-# field-only change must not badge; fields stay in the fields drill-down). Not fn_map, which
-# omits the "." filler-injection case by design, so it agrees with what the expanded view renders.
+# '_has_content_by_flow_id': per-flow_id bool — did THIS line's delta carry any SUBSTANTIAL
+# content, for the header badge. Derived from system/tools/messages_delta (fields_delta excluded —
+# a field-only change must not badge; fields stay in the fields drill-down). Not fn_map. The
+# messages part goes through `_msgs_delta_is_substantial`, which drops the per-request total_tokens
+# nuke and "."-only filler injections — badge-only, the overlay dicts below are unaffected, so the
+# expanded view still renders every span this filter hides from the header.
 # '_msg_idx_by_flow_id': {flow_id -> set(msg_idx str)} — which message indices THIS line's
 # messages_delta touched. Lets the expanded view render this flow's own spans even when they
 # sit outside the rendered delta window, and scope span lookups so a request that did not
@@ -139,7 +191,8 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                 acc['fields'].update(entry.get('fields_delta') or {})
                 fid = entry.get('flow_id', '')
                 has_content = bool(
-                    entry.get('system_delta') or entry.get('tools_delta') or msgs_delta
+                    entry.get('system_delta') or entry.get('tools_delta')
+                    or _msgs_delta_is_substantial(msgs_delta, entry.get('type', ''))
                 )
                 acc.setdefault('_has_content_by_flow_id', {})[fid] = has_content
                 acc.setdefault('_msg_idx_by_flow_id', {})[fid] = set(msgs_delta.keys())

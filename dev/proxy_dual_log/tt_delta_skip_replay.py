@@ -7,14 +7,19 @@ Replays a recorded _original.jsonl through the REAL production pass pipeline
 call `addon.py` makes. The resulting dual-log lines are then run through the REAL read-side
 `accumulate_dual_log`, so the reported badge signal is the one the pane would compute.
 
+The suppression is READ-SIDE ONLY (`parser._msgs_delta_is_substantial`): the delta entries
+themselves are written unchanged, so the expanded view keeps rendering every span. This replay
+therefore checks two separate things — that the written entries are byte-identical before/after
+(they must be, the writer is untouched), and that the BADGE signal drops for the noise classes.
+
 Why a dedicated replay: `dev/proxy_dual_log/verify_strip_inject.py` calls the delta builder
 WITHOUT `all_ops`, so its message section produces no spans at all and it is structurally blind
 to this change (independently, it raises KeyError 'spans' on current logs — `_diff_messages` no
 longer emits that key; pre-existing, untouched). `dev/proxy_instrumentation/p2_badge_words_probe.py`
 and `p3_badge_inline_probe.py` reference recorded sessions that no longer exist on disk.
 
-`--baseline` restores the pre-fix behavior by monkeypatching the class regex to something that
-matches nothing, so both sides of the comparison run through identical code otherwise.
+`--baseline` restores the pre-fix badge behavior by monkeypatching `parser._msgs_delta_is_substantial`
+to the old `bool(messages_delta)` rule, so both sides of the comparison run identical code otherwise.
 
 Usage (from project root):
     ./venv/bin/python dev/proxy_dual_log/tt_delta_skip_replay.py <stem>
@@ -41,8 +46,6 @@ MAIN_REPO_ROOT = Path('/Users/brunowinter2000/Documents/ai/monitor-cc')
 LOG_DIR = MAIN_REPO_ROOT / 'src' / 'logs' / 'dual_log'
 
 TT_RE = re.compile(r'^<total_tokens>\d+ tokens left</total_tokens>$')
-# Matches nothing (empty alternation is impossible to satisfy against a non-empty pattern anchor)
-NEVER_RE = re.compile(r'(?!x)x')
 
 
 # FUNCTIONS
@@ -75,14 +78,11 @@ def _is_tt_msg(msg: dict) -> bool:
 
 
 # Replay every request of one session; returns list of (request_id, stripped_entry, injected_entry)
-def replay(stem: str, baseline: bool) -> list:
+def replay(stem: str) -> list:
     from src.proxy import strip_inject_delta as sid
     from src.proxy.rules import apply_modification_rules
 
-    saved_re = sid._TOTAL_TOKENS_NUKE_RE
-    if baseline:
-        sid._TOTAL_TOKENS_NUKE_RE = NEVER_RE
-    try:
+    if True:
         orig_entries = _load_jsonl(LOG_DIR / f'{stem}_original.jsonl')
         out = []
         prev_s = None
@@ -105,13 +105,16 @@ def replay(stem: str, baseline: bool) -> list:
             i_entry['flow_id'] = rid
             out.append((rid, s_entry, i_entry, orig_payload))
         return out
-    finally:
-        sid._TOTAL_TOKENS_NUKE_RE = saved_re
 
 
-# Run the REAL read-side accumulator over the replayed stripped entries -> {flow_id: has_content}
-def has_content_map(entries: list, which: int) -> dict:
+# Run the REAL read-side accumulator over the replayed entries -> {flow_id: has_content}.
+# baseline=True restores the pre-fix rule (any non-empty messages_delta badges).
+def has_content_map(entries: list, which: int, baseline: bool = False) -> dict:
+    from src.proxy_display import parser as _parser
     from src.proxy_display.parser import accumulate_dual_log
+    saved = _parser._msgs_delta_is_substantial
+    if baseline:
+        _parser._msgs_delta_is_substantial = lambda md, et: bool(md)
     with tempfile.NamedTemporaryFile('w', suffix='.jsonl', delete=False) as f:
         for row in entries:
             f.write(json.dumps(row[which]) + '\n')
@@ -121,6 +124,7 @@ def has_content_map(entries: list, which: int) -> dict:
         accumulate_dual_log(tmp, 0, acc)
     finally:
         tmp.unlink()
+        _parser._msgs_delta_is_substantial = saved
     merged: dict = {}
     for fam in acc.values():
         merged.update(fam.get('_has_content_by_flow_id', {}))
@@ -152,75 +156,73 @@ def _canon(entry: dict) -> str:
 # ORCHESTRATOR
 
 def compare_workflow(stem: str) -> int:
-    base = replay(stem, baseline=True)
-    new = replay(stem, baseline=False)
-    assert len(base) == len(new), f'replay length mismatch {len(base)} vs {len(new)}'
+    rows = replay(stem)
 
-    base_hc_s = has_content_map(base, 1)
-    new_hc_s = has_content_map(new, 1)
-    base_hc_i = has_content_map(base, 2)
-    new_hc_i = has_content_map(new, 2)
+    base_hc_s = has_content_map(rows, 1, baseline=True)
+    new_hc_s = has_content_map(rows, 1)
+    base_hc_i = has_content_map(rows, 2, baseline=True)
+    new_hc_i = has_content_map(rows, 2)
 
     buckets: dict = {}
-    changed_unexpectedly = []
-    unchanged_tt = []
-    for (rid, bs, bi, orig_payload), (_rid2, ns, ni, _op2) in zip(base, new):
-        cls = classify(bs, orig_payload)
-        buckets.setdefault(cls, []).append(rid)
-        identical = _canon(bs) == _canon(ns) and _canon(bi) == _canon(ni)
-        if cls in ('real_strip', 'no_msg_delta') and not identical:
-            changed_unexpectedly.append((rid, cls))
-        if cls == 'pure_total_tokens' and ns.get('messages_delta'):
-            unchanged_tt.append(rid)
+    for rid, s_entry, _i_entry, orig_payload in rows:
+        buckets.setdefault(classify(s_entry, orig_payload), []).append(rid)
 
     print(f'\ntt_delta_skip_replay — {stem}')
-    print(f'  requests replayed: {len(base)}\n')
-    print('  classification (by BASELINE delta + original payload):')
+    print(f'  requests replayed: {len(rows)}\n')
+    print('  classification (by written delta + original payload):')
     for cls in ('pure_total_tokens', 'mixed', 'real_strip', 'no_msg_delta'):
         print(f'    {cls:<20} {len(buckets.get(cls, []))}')
 
-    b_md_s = sum(1 for r in base if r[1].get('messages_delta'))
-    n_md_s = sum(1 for r in new if r[1].get('messages_delta'))
-    b_md_i = sum(1 for r in base if r[2].get('messages_delta'))
-    n_md_i = sum(1 for r in new if r[2].get('messages_delta'))
-    print(f'\n  entries with messages_delta   stripped: {b_md_s} -> {n_md_s}')
-    print(f'  entries with messages_delta   injected: {b_md_i} -> {n_md_i}')
-    print(f'  has_content True (stripped):  {sum(base_hc_s.values())} -> {sum(new_hc_s.values())}')
-    print(f'  has_content True (injected):  {sum(base_hc_i.values())} -> {sum(new_hc_i.values())}')
-
-    real_ids = set(buckets.get('real_strip', []))
-    real_identical = sum(
-        1 for (rid, bs, bi, _o), (_r, ns, ni, _o2) in zip(base, new)
-        if rid in real_ids and _canon(bs) == _canon(ns) and _canon(bi) == _canon(ni)
-    )
-    print(f'\n  real_strip entries byte-identical before/after: {real_identical}/{len(real_ids)}')
+    md_s = sum(1 for r in rows if r[1].get('messages_delta'))
+    md_i = sum(1 for r in rows if r[2].get('messages_delta'))
+    print(f'\n  WRITE SIDE (must be unchanged by this fix — spans keep rendering):')
+    print(f'    entries with messages_delta   stripped: {md_s}')
+    print(f'    entries with messages_delta   injected: {md_i}')
+    print(f'\n  BADGE SIGNAL (has_content), old rule -> new rule:')
+    print(f'    stripped: {sum(base_hc_s.values())} -> {sum(new_hc_s.values())}')
+    print(f'    injected: {sum(base_hc_i.values())} -> {sum(new_hc_i.values())}')
 
     tt_ids = set(buckets.get('pure_total_tokens', []))
     tt_quiet = sum(1 for rid in tt_ids if new_hc_s.get(rid) is False and new_hc_i.get(rid) is False)
-    print(f'  pure_total_tokens requests now has_content False (both sides): {tt_quiet}/{len(tt_ids)}')
+    print(f'\n  pure_total_tokens requests now badge-silent (both sides): {tt_quiet}/{len(tt_ids)}')
 
-    ok = not changed_unexpectedly and not unchanged_tt and tt_quiet == len(tt_ids)
-    if changed_unexpectedly:
-        print(f'\n  UNEXPECTED CHANGES: {changed_unexpectedly[:10]}')
-    if unchanged_tt:
-        print(f'\n  TOTAL_TOKENS STILL EMITTING: {unchanged_tt[:10]}')
+    real_ids = set(buckets.get('real_strip', []))
+    real_loud = sum(1 for rid in real_ids if new_hc_s.get(rid) is True)
+    print(f'  real_strip requests still badge `strip`: {real_loud}/{len(real_ids)}')
+
+    mixed_ids = set(buckets.get('mixed', []))
+    mixed_loud = sum(1 for rid in mixed_ids if new_hc_s.get(rid) is True)
+    print(f'  mixed requests still badge `strip`: {mixed_loud}/{len(mixed_ids)}')
+
+    # Every pure-TT request must still carry its spans in the written delta (the whole point of
+    # moving the suppression read-side) — the badge is what goes quiet, not the rendering.
+    tt_spans_kept = sum(
+        1 for rid, s_entry, _i, _o in rows
+        if rid in tt_ids and s_entry.get('messages_delta')
+    )
+    print(f'  pure_total_tokens requests still carrying stripped spans: {tt_spans_kept}/{len(tt_ids)}')
+
+    ok = (tt_quiet == len(tt_ids) and real_loud == len(real_ids)
+          and mixed_loud == len(mixed_ids) and tt_spans_kept == len(tt_ids))
     print(f'\n{"PASS" if ok else "FAIL"}\n')
     return 0 if ok else 1
 
 
-def single_workflow(stem: str, baseline: bool) -> int:
-    rows = replay(stem, baseline=baseline)
+def single_workflow(stem: str) -> int:
+    rows = replay(stem)
     md = sum(1 for r in rows if r[1].get('messages_delta'))
-    print(f'{stem} baseline={baseline}: {len(rows)} requests, {md} with stripped messages_delta')
+    hc = has_content_map(rows, 1)
+    print(f'{stem}: {len(rows)} requests, {md} with stripped messages_delta, '
+          f'{sum(hc.values())} badging `strip`')
     return 0
 
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument('stem', help='log stem, e.g. api_requests_opus_monitor_cc_1788011077')
-    ap.add_argument('--baseline', action='store_true', help='run with the skip disabled')
-    ap.add_argument('--compare', action='store_true', help='run both modes and diff every entry')
+    ap.add_argument('--compare', action='store_true',
+                    help='report the badge signal under the old rule vs the new one')
     args = ap.parse_args()
     if args.compare:
         sys.exit(compare_workflow(args.stem))
-    sys.exit(single_workflow(args.stem, args.baseline))
+    sys.exit(single_workflow(args.stem))

@@ -1,6 +1,5 @@
 # INFRASTRUCTURE
 import hashlib
-import re
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -34,17 +33,6 @@ _MSG_CODE_TO_FN: dict[str, str] = {
     'HP':  '_apply_hook_prefix_strip',
     'IM':  '_apply_interrupt_marker_strip',
 }
-
-# Newer CC appends a fresh role='system' "<total_tokens>N tokens left</total_tokens>" message to the
-# END of the history on EVERY request; _apply_role_system_strip nukes each one to "." (correct, kept).
-# The nuke lands on a NEW message index every time, so its loc_key is new every time and the hash
-# dedup below structurally cannot suppress it — it would write a messages_delta entry on virtually
-# every request, making the badge and the expanded-view spans permanent noise that buries the rare
-# real strip. FULLMATCH, anchored, never substring-anywhere: the same string is routinely quoted
-# inside tool_result / role='user' / role='assistant' content (175 such quotes vs 575 genuine
-# role='system' nukes in api_requests_opus_monitor_cc_1788011077_original.jsonl alone), and those
-# must keep their entries.
-_TOTAL_TOKENS_NUKE_RE = re.compile(r"^<total_tokens>\d+ tokens left</total_tokens>$")
 
 # FUNCTIONS
 
@@ -168,21 +156,6 @@ def _process_messages_section(msg_diffs, orig_msgs_norm, is_first, prev_stripped
             s_texts = [t for tag, t in spans if tag == "stripped" and t]
             i_spans = [(tag, t) for tag, t in spans if tag in ("equal", "injected") and t]
             has_i = any(tag == "injected" for tag, _ in i_spans)
-            # total_tokens nuke: no delta entry on EITHER side, so the badge (has_content, read
-            # from delta presence), the msg-index overlay lookup and the span rendering all go
-            # quiet for this class without any read-side change. Doubly anchored: role must be
-            # 'system' AND the strip must be exactly ONE span full-matching the pattern — a block
-            # mixing the marker with other stripped content yields >1 span (or a non-matching one)
-            # and keeps its entry, as does any quoted occurrence under a non-system role.
-            # Skipped BEFORE the hash writes on purpose: the hash exists only to suppress a REPEAT
-            # of identical content at the same loc_key, and this class is skipped unconditionally,
-            # so its hash would be dead state. Omitting it cannot swallow a later emission either —
-            # if other content ever lands on this loc_key, the lookup yields None, and None differs
-            # from the new hash exactly as a stored total_tokens hash would.
-            if (om_norm.get("role") == "system"
-                    and len(s_texts) == 1
-                    and _TOTAL_TOKENS_NUKE_RE.match(s_texts[0].strip())):
-                continue
             if s_texts:
                 lk = f"msg.{md['idx']}.{bd['bidx']}"
                 h = _hash_spans(s_texts)
