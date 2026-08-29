@@ -91,19 +91,19 @@ streams the same blocks through the matcher → `render` emits plain terminal te
 
 ---
 
-### search.py (61 LOC)
+### search.py (43 LOC)
 
-**Purpose:** The literal-substring matcher over one session's deduplicated timeline. Returns one hit per matching (turn, block) with an occurrence count and a whitespace-collapsed context snippet, plus scope statistics.
+**Purpose:** The literal-substring matcher over one session's deduplicated timeline. Returns one hit per matching (turn, block) with an occurrence count and a whitespace-collapsed context snippet.
 **Reads:** The parsed payload, streamed block by block via `timeline.iter_block_texts`.
-**Writes:** Nothing — returns `(hits, stats)`.
+**Writes:** Nothing — returns the hit list.
 **Called by:** `__main__.py`.
 **Calls out:** `timeline`.
 
 ---
 
-### render.py (153 LOC)
+### render.py (149 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results, full-turn dump, and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (session + term header, then one line per hit), full-turn dump, and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -189,4 +189,10 @@ these ids.
 
 **A search hit is one (turn, block) pair, never one occurrence.** A block containing the term N
 times stays one hit carrying `×N`. Changing that granularity changes every reported hit count, so
-it is a contract, not a formatting detail.
+it is a contract, not a formatting detail. Since 2026-08-29 the header no longer states the totals,
+so hits, turns and occurrences are read off the lines — the `×N` markers are the only place the
+occurrence count survives.
+
+**An empty search term matches nothing, deliberately.** `str.count("")` counts positions, so a
+blank needle would report every block of the session as a hit. `find_matches` returns `[]` for it,
+and `__main__` rejects a whitespace-only term with exit 2 before that ever matters.

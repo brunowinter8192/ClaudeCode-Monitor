@@ -129,8 +129,8 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
     data, code = _load_for(dual_log_dir, args.session)
     if data is None:
         return code
-    hits, stats = find_matches(data["payload"], args.term, args.case_sensitive)
-    sys.stdout.write(render_search(data, args.term, args.case_sensitive, hits, stats))
+    hits = find_matches(data["payload"], args.term, args.case_sensitive)
+    sys.stdout.write(render_search(data, args.term, args.case_sensitive, hits))
     return 0
 
 

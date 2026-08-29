@@ -112,15 +112,11 @@ def render_timeline(data: dict) -> str:
 
 
 # Search result: header plus one line per matching block
-def render_search(data: dict, term: str, case_sensitive: bool, hits: list, stats: dict) -> str:
+def render_search(data: dict, term: str, case_sensitive: bool, hits: list) -> str:
     mode = "case-sensitive" if case_sensitive else "case-insensitive"
     lines = [
         f"session   {data['session']['stem']}",
         f'term      "{term}"  ({mode})',
-        f"scope     {stats['turns']} turns, {stats['blocks']} blocks, "
-        f"{fmt_chars(stats['chars'])} chars — last {data['family']} request",
-        f"hits      {len(hits)} in {stats['hit_turns']} turns "
-        f"({stats['occurrences']} occurrences)",
         "",
     ]
     if not hits:
