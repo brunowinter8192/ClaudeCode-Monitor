@@ -107,9 +107,9 @@ terminal text to stdout.
 
 ---
 
-### render.py (193 LOC)
+### render.py (190 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview with interleaved REQ markers and a `▶` anchor mark, and the full-content window dump), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview with a `▶` anchor mark and NO request markers, and the full-content window dump), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -204,6 +204,12 @@ or `--before 0` is raised to 30; only values above it are honoured. The mode exi
 surrounds a turn, and a reader who narrows the window defeats that without noticing. Read mode
 (`--full`) is the opposite: both bounds are REQUIRED explicit numbers with no floor, because there
 the caller is paying for every dumped character.
+
+**Request markers belong to `timeline`, not to `expand`.** The overview used to interleave the
+same `── REQ n ──` lines; they were dropped 2026-08-29 because `expand` navigates by turn index and
+a second numbering system in the same block is noise. `timeline` keeps them unchanged — it is the
+view where request boundaries ARE the structure. Anything reintroducing them here should first
+answer which of the two indices the reader is supposed to follow.
 
 **`--only` matches the MESSAGE-level classifier, not block types.** A turn whose message type is
 `tool_use` typically also carries `thinking` and `text` blocks, yet `--only thinking` will not
