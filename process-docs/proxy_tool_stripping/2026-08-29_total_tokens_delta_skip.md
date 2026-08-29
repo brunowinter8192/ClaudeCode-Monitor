@@ -1,119 +1,135 @@
-# total_tokens role=system Nuke Excluded from Strip/Inject Delta Accounting, 2026-08-29
+# total_tokens Nuke Removed from the Badge Signal, 2026-08-29
 
-Continues this area's badge line: the badge signal was moved off `fn_map` onto delta presence
-(`has_content` in `parser.py::accumulate_dual_log`), which made the badge agree with what the
-expanded view renders. That coupling is exactly what this entry exploits — and what forced the
-fix, because a per-request delta entry now means a per-request badge.
+Continues this area's badge line, which established that a strip/inject is badged ONLY when
+something substantial happens, and catalogued the earlier phantom classes (field overrides,
+`"."` placeholders, spurious newlines). This entry adds a new phantom class and, unlike the
+earlier ones, fixes it on the READ side.
 
-Related areas: `process-docs/proxy_tool_stripping/` established the "badge only for substantial
-events" principle and the earlier phantom-badge classes (field overrides, `"."` placeholders,
-spurious newlines); `process-docs/message_strip_fp_nuke/` established the anchored-match
-convention (never substring-anywhere) that the detection here follows.
+Related areas: `process-docs/proxy_instrumentation/` holds the badge's signal source (the move
+off `fn_map` onto delta presence, and the per-flow span-scoping work);
+`process-docs/message_strip_fp_nuke/` holds the anchored-match convention this detection follows.
 
 ## Symptom
 
 Newer CC appends a fresh `role='system'` message `<total_tokens>N tokens left</total_tokens>` to
 the END of the message history on EVERY request. `_apply_role_system_strip` nukes it to `"."`,
-which is correct. The REQ-header badge nevertheless showed `strip inject` on virtually every
-request, and the expanded view rendered an olive stripped span plus a green `"."` span for it.
-The rare real strip drowned in per-request noise.
+which is correct. The REQ-header badge nevertheless lit up on virtually every request, so the rare
+real strip drowned in per-request noise.
 
 ## Root cause — why hash-dedup structurally cannot help
 
 `_build_stripped_injected_deltas` suppresses a repeated change via a flat `loc_key → MD5[:10]`
-hash chain. For messages the `loc_key` is `msg.<msg_idx>.<blk_idx>`. Historical total_tokens
-messages keep their index, so their hash is stable and they ARE suppressed. The NEW one arrives
-at a new index every request, so it gets a NEW `loc_key` every request, and a `loc_key` that has
-never been seen before can never match a previous hash. The dedup is therefore not merely
-ineffective here, it is structurally incapable of firing.
+hash chain, where a message's `loc_key` is `msg.<msg_idx>.<blk_idx>`. Historical total_tokens
+messages keep their index, so their hash is stable and they ARE suppressed. The new one arrives at
+a NEW index every request, so it gets a `loc_key` never seen before, and a `loc_key` with no
+previous hash can never match one. The dedup is not merely ineffective here, it is structurally
+incapable of firing.
 
-Measured on `src/logs/dual_log/api_requests_opus_monitor_cc_1788011077` (46 requests replayed
-through the real pass pipeline, 2026-08-29): 41 requests carried a non-empty `messages_delta`,
-of which 30 were PURE total_tokens nukes, 3 mixed a total_tokens nuke with a real strip, and 8
-were real strips alone. So roughly three quarters of all badge-lighting requests carried no
-information a reader wanted.
+Measured on `src/logs/dual_log/api_requests_opus_monitor_cc_1788011077` (67 requests replayed
+through the real pass pipeline, 2026-08-29): 60 requests carried a non-empty `messages_delta`, of
+which 42 were PURE total_tokens nukes, 7 mixed a total_tokens nuke with a real strip, and 11 were
+real strips alone. Under the old rule 61 of 67 requests badged on each side.
 
-## Fix — suppress the accounting, never the strip
+## Design — write-side skip was built first, then rejected
 
-The strip stays untouched: the forwarded payload and the `_forwarded` log are byte-identical to
-before. Only `_process_messages_section` in `src/proxy/strip_inject_delta.py` changed — a block
-matching the class is skipped with a `continue` placed BEFORE the hash writes:
+The first implementation skipped the class in `_process_messages_section`, so no delta entry was
+written at all. It worked on the badge (measured at the time: entries with `messages_delta` fell
+41 → 11, all pure-total_tokens requests went silent, all real-strip entries stayed byte-identical),
+but it over-fulfilled: dropping the delta entry also dropped the expanded view's olive stripped
+span and green `"."` at that message, because the overlay dicts are populated from the same
+`messages_delta`. The requirement is that the spans keep rendering and only the header goes quiet.
+
+So the suppression moved read-side, into `accumulate_dual_log`'s `has_content` computation ONLY.
+The delta writer is untouched and its output is byte-identical to before, which is what keeps the
+rendering intact.
 
 ```python
-_TOTAL_TOKENS_NUKE_RE = re.compile(r"^<total_tokens>\d+ tokens left</total_tokens>$")
-
-if (om_norm.get("role") == "system"
-        and len(s_texts) == 1
-        and _TOTAL_TOKENS_NUKE_RE.match(s_texts[0].strip())):
-    continue
+# src/proxy_display/parser.py — badge-only, nothing else in the accumulator sees this
+def _msgs_delta_is_substantial(msgs_delta: dict, entry_type: str) -> bool: ...
 ```
 
-No read-side change was needed, and none was made. Because `has_content` is pure delta presence,
-removing the write silences the badge, the msg-index overlay lookup and the span rendering in one
-move. That is the practical payoff of having moved the badge onto delta presence earlier in this
-area — the write side became the single lever for all three surfaces.
+Two classes stop counting toward the badge:
 
-### Three design points that carry the fix
+- **stripped side:** a message whose blocks' stripped texts amount to exactly ONE text
+  full-matching `^<total_tokens>\d+ tokens left</total_tokens>$`.
+- **injected side:** a block whose injected spans are only `"."` — the API-required empty-block
+  filler, not a real injection.
 
-**Doubly anchored detection.** The condition requires `role == 'system'` AND exactly ONE stripped
-span that FULL-matches the anchored pattern. In the same session the identical string appears 175
-times as quoted content — 82 in `tool_result`, 79 in `role='assistant'` text, 14 in `role='user'`
-text — against 575 genuine `role='system'` nukes. A substring-anywhere check would have swallowed
-real strips of messages that merely discuss the marker, which is precisely the FP-nuke failure
-mode this codebase has hit repeatedly.
+The overlay section dicts and `_msg_idx_by_flow_id` are populated from the raw delta exactly as
+before, so span rendering and per-flow scoping are unchanged.
 
-**Per-block, not per-message.** Three requests in the measured session mixed a total_tokens nuke
-with a genuine strip. A message-level skip would have discarded the genuine one. The block-level
-skip drops only the marker block and leaves the real strip at its own index.
+### Consequences worth knowing before touching this
 
-**Hash entries omitted rather than written.** The `loc_key` is left out of the returned hash state
-entirely. The hash exists only to suppress a REPEAT of identical content at the same `loc_key`,
-and this class is skipped unconditionally, so its hash would be dead state that also grows the
-chain on every request. Omitting it cannot swallow a later emission: if different content ever
-lands on that `loc_key`, the lookup yields `None`, and `None` differs from the new hash exactly as
-a stored total_tokens hash would have. Both variants are behaviourally identical on the emitted
-deltas, so the one without dead state was chosen.
+**Header and expanded view are now deliberately not one-to-one.** The badge's move onto delta
+presence was originally motivated by closing exactly that disagreement — a `"."`-filler injection
+rendered a green span while the header showed no `inject`. This change re-opens that gap on
+purpose, because the two surfaces answer different questions: the header answers "is there
+anything here worth opening", the expanded view answers "what exactly changed". Anyone who reads
+the older rationale should know it was superseded here, not forgotten.
+
+**Every `"."`-nuke now badges `strip` alone, never `strip inject`.** That covers the task-tools
+nag, deferred-tools, date-changed and mid-conversation notices, not just total_tokens. It is
+intended: their strip is real signal, their `"."` is not an injection. A genuine content injection
+(bg-exit wake-up, TN wake-up, system rules) still badges `inject`.
+
+**The read side has no role field.** The dual-log line carries `messages_delta` but not the
+message's role, so the write side's second anchor (`role == 'system'`) is unavailable here. The
+anti-FP property rests entirely on the text shape: exactly ONE stripped text, full-matching the
+anchored pattern. This holds because no strip pass removes a bare, otherwise-empty total_tokens
+marker from a non-system message — a quoted marker always sits inside surrounding content, which
+yields either more than one text or a non-matching one. In the measured session the string appears
+175 times as quoted content (82 in `tool_result`, 79 in `role='assistant'` text, 14 in
+`role='user'` text) against 575 genuine `role='system'` nukes, and none of the quotes produce the
+bare-marker shape.
+
+**The stripped rule is per-message, the injected rule per-block.** Seven requests in the measured
+session mixed a total_tokens nuke with a genuine strip; a per-request rule would have silenced
+those too.
 
 ## Verification (as of 2026-08-29)
 
-**Before/after replay over the real pipeline.** `dev/proxy_dual_log/tt_delta_skip_replay.py
---compare` drives each recorded original payload through `apply_modification_rules` (the
-production source of `all_ops`), then through the real `_build_stripped_injected_deltas`, then
-through the real `accumulate_dual_log`. Baseline is reproduced in the same process by patching the
-class regex to one that matches nothing, so both sides differ in nothing else. Result on the
-1788011077 session: entries with `messages_delta` fell 41 → 11 on the stripped side and 40 → 10 on
-the injected side; `has_content` True fell 42 → 12 per side; all 30 pure total_tokens requests
-compute `has_content` False on BOTH sides; all 8 real-strip requests are byte-identical before and
-after; the 3 mixed requests keep their entries, which is what leaves 11.
+**Replay over the real pipeline.** `dev/proxy_dual_log/tt_delta_skip_replay.py --compare` drives
+each recorded original payload through `apply_modification_rules` (the production source of
+`all_ops`), then the real `_build_stripped_injected_deltas`, then the real `accumulate_dual_log`.
+The old badge rule is reproduced in the same process by patching `_msgs_delta_is_substantial` to
+`bool(messages_delta)`, so both readings differ in nothing else. On the 1788011077 session:
+the write side kept all 60 stripped and 59 injected entries with `messages_delta`; the badge
+signal fell from 61 to 19 on the stripped side and from 61 to 9 on the injected side; all 42
+pure-total_tokens requests went badge-silent on both sides while all 42 still carry their stripped
+spans; all 11 real-strip and all 7 mixed requests still badge `strip`.
 
-**Synthetic guards.** `dev/proxy/test_strip_fix.py` went from 159 to 192 passing checks, the 33 new
-ones in TT01-TT08: the class produces no entry and computes `has_content` False; a `role='user'`
-message and a `tool_result` quoting the same string keep their entries; nag, deferred-tools,
-date-changed and mid-conversation `role='system'` nukes keep their entries and their `'RS'`
-attribution; prefixed, suffixed, digit-less and reworded near-misses keep their entries while a
-whitespace-padded exact marker is skipped; a mixed request keeps its real strip; the skipped
-`loc_key` is absent from the hash state and a later real strip at that same `loc_key` still emits.
-`dev/proxy_dual_log/test_composition_invariant.py` stayed at 12/12.
+**Synthetic guards.** `dev/proxy/test_strip_fix.py` went from 159 to 193 passing checks, the 34 new
+ones in TT01-TT08: the writer still emits full entries with spans and keeps its `'RS'` attribution;
+the badge is False on both sides for the class while the overlay dicts and `_msg_idx_by_flow_id`
+still carry it; nag, deferred-tools, date-changed and mid-conversation nukes badge `strip` True and
+`inject` False; a real bg-exit injection badges both; the marker quoted with surrounding content in
+a `tool_result` or inline still badges; prefixed, suffixed, digit-less and reworded near-misses
+still badge while a whitespace-padded exact marker does not; a mixed request still badges and keeps
+both message indices in scope; system-only and tools-only deltas still badge and a fields-only
+delta still does not. `dev/proxy_dual_log/test_composition_invariant.py` stayed at 12/12.
 
 **Three named verification consumers could not contribute, all for reasons predating this work.**
 `dev/proxy_dual_log/verify_strip_inject.py` raises `KeyError: 'spans'` on any log pair with a
 changed message block, because `_diff_messages` stopped emitting a `spans` key when the ops /
 `compose_block` architecture replaced it, while the script still reads it in its span-reconstruction
-check. Independently, that script calls the delta builder WITHOUT `all_ops`, so its message section
-produces no spans at all and it is structurally blind to this change — verified directly, both
-`messages_delta` sides come back empty in that mode. `dev/proxy_instrumentation/p2_badge_words_probe.py`
-and `p3_badge_inline_probe.py` reference recorded sessions (1785364138, 1785347492, 1786052022) that
-no longer exist on disk and abort while loading. All three were confirmed failing on an unmodified
-tree and were deliberately left untouched; the replay above was written to replace their coverage
-for this change.
+check; independently it calls the delta builder WITHOUT `all_ops`, so its message section produces
+no spans at all. `dev/proxy_instrumentation/p2_badge_words_probe.py` and `p3_badge_inline_probe.py`
+reference recorded sessions (1785364138, 1785347492, 1786052022) that no longer exist on disk and
+abort while loading. All three were confirmed failing on an unmodified tree and left untouched; the
+replay above was written to replace their coverage for this change. Note that p2's and p3's fixture
+expectations encode the superseded one-to-one rule (`"."`-filler cases expected `strip inject`), so
+reviving them would require updating those expectations, not just restoring the logs.
 
-**Not verified:** a live proxy restart against a real CC session. The running proxy uses a frozen
-source copy and only picks up the change after a restart.
+**Not verified:** a live proxy restart against a real CC session, and the rendered pane itself. The
+running proxy uses a frozen source copy and only picks up the change after a restart; the span
+rendering was verified through the accumulator's overlay dicts, not by inspecting rendered output.
 
 ## Relevant Symbols / Paths
 
-- `_process_messages_section()`, `_TOTAL_TOKENS_NUKE_RE` (`src/proxy/strip_inject_delta.py`) — the skip
+- `_msgs_delta_is_substantial()`, `_TOTAL_TOKENS_NUKE_RE`, `accumulate_dual_log()`
+  (`src/proxy_display/parser.py`) — the badge filter, the only behavior change
+- `_process_messages_section()` (`src/proxy/strip_inject_delta.py`) — the writer, deliberately unchanged
 - `_apply_role_system_strip()` (`src/proxy/message_passes.py`) — the nuke itself, deliberately unchanged
-- `accumulate_dual_log()` (`src/proxy_display/parser.py`) — `has_content` as pure delta presence, unchanged
-- `dev/proxy_dual_log/tt_delta_skip_replay.py` — before/after replay harness
+- `_build_req_header_line()` (`src/proxy_display/render_turn.py`) — badge consumer, unchanged
+- `dev/proxy_dual_log/tt_delta_skip_replay.py` — replay harness
 - Ground-truth log: `src/logs/dual_log/api_requests_opus_monitor_cc_1788011077_*.jsonl`

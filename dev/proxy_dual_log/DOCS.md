@@ -60,6 +60,14 @@ Simulates `_build_stripped_injected_deltas` on every request pair from a real `_
 **Verified:** PASS 46/46 on `api_requests_opus_monitor_cc_1780497198` (historical log data).
 Live proxy writing `_stripped`/`_injected` during a real session: pending user test session.
 
+**BROKEN as of 2026-08-29 — two independent defects, both predating that date.** (1) Check 1 reads
+`bd["spans"]` per message block, but `_diff_messages` stopped emitting a `spans` key when the ops /
+`compose_block` architecture replaced it — the script raises `KeyError: 'spans'` on any log pair
+where at least one message block differs. (2) It calls `_build_stripped_injected_deltas` WITHOUT
+`all_ops`, so the message section produces no spans at all and its message-level delta coverage is
+vacuous even if (1) were fixed. Repairing it means feeding real ops (see `tt_delta_skip_replay.py`
+for how) and reworking Check 1's message branch, not a one-line patch.
+
 Imports `src.proxy.diff_engine` and `src.proxy.logging` via `sys.path.insert(0, parents[2])`.
 
 **Usage (from project root):**
@@ -79,6 +87,47 @@ Imports `src.proxy.diff_engine` and `src.proxy.logging` via `sys.path.insert(0, 
 | `--forwarded` | Named alternative for forwarded path |
 
 **Exit codes:** 0 = all 3 checks passed for all requests; 1 = at least one hard-fail.
+
+---
+
+### tt_delta_skip_replay.py (228 LOC)
+
+**Purpose:** Before/after proof for the read-side badge suppression of the per-request
+`<total_tokens>N tokens left</total_tokens>` nuke. Replays a recorded `_original.jsonl` through the
+REAL production pass pipeline (`rules.apply_modification_rules`, the actual source of `all_ops`),
+feeds `(orig_payload, fwd_payload, all_ops)` into the REAL `_build_stripped_injected_deltas` — the
+same call `addon.py` makes — and runs the resulting dual-log lines through the REAL
+`parser.accumulate_dual_log`. Unlike `verify_strip_inject.py` it therefore exercises the message
+delta path end to end, because it supplies `all_ops`.
+
+Reports two things separately: the WRITE side (entries carrying `messages_delta`, which must be
+unchanged — the spans keep rendering) and the BADGE signal (`has_content`) under the old rule vs
+the new one. The old rule is reproduced in-process by monkeypatching
+`parser._msgs_delta_is_substantial` to `bool(messages_delta)`, so both readings differ in nothing
+else. Classifies each request as `pure_total_tokens` / `mixed` / `real_strip` / `no_msg_delta` by
+inspecting the original payload's messages.
+
+**Verified:** PASS on `api_requests_opus_monitor_cc_1788011077` (67 requests, 2026-08-29): write
+side unchanged at 60 stripped / 59 injected entries with `messages_delta`; badge signal 61 → 19
+stripped and 61 → 9 injected; 42/42 pure-total_tokens requests badge-silent on both sides while
+42/42 still carry their stripped spans; 11/11 real-strip and 7/7 mixed requests still badge `strip`.
+
+Recorded dual-logs are read from the MAIN checkout (`MAIN_REPO_ROOT`), since they are untracked
+data not duplicated into worktrees; the code under test is imported from the worktree root.
+
+**Usage (from project root):**
+```bash
+./venv/bin/python dev/proxy_dual_log/tt_delta_skip_replay.py api_requests_opus_monitor_cc_1788011077 --compare
+```
+
+**CLI flags:**
+
+| Flag | Description |
+|---|---|
+| `stem` (positional) | Log stem without the `_original.jsonl` suffix |
+| `--compare` | Report the badge signal under the old rule vs the new one, with PASS/FAIL |
+
+**Exit codes:** 0 = every class behaves as specified; 1 = at least one class regressed.
 
 ---
 
