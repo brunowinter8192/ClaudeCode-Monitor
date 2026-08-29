@@ -2,6 +2,7 @@
 
 Commands:
     sessions                 list every session (start, context, stem), newest first
+    sessions <context>       keep only sessions whose context contains that text (substring, any case)
     sessions --since D --until D   bound that listing by start day, inclusive, YYYY-MM-DD
     timeline <session>       deduplicated turn timeline of one session, from its last request line
     timeline <s> --turn N --full   full content of one turn
@@ -66,6 +67,8 @@ def _parse_args(argv: list) -> argparse.Namespace:
     )
     sub = parser.add_subparsers(dest="command", required=True)
     sessions = sub.add_parser("sessions", help="list all sessions, newest first")
+    sessions.add_argument("context", nargs="?", default="", metavar="CONTEXT",
+                          help="only sessions whose context contains this text, e.g. websearch")
     sessions.add_argument("--since", default="", metavar="YYYY-MM-DD",
                           help="only sessions started on or after this day (inclusive)")
     sessions.add_argument("--until", default="", metavar="YYYY-MM-DD",
@@ -96,7 +99,12 @@ def _run_sessions(dual_log_dir, args: argparse.Namespace) -> int:
         if value and not _valid_day(value):
             print(f"{flag}: {value!r} is not a valid date, expected YYYY-MM-DD", file=sys.stderr)
             return 2
-    sessions = filter_sessions(list_sessions(dual_log_dir), args.since, args.until)
+    sessions = filter_sessions(
+        list_sessions(dual_log_dir),
+        context=args.context,
+        since=args.since,
+        until=args.until,
+    )
     sys.stdout.write(render_sessions(sessions))
     return 0
 

@@ -121,22 +121,29 @@ def list_sessions(dual_log_dir: Path) -> list:
     return sessions
 
 
-# Keep the sessions whose start day falls inside the inclusive [since, until] window.
-# Compared on the YYYY-MM-DD prefix of the ISO start timestamp — lexicographic order equals
-# calendar order for that format, so no timezone maths is involved. A session with no start
-# timestamp cannot be placed on a calendar, so any active filter drops it.
-def filter_sessions(sessions: list, since: str = "", until: str = "") -> list:
-    if not since and not until:
+# Keep the sessions matching every active criterion (AND): a case-insensitive substring of the
+# rendered context value, and an inclusive [since, until] window on the start day.
+#
+# Days are compared on the YYYY-MM-DD prefix of the ISO start timestamp — lexicographic order
+# equals calendar order for that format, so no timezone maths is involved. A session with no
+# start timestamp cannot be placed on a calendar, so an active DATE filter drops it; a context
+# filter alone still keeps it, because its context is known either way.
+def filter_sessions(sessions: list, context: str = "", since: str = "", until: str = "") -> list:
+    if not context and not since and not until:
         return sessions
+    needle = context.lower()
     kept = []
     for session in sessions:
-        day = (session.get("start") or "")[:10]
-        if not day:
+        if needle and needle not in session.get("context", "").lower():
             continue
-        if since and day < since:
-            continue
-        if until and day > until:
-            continue
+        if since or until:
+            day = (session.get("start") or "")[:10]
+            if not day:
+                continue
+            if since and day < since:
+                continue
+            if until and day > until:
+                continue
         kept.append(session)
     return kept
 
