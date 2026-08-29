@@ -148,26 +148,41 @@ def _skipped_lines(skipped: int) -> list:
 # window is listed.
 def render_expand_overview(data: dict, anchor: int, start: int, end: int) -> str:
     turns = data["turns"]
+    times = data.get("turn_times", {})
     lines = [
         f"session   {data['session']['stem']}",
         f"context   {data['session']['context']}",
-        f"window    turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}",
+        f"window    turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}, "
+        f"{_window_date(data, anchor)}",
         "",
     ]
     for turn in turns[start:end + 1]:
         marker = "▶" if turn["index"] == anchor else " "
         lines.append(
-            f"{marker} #{turn['index']:<4} {turn['role']:9} {turn['type']:16} "
-            f"{fmt_chars(turn['chars']):>7}"
+            f"{marker} #{turn['index']:<4} {_clock(times.get(turn['index'])):8} "
+            f"{turn['role']:9} {turn['type']:16} {fmt_chars(turn['chars']):>7}"
         )
     return "\n".join(lines) + "\n"
+
+
+# HH:MM:SS of the request that first carried a turn; "?" when it has no reliable time
+def _clock(timestamp) -> str:
+    return timestamp[11:19] if timestamp else "?"
+
+
+# Calendar day for the window header — the anchor's own day, else the session's start day
+def _window_date(data: dict, anchor: int) -> str:
+    stamp = data.get("turn_times", {}).get(anchor) or data["session"].get("start", "")
+    return stamp[:10] if stamp else "?"
 
 
 # expand --full: the complete content of each selected turn in the window
 def render_expand_full(data: dict, anchor: int, start: int, end: int,
                        only: str, dumped: list) -> str:
     turns = data["turns"]
-    scope = f"turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}"
+    times = data.get("turn_times", {})
+    scope = (f"turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}, "
+             f"{_window_date(data, anchor)}")
     lines = [
         f"session   {data['session']['stem']}",
         f"context   {data['session']['context']}",
@@ -180,7 +195,8 @@ def render_expand_full(data: dict, anchor: int, start: int, end: int,
     for turn, blocks in dumped:
         marker = "▶" if turn["index"] == anchor else " "
         lines.append(
-            f"{marker} ═══ #{turn['index']} {turn['role']} {turn['type']} "
+            f"{marker} ═══ #{turn['index']} {_clock(times.get(turn['index']))} "
+            f"{turn['role']} {turn['type']} "
             f"{fmt_chars(turn['chars'])} chars, {len(blocks)} block(s) ═══"
         )
         for position, (label, chars, text) in enumerate(blocks):
