@@ -1,4 +1,5 @@
 # INFRASTRUCTURE
+from .classifier import matches_only
 from .timeline import boundaries_by_index
 
 # FUNCTIONS
@@ -146,22 +147,29 @@ def _skipped_lines(skipped: int) -> list:
 # anchor turn marked. No block sub-lines, no previews, and no REQ boundary markers: this mode
 # navigates by turn index, so the request view is noise here (timeline keeps it). Every turn in the
 # window is listed.
-def render_expand_overview(data: dict, anchor: int, start: int, end: int) -> str:
+def render_expand_overview(data: dict, anchor: int, start: int, end: int, only: str = "",
+                           wanted: tuple = ("", "")) -> str:
     turns = data["turns"]
     times = data.get("turn_times", {})
     lines = [
         f"session   {data['session']['stem']}",
         f"context   {data['session']['context']}",
         f"window    turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}, "
-        f"{_window_date(data, anchor)}",
+        f"{_window_date(data, anchor)}" + (f", only {only}" if only else ""),
         "",
     ]
+    shown = 0
     for turn in turns[start:end + 1]:
+        if not matches_only(turn["role"], turn["type"], wanted):
+            continue
+        shown += 1
         marker = "▶" if turn["index"] == anchor else " "
         lines.append(
             f"{marker} #{turn['index']:<4} {_clock(times.get(turn['index'])):8} "
             f"{turn['role']:9} {turn['type']:16} {fmt_chars(turn['chars']):>7}"
         )
+    if not shown:
+        lines.append(f"no turn in the window matches --only {only}")
     return "\n".join(lines) + "\n"
 
 

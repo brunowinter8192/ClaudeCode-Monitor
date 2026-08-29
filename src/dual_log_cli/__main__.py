@@ -7,6 +7,7 @@ Commands:
     timeline <session>       deduplicated turn timeline of one session, from its last request line
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
+                             --only restricts hits to one classifier (role, type, or role/type)
     expand <s> <turn>        classifier lines around one turn (overview mode)
     expand <s> <turn> --full --before N --after N [--only X]   full content of the window
 
@@ -29,6 +30,7 @@ import os
 import sys
 from datetime import datetime
 
+from .classifier import BadClassifierError, ONLY_FORMS, matches_only, parse_only
 from .discovery import (
     AmbiguousSessionError,
     UnknownSessionError,
@@ -111,7 +113,7 @@ def _parse_args(argv: list) -> argparse.Namespace:
     expand.add_argument("--full", action="store_true",
                         help="dump full turn content instead of classifier lines; requires --before and --after")
     expand.add_argument("--only", default="", metavar="CLASSIFIER",
-                        help="with --full: dump only turns whose role or message type matches, e.g. tool_result, thinking, user")
+                        help=f"keep only turns matching {ONLY_FORMS}; works in both modes")
     search = sub.add_parser("search", help="find a term across the deduplicated timelines")
     search.add_argument("term", help="literal term to look for (no regex)")
     search.add_argument("scope", nargs="?", default="", metavar="SCOPE",
@@ -120,6 +122,8 @@ def _parse_args(argv: list) -> argparse.Namespace:
                         help="only sessions started on or after this day (inclusive)")
     search.add_argument("--until", default="", metavar="YYYY-MM-DD",
                         help="only sessions started on or before this day (inclusive)")
+    search.add_argument("--only", default="", metavar="CLASSIFIER",
+                        help=f"restrict hits to turns matching {ONLY_FORMS}")
     search.add_argument("--case-sensitive", action="store_true", help="match case exactly (default: ignore case)")
     return parser.parse_args(argv)
 
@@ -178,6 +182,11 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
     code = _reject_bad_days(args)
     if code:
         return code
+    try:
+        wanted = parse_only(args.only)
+    except BadClassifierError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
     sessions = filter_sessions(
         list_sessions(dual_log_dir),
         scope=args.scope,
@@ -191,7 +200,7 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
         except Exception:
             skipped += 1
             continue
-        hits = find_matches(data["payload"], args.term, args.case_sensitive)
+        hits = find_matches(data["payload"], args.term, args.case_sensitive, wanted)
         if hits:
             results.append((session, hits))
     sys.stdout.write(render_search(args.term, args.case_sensitive, results, skipped))
@@ -216,22 +225,23 @@ def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
     if args.turn < 0 or args.turn >= len(turns):
         print(f"turn {args.turn} out of range (0..{len(turns) - 1})", file=sys.stderr)
         return 2
-    if args.full:
-        return _run_expand_full(data, args)
-    if args.only:
-        print("--only applies to --full only; overview mode always lists every turn in the window",
-              file=sys.stderr)
+    try:
+        wanted = parse_only(args.only)
+    except BadClassifierError as exc:
+        print(str(exc), file=sys.stderr)
         return 2
+    if args.full:
+        return _run_expand_full(data, args, wanted)
     # floor, not a default: an explicit smaller value is raised too
     before = max(_OVERVIEW_FLOOR, args.before if args.before is not None else _OVERVIEW_FLOOR)
     after = max(_OVERVIEW_FLOOR, args.after if args.after is not None else _OVERVIEW_FLOOR)
     start, end = _window(args.turn, before, after, len(turns))
-    sys.stdout.write(render_expand_overview(data, args.turn, start, end))
+    sys.stdout.write(render_expand_overview(data, args.turn, start, end, args.only, wanted))
     return 0
 
 
 # expand --full — both bounds explicit, no floor, optional classifier filter
-def _run_expand_full(data: dict, args: argparse.Namespace) -> int:
+def _run_expand_full(data: dict, args: argparse.Namespace, wanted: tuple) -> int:
     if args.before is None or args.after is None:
         print("--full requires both bounds: --full --before N --after N (N >= 0)", file=sys.stderr)
         return 2
@@ -240,11 +250,10 @@ def _run_expand_full(data: dict, args: argparse.Namespace) -> int:
         return 2
     turns = data["turns"]
     start, end = _window(args.turn, args.before, args.after, len(turns))
-    needle = args.only.lower()
     dumped = [
         (turn, full_turn(data["payload"], turn["index"]))
         for turn in turns[start:end + 1]
-        if not needle or needle in (turn["role"].lower(), turn["type"].lower())
+        if matches_only(turn["role"], turn["type"], wanted)
     ]
     sys.stdout.write(render_expand_full(data, args.turn, start, end, args.only, dumped))
     return 0
