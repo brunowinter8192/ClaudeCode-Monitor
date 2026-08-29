@@ -58,7 +58,7 @@ def _timeline_header(data: dict) -> list:
         f"({data['haiku_lines_skipped']} trailing non-conversation lines skipped)",
         f"source    last {data['family']} request of _original, {fmt_bytes(data['line_bytes'])}, "
         f"{fmt_timestamp(entry.get('timestamp', ''))}",
-        f"turns     {len(data['turns'])} messages, {fmt_chars(sum(t['chars'] for t in data['turns']))} chars",
+        f"msgs      {len(data['turns'])} messages, {fmt_chars(sum(t['chars'] for t in data['turns']))} chars",
     ]
     if restarts:
         first = restarts[0]["request_no"]
@@ -89,7 +89,7 @@ def _boundary_line(group: list) -> str:
     )
 
 
-# Deduplicated turn timeline: request markers plus one line per turn and per block
+# Deduplicated msg timeline: request markers plus one line per msg and per block
 def render_timeline(data: dict) -> str:
     lines = _timeline_header(data)
     grouped = boundaries_by_index(data["boundaries"])
@@ -143,37 +143,45 @@ def _skipped_lines(skipped: int) -> list:
     return ["", f"({skipped} session{'s' if skipped != 1 else ''} skipped — timeline could not be loaded)"]
 
 
-# expand overview: classifier lines only — turn index, role, type, chars — for the window, with the
-# anchor turn marked. No block sub-lines, no previews, and no REQ boundary markers: this mode
+# expand overview: classifier rows only — msg index, time, role, type-or-block-count, chars — for
+# the window, with the anchor msg marked. No block sub-lines, no previews, and no REQ boundary markers: this mode
 # navigates by turn index, so the request view is noise here (timeline keeps it). Every turn in the
 # window is listed.
 def render_expand_overview(data: dict, anchor: int, start: int, end: int, only: str = "",
                            wanted: tuple = ("", "")) -> str:
-    turns = data["turns"]
+    msgs = data["turns"]
     times = data.get("turn_times", {})
     lines = [
         f"session   {data['session']['stem']}",
         f"context   {data['session']['context']}",
-        f"window    turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}, "
+        f"window    msgs {start}-{end} of 0-{len(msgs) - 1}, anchor #{anchor}, "
         f"{_window_date(data, anchor)}" + (f", only {only}" if only else ""),
         "",
     ]
     shown = 0
-    for turn in turns[start:end + 1]:
-        if not matches_only(turn["role"], turn["type"], wanted):
+    for msg in msgs[start:end + 1]:
+        if not matches_only(msg["role"], [b["type"] for b in msg["blocks"]], wanted):
             continue
         shown += 1
-        marker = "▶" if turn["index"] == anchor else " "
+        marker = "▶" if msg["index"] == anchor else " "
+        blocks = msg["blocks"]
+        # pane grammar: one block keeps its type inline, several collapse to a block COUNT and
+        # always list their blocks as sub-rows — the aggregated message type is not shown then,
+        # because it names only one of the blocks it stands for
+        head = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
         lines.append(
-            f"{marker} #{turn['index']:<4} {_clock(times.get(turn['index'])):8} "
-            f"{turn['role']:9} {turn['type']:16} {fmt_chars(turn['chars']):>7}"
+            f"{marker} #{msg['index']:<4} {_clock(times.get(msg['index'])):8} "
+            f"{msg['role']:9} {head:16} {fmt_chars(msg['chars']):>7}"
         )
+        if len(blocks) > 1:
+            for position, block in enumerate(blocks):
+                lines.append(f"       [{position}] {block['type']:14} {fmt_chars(block['chars']):>7}")
     if not shown:
-        lines.append(f"no turn in the window matches --only {only}")
+        lines.append(f"no msg in the window matches --only {only}")
     return "\n".join(lines) + "\n"
 
 
-# HH:MM:SS of the request that first carried a turn; "?" when it has no reliable time
+# HH:MM:SS of the request that first carried a msg; "?" when it has no reliable time
 def _clock(timestamp) -> str:
     return timestamp[11:19] if timestamp else "?"
 
@@ -184,12 +192,12 @@ def _window_date(data: dict, anchor: int) -> str:
     return stamp[:10] if stamp else "?"
 
 
-# expand --full: the complete content of each selected turn in the window
+# expand --full: the complete content of each selected msg in the window
 def render_expand_full(data: dict, anchor: int, start: int, end: int,
                        only: str, dumped: list) -> str:
-    turns = data["turns"]
+    msgs = data["turns"]
     times = data.get("turn_times", {})
-    scope = (f"turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}, "
+    scope = (f"msgs {start}-{end} of 0-{len(msgs) - 1}, anchor #{anchor}, "
              f"{_window_date(data, anchor)}")
     lines = [
         f"session   {data['session']['stem']}",
@@ -198,14 +206,13 @@ def render_expand_full(data: dict, anchor: int, start: int, end: int,
         "",
     ]
     if not dumped:
-        lines.append(f"no turn in the window matches --only {only}" if only else "window is empty")
+        lines.append(f"no msg in the window matches --only {only}" if only else "window is empty")
         return "\n".join(lines) + "\n"
-    for turn, blocks in dumped:
-        marker = "▶" if turn["index"] == anchor else " "
+    for msg, blocks in dumped:
+        marker = "▶" if msg["index"] == anchor else " "
         lines.append(
-            f"{marker} ═══ #{turn['index']} {_clock(times.get(turn['index']))} "
-            f"{turn['role']} {turn['type']} "
-            f"{fmt_chars(turn['chars'])} chars, {len(blocks)} block(s) ═══"
+            f"{marker} ═══ msg #{msg['index']} {_clock(times.get(msg['index']))} "
+            f"{msg['role']} {fmt_chars(msg['chars'])} chars, {len(blocks)} block(s) ═══"
         )
         for position, (label, chars, text) in enumerate(blocks):
             lines.append(f"── block {position}  {label}  {fmt_chars(chars)} chars ──")

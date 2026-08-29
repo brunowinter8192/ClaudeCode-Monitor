@@ -77,8 +77,9 @@ def build_turns(payload: dict) -> list:
     return turns
 
 
-# Stream every block of every turn as {turn, role, type, block, label, text} — `type` is the
-# MESSAGE-level classifier, carried so callers can filter turns without re-summarizing. A generator, so a
+# Stream every block of every message as {turn, role, block_types, block, label, text}.
+# `block_types` is every block type the MESSAGE carries, so a caller can apply a block-level
+# --only to whole messages without re-summarizing them. A generator, so a
 # 14 MB payload is never doubled by holding all full_text values at once — build_turns drops
 # them for exactly the same reason.
 def iter_block_texts(payload: dict):
@@ -87,11 +88,12 @@ def iter_block_texts(payload: dict):
         role = summary.get("role", "?")
         blocks = summary.get("blocks", [])
         if blocks:
+            block_types = [b.get("type", "text") for b in blocks]
             for position, block in enumerate(blocks):
                 yield {
                     "turn": index,
                     "role": role,
-                    "type": summary.get("type", "text"),
+                    "block_types": block_types,
                     "block": position,
                     "label": _block_label(block),
                     "text": block.get("full_text", "") or "",
@@ -100,7 +102,7 @@ def iter_block_texts(payload: dict):
             yield {
                 "turn": index,
                 "role": role,
-                "type": summary.get("type", "text"),
+                "block_types": [summary.get("type", "text")],
                 "block": 0,
                 "label": summary.get("type", "text"),
                 "text": summary.get("content_preview", "") or "",

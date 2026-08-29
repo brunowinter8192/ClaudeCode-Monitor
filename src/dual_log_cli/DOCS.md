@@ -5,7 +5,8 @@
 Read-only command-line inspector for the six-stream dual-log quartet in `src/logs/dual_log/`
 written by `src/proxy/addon.py`. Turns ~15 GB of unreadable JSONL — every `_original` line
 re-embeds the entire conversation history, so grep and head report every content hit once per
-subsequent request — into a session inventory and a deduplicated per-session turn timeline.
+subsequent request — into a session inventory and a deduplicated per-session msg timeline. The user-facing unit is the
+msg (one API message) and its blocks, matching the proxy pane's display grammar.
 Touch this package to add read-side views over the dual logs. Do NOT add anything here that
 writes, creates or locks a path under `src/logs/dual_log/`: the logs are frozen evidence and the
 proxy appends to them live during a session.
@@ -17,8 +18,8 @@ proxy appends to them live during a session.
 ```bash
 ./venv/bin/python -m src.dual_log_cli sessions [CONTEXT] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ./venv/bin/python -m src.dual_log_cli timeline <stem-or-substring>
-./venv/bin/python -m src.dual_log_cli expand <stem-or-substring> <turn> [--before N] [--after N] [--only CLASSIFIER]
-./venv/bin/python -m src.dual_log_cli expand <stem> <turn> --full --before N --after N [--only CLASSIFIER]
+./venv/bin/python -m src.dual_log_cli expand <stem-or-substring> <msg> [--before N] [--after N] [--only CLASSIFIER]
+./venv/bin/python -m src.dual_log_cli expand <stem> <msg> --full --before N --after N [--only CLASSIFIER]
 ./venv/bin/python -m src.dual_log_cli search <term> [SCOPE] [--since D] [--until D] [--only CLASSIFIER] [--case-sensitive]
 ```
 
@@ -41,13 +42,13 @@ parses only that line → `timeline` builds turn rows via `proxy.message_summary
 boundaries from `_forwarded.counts.messages`. `search` selects a SET of sessions the same way
 `sessions` does (scope + date window), then repeats that per-session reconstruction for each one
 and streams its blocks through the matcher, skipping any session whose timeline will not load.
-`expand` reuses the timeline of one session and slices an anchor-centred window out of its turn
-rows — classifier lines by default, full block content with `--full` → `render` emits plain
+`expand` reuses the timeline of one session and slices an anchor-centred window out of its msg
+rows — classifier rows by default, full block content with `--full` → `render` emits plain
 terminal text to stdout.
 
 ## Modules
 
-### __main__.py (280 LOC)
+### __main__.py (282 LOC)
 
 **Purpose:** argparse dispatch for the four subcommands plus the optional `CONTEXT` / `SCOPE` positionals and the `--since` / `--until` / `--before` / `--after` / `--full` / `--only` / `--case-sensitive` variants, `expand`'s two-mode argument rules (`_run_expand` / `_run_expand_full` / `_window`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
@@ -67,9 +68,9 @@ terminal text to stdout.
 
 ---
 
-### classifier.py (47 LOC, 2026-08-29)
+### classifier.py (50 LOC, 2026-08-29)
 
-**Purpose:** The `--only` vocabulary and its two operations, shared by `expand` (both modes) and `search`. `ROLES` (3) and `TYPES` (8) are the message-level classifiers a turn can carry; `parse_only` turns a spec into a `(role, type)` pair or raises `BadClassifierError`; `matches_only` applies it. `ONLY_FORMS` is the accepted-forms sentence, interpolated into both `--help` texts so the syntax is documented where it is used.
+**Purpose:** The `--only` vocabulary and its two operations, shared by `expand` (both modes) and `search`. `ROLES` (3) and `TYPES` (9) are the BLOCK types a msg can carry — the real content blocks (text, thinking, tool_use, tool_result, image) plus the pseudo-types a str-content msg contributes as its single synthetic block; `parse_only` turns a spec into a `(role, type)` pair or raises `BadClassifierError`; `matches_only` applies it, matching the type side against ANY of a msg's block types. `ONLY_FORMS` is the accepted-forms sentence, interpolated into both `--help` texts so the syntax is documented where it is used.
 **Reads:** Nothing — pure vocabulary and predicates.
 **Writes:** Nothing.
 **Called by:** `__main__.py` (validation, once per run), `render.py` (overview filtering), `search.py` (hit filtering).
@@ -97,7 +98,7 @@ terminal text to stdout.
 
 ---
 
-### timeline.py (208 LOC)
+### timeline.py (210 LOC)
 
 **Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator both `search` and the full-turn dump build on), single-turn full extraction, request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), and `load_timeline` as the one call that assembles everything a render needs.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
@@ -117,9 +118,9 @@ terminal text to stdout.
 
 ---
 
-### render.py (214 LOC)
+### render.py (221 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview with a `▶` anchor mark, an HH:MM:SS request-time column and NO request markers, and the full-content window dump whose turn headers carry the same time), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview in pane grammar — a `▶` anchor mark, an HH:MM:SS request-time column, no request markers, a single-block msg inline and a multi-block msg as a block count plus `[i] type chars` sub-rows — and the full-content window dump whose msg headers carry the same time), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -236,13 +237,26 @@ a second numbering system in the same block is noise. `timeline` keeps them unch
 view where request boundaries ARE the structure. Anything reintroducing them here should first
 answer which of the two indices the reader is supposed to follow.
 
-**`--only` matches the MESSAGE-level classifier, not block types.** A turn whose message type is
-`tool_use` typically also carries `thinking` and `text` blocks, yet `--only thinking` will not
-select it — the filter compares against the turn's role and its message type, the same two values
-the overview lines print. That keeps every view talking about the same units; a block-level filter
-would need a different flag and a different output shape. Accepted syntax is a role, a type, or a
-`role/type` pair, case-insensitive; an unknown token exits 2 naming the accepted forms rather than
-silently matching nothing.
+**`--only` matches BLOCK types, not the aggregated message type (revised 2026-08-29).** It used to
+compare against the msg's single aggregated type, so a msg labelled `tool_use` was invisible to
+`--only thinking` even when it carried a thinking block. That is superseded: a msg is selected when
+its role matches and ANY of its blocks matches the type, and a selected msg always shows ALL of its
+blocks. Measured on one window: `--only thinking` went from 5 to 11 msgs, the six additions being
+assistant msgs aggregated as `tool_use` that carry reasoning; `--only user/text` picked up two msgs
+aggregated as `tool_result` and `task-notification` that carry text blocks. Accepted syntax is a
+role, a type, or a `role/type` pair, case-insensitive; an unknown token exits 2 naming the accepted
+forms rather than silently matching nothing.
+
+**The overview follows the proxy pane's grammar, and the aggregated type is deliberately absent for
+multi-block msgs.** A single-block msg prints its type inline (`#713 18:17:02 user text 952`); a
+multi-block msg prints a block COUNT plus total chars and always lists `[i] type chars` sub-rows
+(`#715 18:17:38 assistant 3 blocks 1.6k`). Showing an aggregated label there would name just one of
+the blocks it stands for — which is exactly the confusion the block-level `--only` revision above
+removed.
+
+**The user-facing unit is the msg, not the turn.** One msg is one API message; its parts are
+blocks. Internal identifiers still say `turns` in places (`data["turns"]`, `hit["turn"]`), but no
+output string or `--help` text does — that split is intentional, and new output should say msg.
 
 **`--only` works in expand OVERVIEW mode too, and in `search` (revised 2026-08-29).** Overview mode
 previously rejected `--only` with exit 2, on the reasoning that it promises every turn in the window
