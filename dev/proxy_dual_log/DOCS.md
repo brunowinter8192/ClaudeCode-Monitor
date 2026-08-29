@@ -108,7 +108,9 @@ reproduced in-process by monkeypatching `parser._msgs_delta_is_substantial` to
 `bool(messages_delta)`, so both readings differ in nothing else. Classifies each request as `pure_total_tokens` / `mixed` / `real_strip` / `no_msg_delta` by
 inspecting the original payload's messages.
 
-**Verified:** PASS on `api_requests_opus_monitor_cc_1788011077` (88 requests, 2026-08-29): write
+**Verified:** PASS on `api_requests_opus_monitor_cc_1788011077`, one run of 88 requests on
+2026-08-29 (that log was live during the work, so a later run shows larger absolute counts — the
+script asserts per-class invariants, not fixed totals, and keeps passing as the log grows): write
 side unchanged at 77 stripped / 76 injected entries with `messages_delta`; rendered badge 78 → 25
 for `strip` and 78 → 25 for `inject`; 53/53 pure-total_tokens requests show NEITHER word while 53/53
 still carry their stripped spans; 14/14 real-strip requests show `strip` and 13/13 of those with a

@@ -25,10 +25,16 @@ a NEW index every request, so it gets a `loc_key` never seen before, and a `loc_
 previous hash can never match one. The dedup is not merely ineffective here, it is structurally
 incapable of firing.
 
-Measured on `src/logs/dual_log/api_requests_opus_monitor_cc_1788011077` (67 requests replayed
-through the real pass pipeline, 2026-08-29): 60 requests carried a non-empty `messages_delta`, of
-which 42 were PURE total_tokens nukes, 7 mixed a total_tokens nuke with a real strip, and 11 were
-real strips alone. Under the old rule 61 of 67 requests badged on each side.
+Measured on `src/logs/dual_log/api_requests_opus_monitor_cc_1788011077`, replayed through the real
+pass pipeline. That log was being appended to by the very session doing this work, so every absolute
+count below belongs to ONE run of 88 requests on 2026-08-29; re-running the harness on the same stem
+later yields larger counts, and the proportions rather than the totals are the point.
+
+In that run 77 requests carried a non-empty `messages_delta`, of which 53 were PURE total_tokens
+nukes, 10 mixed a total_tokens nuke with a real strip, and 14 were real strips alone. Under the old
+rule 78 of 88 requests badged on each side — the extra one over the 77 is a request that badged via
+a system-section change with no message delta at all. So roughly two thirds of all badge-lighting
+requests carried nothing a reader wanted.
 
 ## Design — write-side skip was built first, then rejected
 
@@ -120,11 +126,16 @@ each recorded original payload through `apply_modification_rules` (the productio
 `all_ops`), then the real `_build_stripped_injected_deltas`, then the real `accumulate_dual_log`.
 The old one-to-one rule is reproduced in the same process by patching `_msgs_delta_is_substantial`
 to `bool(messages_delta)`, so both readings differ in nothing else; the new reading goes through the
-real `badge_flags`. On the 1788011077 session (grown to 88 requests by the final run): the write
-side kept all 77 stripped and 76 injected entries with `messages_delta`; the rendered badge fell
-from 78 to 25 for `strip` and from 78 to 25 for `inject`; all 53 pure-total_tokens requests show
-NEITHER word while all 53 still carry their stripped spans; all 14 real-strip requests show `strip`,
-and all 13 of them that have a green message span show `inject`; all 10 mixed requests show both.
+real `badge_flags`. On the same 88-request run of the 1788011077 session: the write side kept all 77
+stripped and 76 injected entries with `messages_delta`; the rendered badge fell from 78 to 25 for
+`strip` and from 78 to 25 for `inject`; all 53 pure-total_tokens requests show NEITHER word while all
+53 still carry their stripped spans; all 14 real-strip requests show `strip`, and all 13 of them that
+have a green message span show `inject`; all 10 mixed requests show both.
+
+The harness asserts these as invariants rather than as fixed counts — every pure-total_tokens
+request silent on both words and still carrying its spans, every real-strip and mixed request loud,
+every green message span forcing `inject` — so it keeps passing on the grown log as more requests
+accumulate.
 
 One request initially tripped the replay's inject criterion and turned out to be a criterion bug,
 not a code bug: it injects the proxy's own rules into `system[2]` and touches no message block at

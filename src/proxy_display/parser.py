@@ -33,10 +33,13 @@ _TOTAL_TOKENS_NUKE_RE = re.compile(r"^<total_tokens>\d+ tokens left</total_token
 #   - stripped side: a message whose blocks' stripped texts amount to exactly ONE text full-matching
 #     the total_tokens marker — the per-request CC token-budget nuke, noise on nearly every request.
 #   - injected side: a block whose injected spans are only ".", the API-required empty-block filler
-#     that `strip_sr.py` / `_apply_role_system_strip` leave behind. Not a real injection (same
-#     principle the fn_map "." skips already encode write-side), so a nag/deferred/total_tokens nuke
-#     badges `strip` alone instead of `strip inject`.
+#     that `strip_sr.py` / `_apply_role_system_strip` leave behind (same principle the fn_map "."
+#     skips already encode write-side).
 # Everything else counts, so a real content injection and a real strip badge exactly as before.
+# NOTE this is the per-line signal, NOT the final badge. Suppressing every "."-only injection would
+# also silence the nag/deferred/date-changed nukes, whose "." IS injected and DOES render green.
+# `badge_flags` below re-adds exactly those by coordinating with the flow's stripped side; only the
+# total_tokens class ends up with both badge words off.
 def _msgs_delta_is_substantial(msgs_delta: dict, entry_type: str) -> bool:
     is_injected = entry_type == 'injected_delta'
     for blks in (msgs_delta or {}).values():
