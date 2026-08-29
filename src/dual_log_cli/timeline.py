@@ -144,6 +144,33 @@ def request_boundaries(forwarded_path: Path, family: str) -> list:
     return boundaries
 
 
+# Map every turn to the timestamp of the request that FIRST carried it: turn N belongs to the
+# earliest request whose counts.messages exceeds N. Returns {turn_index: iso_timestamp}; a turn
+# absent from the dict has no reliable time and renders as "?".
+#
+# A restart (message count regressed — CC restarted inside one log id) discards the chain before
+# it: those earlier requests described a different message list, so their counts cannot be walked
+# against the final one. Only the chain from the LAST restart onward is used, and every turn below
+# that restart's message count stays unmapped — the requests that first carried those messages are
+# not in this chain at all. Same conservative stance as the timeline's WARNING.
+def build_turn_times(boundaries: list) -> dict:
+    chain = boundaries
+    covered = 0
+    for position, boundary in enumerate(boundaries):
+        if boundary["restart"]:
+            chain = boundaries[position:]
+            covered = boundary["message_count"]
+    times = {}
+    for boundary in chain:
+        count = boundary["message_count"]
+        if count <= covered:
+            continue
+        for index in range(covered, count):
+            times[index] = boundary["timestamp"]
+        covered = count
+    return times
+
+
 # Group boundaries by the message index they open, collapsing consecutive re-fires that added
 # no messages into one marker
 def boundaries_by_index(boundaries: list) -> dict:
@@ -174,4 +201,5 @@ def load_timeline(session: dict) -> dict:
         "haiku_lines_skipped": skipped,
         "turns": build_turns(payload),
         "boundaries": boundaries,
+        "turn_times": build_turn_times(boundaries),
     }
