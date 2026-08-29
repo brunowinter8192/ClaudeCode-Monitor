@@ -64,6 +64,40 @@ def _msgs_delta_is_substantial(msgs_delta: dict, entry_type: str) -> bool:
     return False
 
 
+# Resolve the REQ-header's two badge booleans for one entry -> (show_strip, show_inject).
+# Reads the per-flow lookups pane.py / worker_proxy_pane.py attach; falls back to False for any
+# lookup a caller did not attach.
+#
+# The inject side needs the strip side to decide, because an `injected_delta` line CANNOT identify
+# the total_tokens class on its own — a total_tokens nuke and a task-tools-nag nuke both inject the
+# identical literal "." and the marker text lives only on the stripped side. So the two are
+# coordinated by flow_id here, at the consumer, where both lookups are in hand:
+#
+#   show_inject = real (non-".") injection   OR   ("."-filler present AND the strip side is substantial)
+#
+# `_inject_fns_lookup` is already the "real injection" bool (`_msgs_delta_is_substantial` treats a
+# "."-only block as insubstantial), and a non-empty `_inject_msgs_lookup` entry means the injected
+# side touched a message block at all — which, given the writer only records a block when it has an
+# injected span, is exactly "a '.'-filler is present" once the real-injection case is excluded.
+#
+# Resulting behavior, one line per class:
+#   - total_tokens nuke  -> strip False, inject False (strip side is the non-substantial one)
+#   - task-tools nag / deferred / date-changed / mid-conv nuke -> strip True, inject True
+#   - total_tokens + a real strip in the same request -> strip True, inject True
+#   - real content injection (bg-exit wake-up, TN wake-up, system rules) -> inject True regardless
+#
+# Computed per render rather than stored at accumulation time on purpose: the two dual-log files are
+# tailed independently, so at accumulation time the peer line for a flow may not have been read yet.
+# Deriving it here is order-independent and self-correcting for the running session.
+def badge_flags(entry: dict) -> tuple:
+    fid = entry.get('flow_id', '')
+    show_strip = bool(entry.get('_strip_fns_lookup', {}).get(fid, False))
+    show_inject = bool(entry.get('_inject_fns_lookup', {}).get(fid, False))
+    if not show_inject and show_strip and entry.get('_inject_msgs_lookup', {}).get(fid):
+        show_inject = True
+    return show_strip, show_inject
+
+
 # Estimate token count from char count (chars/3.5 heuristic, ~±15%)
 def _chars_to_tokens(chars: int) -> int:
     return int(chars / 3.5)

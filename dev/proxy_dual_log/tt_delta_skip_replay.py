@@ -109,7 +109,7 @@ def replay(stem: str) -> list:
 
 # Run the REAL read-side accumulator over the replayed entries -> {flow_id: has_content}.
 # baseline=True restores the pre-fix rule (any non-empty messages_delta badges).
-def has_content_map(entries: list, which: int, baseline: bool = False) -> dict:
+def has_content_map(entries: list, which: int, baseline: bool = False) -> dict:  # noqa: C901
     from src.proxy_display import parser as _parser
     from src.proxy_display.parser import accumulate_dual_log
     saved = _parser._msgs_delta_is_substantial
@@ -129,6 +129,43 @@ def has_content_map(entries: list, which: int, baseline: bool = False) -> dict:
     for fam in acc.values():
         merged.update(fam.get('_has_content_by_flow_id', {}))
     return merged
+
+
+# {flow_id: set(msg_idx)} for one side, via the same real accumulator
+def msg_idx_map(entries: list, which: int) -> dict:
+    from src.proxy_display.parser import accumulate_dual_log
+    with tempfile.NamedTemporaryFile('w', suffix='.jsonl', delete=False) as f:
+        for row in entries:
+            f.write(json.dumps(row[which]) + '\n')
+        tmp = Path(f.name)
+    acc: dict = {}
+    try:
+        accumulate_dual_log(tmp, 0, acc)
+    finally:
+        tmp.unlink()
+    merged: dict = {}
+    for fam in acc.values():
+        merged.update(fam.get('_msg_idx_by_flow_id', {}))
+    return merged
+
+
+# The badge pair the REQ header actually renders, via the real parser.badge_flags
+def badge_maps(entries: list) -> tuple:
+    from src.proxy_display.parser import badge_flags
+    hc_s = has_content_map(entries, 1)
+    hc_i = has_content_map(entries, 2)
+    mi_s = msg_idx_map(entries, 1)
+    mi_i = msg_idx_map(entries, 2)
+    strip_by_fid: dict = {}
+    inject_by_fid: dict = {}
+    for rid, _s, _i, _o in entries:
+        entry = {
+            'flow_id': rid,
+            '_strip_fns_lookup': hc_s, '_inject_fns_lookup': hc_i,
+            '_strip_msgs_lookup': mi_s, '_inject_msgs_lookup': mi_i,
+        }
+        strip_by_fid[rid], inject_by_fid[rid] = badge_flags(entry)
+    return strip_by_fid, inject_by_fid
 
 
 # Classify a request by what its ORIGINAL payload + baseline delta contained
@@ -159,9 +196,8 @@ def compare_workflow(stem: str) -> int:
     rows = replay(stem)
 
     base_hc_s = has_content_map(rows, 1, baseline=True)
-    new_hc_s = has_content_map(rows, 1)
     base_hc_i = has_content_map(rows, 2, baseline=True)
-    new_hc_i = has_content_map(rows, 2)
+    show_strip, show_inject = badge_maps(rows)
 
     buckets: dict = {}
     for rid, s_entry, _i_entry, orig_payload in rows:
@@ -178,42 +214,51 @@ def compare_workflow(stem: str) -> int:
     print(f'\n  WRITE SIDE (must be unchanged by this fix — spans keep rendering):')
     print(f'    entries with messages_delta   stripped: {md_s}')
     print(f'    entries with messages_delta   injected: {md_i}')
-    print(f'\n  BADGE SIGNAL (has_content), old rule -> new rule:')
-    print(f'    stripped: {sum(base_hc_s.values())} -> {sum(new_hc_s.values())}')
-    print(f'    injected: {sum(base_hc_i.values())} -> {sum(new_hc_i.values())}')
+    print(f'\n  RENDERED BADGE, old one-to-one rule -> new rule:')
+    print(f'    `strip`  shown: {sum(base_hc_s.values())} -> {sum(show_strip.values())}')
+    print(f'    `inject` shown: {sum(base_hc_i.values())} -> {sum(show_inject.values())}')
 
     tt_ids = set(buckets.get('pure_total_tokens', []))
-    tt_quiet = sum(1 for rid in tt_ids if new_hc_s.get(rid) is False and new_hc_i.get(rid) is False)
-    print(f'\n  pure_total_tokens requests now badge-silent (both sides): {tt_quiet}/{len(tt_ids)}')
-
     real_ids = set(buckets.get('real_strip', []))
-    real_loud = sum(1 for rid in real_ids if new_hc_s.get(rid) is True)
-    print(f'  real_strip requests still badge `strip`: {real_loud}/{len(real_ids)}')
-
     mixed_ids = set(buckets.get('mixed', []))
-    mixed_loud = sum(1 for rid in mixed_ids if new_hc_s.get(rid) is True)
-    print(f'  mixed requests still badge `strip`: {mixed_loud}/{len(mixed_ids)}')
 
-    # Every pure-TT request must still carry its spans in the written delta (the whole point of
-    # moving the suppression read-side) — the badge is what goes quiet, not the rendering.
-    tt_spans_kept = sum(
-        1 for rid, s_entry, _i, _o in rows
-        if rid in tt_ids and s_entry.get('messages_delta')
-    )
+    # pure total_tokens: BOTH words off
+    tt_quiet = sum(1 for r in tt_ids if not show_strip.get(r) and not show_inject.get(r))
+    print(f'\n  pure_total_tokens requests with BOTH badge words off: {tt_quiet}/{len(tt_ids)}')
+    # every other nuke / real strip: `strip` on, and `inject` on whenever a span was injected
+    real_loud = sum(1 for r in real_ids if show_strip.get(r))
+    # Implication, not equality: a green span in the messages MUST light `inject`. The converse
+    # does not hold — a system-section injection (proxy rules into system[2]) legitimately lights
+    # `inject` with no injected messages_delta at all, so equality would false-alarm on those.
+    _inj_msg_flows = _flows_with_injected_msgs(rows)
+    real_with_green = real_ids & _inj_msg_flows
+    real_inj = sum(1 for r in real_with_green if show_inject.get(r))
+    print(f'  real_strip requests showing `strip`: {real_loud}/{len(real_ids)}')
+    print(f'  real_strip requests with a green message span showing `inject`: {real_inj}/{len(real_with_green)}')
+    mixed_loud = sum(1 for r in mixed_ids if show_strip.get(r) and show_inject.get(r))
+    print(f'  mixed requests showing BOTH words: {mixed_loud}/{len(mixed_ids)}')
+
+    tt_spans_kept = sum(1 for rid, s_e, _i, _o in rows if rid in tt_ids and s_e.get('messages_delta'))
     print(f'  pure_total_tokens requests still carrying stripped spans: {tt_spans_kept}/{len(tt_ids)}')
 
     ok = (tt_quiet == len(tt_ids) and real_loud == len(real_ids)
-          and mixed_loud == len(mixed_ids) and tt_spans_kept == len(tt_ids))
+          and real_inj == len(real_with_green) and mixed_loud == len(mixed_ids)
+          and tt_spans_kept == len(tt_ids))
     print(f'\n{"PASS" if ok else "FAIL"}\n')
     return 0 if ok else 1
+
+
+# flow_ids whose INJECTED side touched at least one message block (i.e. a span renders green there)
+def _flows_with_injected_msgs(rows: list) -> set:
+    return {rid for rid, _s, i_e, _o in rows if i_e.get('messages_delta')}
 
 
 def single_workflow(stem: str) -> int:
     rows = replay(stem)
     md = sum(1 for r in rows if r[1].get('messages_delta'))
-    hc = has_content_map(rows, 1)
+    show_strip, show_inject = badge_maps(rows)
     print(f'{stem}: {len(rows)} requests, {md} with stripped messages_delta, '
-          f'{sum(hc.values())} badging `strip`')
+          f'{sum(show_strip.values())} showing `strip`, {sum(show_inject.values())} showing `inject`')
     return 0
 
 
