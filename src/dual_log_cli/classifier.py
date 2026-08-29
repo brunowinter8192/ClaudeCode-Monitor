@@ -1,10 +1,12 @@
 # INFRASTRUCTURE
 
-# The classifier vocabulary a turn can carry. ROLES are the API message roles; TYPES are the
-# message-level types produced by proxy.message_summary._classify_content — NOT block types, so a
-# turn whose type is tool_use is not selected by "thinking" even though it carries thinking blocks.
+# The classifier vocabulary. ROLES are the API message roles. TYPES are BLOCK types (2026-08-29
+# revision): the four real content blocks plus image, and the pseudo-types a str-content message
+# contributes as its single synthetic block (system, system-reminder, task-notification,
+# command-message). A message is selected when its role matches and ANY of its blocks matches the
+# type — matching moved from the aggregated message type to the blocks it is aggregated from.
 ROLES = ("user", "assistant", "system")
-TYPES = ("text", "thinking", "tool_use", "tool_result",
+TYPES = ("text", "thinking", "tool_use", "tool_result", "image",
          "system", "system-reminder", "task-notification", "command-message")
 
 ONLY_FORMS = (f"a role ({'/'.join(ROLES)}), a type ({', '.join(TYPES)}), "
@@ -37,11 +39,12 @@ def parse_only(spec: str) -> tuple:
     raise BadClassifierError(f"--only {spec!r} is not a known classifier — accepted: {ONLY_FORMS}")
 
 
-# True when a turn's role/type satisfies a parsed --only pair; an unconstrained side always matches
-def matches_only(role: str, type_: str, wanted: tuple) -> bool:
+# True when a message satisfies a parsed --only pair. block_types is every block type the message
+# carries; the type side matches when ANY of them matches. An unconstrained side always matches.
+def matches_only(role: str, block_types, wanted: tuple) -> bool:
     want_role, want_type = wanted
     if want_role and role.lower() != want_role:
         return False
-    if want_type and type_.lower() != want_type:
+    if want_type and want_type not in {str(t).lower() for t in block_types}:
         return False
     return True

@@ -22,15 +22,15 @@ def _snippet(text: str, start: int, length: int) -> str:
 # not a post-filter: the searched payload is the single last request, which already embeds the
 # whole conversation, so a term is never re-reported per request that resent it.
 # An empty term matches nothing rather than every block (str.count("") counts positions).
-# `only` is a parsed (role, type) pair from classifier.parse_only — it restricts which TURNS
-# contribute hits, using the message-level classifier, exactly like expand's --only.
+# `only` is a parsed (role, type) pair from classifier.parse_only — it restricts which MESSAGES
+# contribute hits (role plus any-block-type), exactly like expand's --only.
 def find_matches(payload: dict, term: str, case_sensitive: bool = False, only=("", "")) -> list:
     needle = term if case_sensitive else term.lower()
     if not needle:
         return []
     hits = []
     for block in iter_block_texts(payload):
-        if not matches_only(block["role"], block["type"], only):
+        if not matches_only(block["role"], block["block_types"], only):
             continue
         text = block["text"]
         haystack = text if case_sensitive else text.lower()

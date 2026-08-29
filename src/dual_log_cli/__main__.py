@@ -4,12 +4,12 @@ Commands:
     sessions                 list every session (start, context, stem), newest first
     sessions <context>       keep only sessions whose context contains that text (substring, any case)
     sessions --since D --until D   bound that listing by start day, inclusive, YYYY-MM-DD
-    timeline <session>       deduplicated turn timeline of one session, from its last request line
+    timeline <session>       deduplicated msg timeline of one session, from its last request line
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
-    expand <s> <turn>        classifier lines around one turn (overview mode)
-    expand <s> <turn> --full --before N --after N [--only X]   full content of the window
+    expand <s> <msg>         classifier rows around one msg (overview mode)
+    expand <s> <msg> --full --before N --after N [--only X]    full content of the window
 
 Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli sessions
@@ -90,30 +90,32 @@ def _parse_args(argv: list) -> argparse.Namespace:
                           help="only sessions started on or after this day (inclusive)")
     sessions.add_argument("--until", default="", metavar="YYYY-MM-DD",
                           help="only sessions started on or before this day (inclusive)")
-    timeline = sub.add_parser("timeline", help="render one session as a turn timeline")
+    timeline = sub.add_parser("timeline", help="render one session as a msg timeline")
     timeline.add_argument("session", help="session stem or unambiguous substring")
     expand = sub.add_parser(
         "expand",
-        help="classifier lines around one turn, or the full content of a window",
+        help="classifier rows around one msg, or the full content of a window",
         description=(
-            "Overview mode (default): classifier lines for every turn in the window — no blocks, "
+            "Overview mode (default): one classifier row per msg in the window — a single-block msg keeps "
+            "its type inline, a multi-block msg shows its block count and lists the blocks as sub-rows. "
             f"no previews, no filtering. --before/--after default to {_OVERVIEW_FLOOR} and have a "
             f"HARD FLOOR of {_OVERVIEW_FLOOR}: a smaller value is raised, so the window never gets "
             "too narrow to read context from. "
             "Read mode (--full): both --before and --after are REQUIRED explicit numbers with no "
-            "floor (0 and up), and --only may restrict which turns are dumped."
+            "floor (0 and up). --only selects msgs by role and/or ANY block type in both modes; a "
+            "selected msg always shows ALL of its blocks."
         ),
     )
     expand.add_argument("session", help="session stem or unambiguous substring")
-    expand.add_argument("turn", type=int, help="anchor turn index")
+    expand.add_argument("msg", type=int, help="anchor msg index")
     expand.add_argument("--before", type=int, default=None,
-                        help=f"turns before the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
+                        help=f"msgs before the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
     expand.add_argument("--after", type=int, default=None,
-                        help=f"turns after the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
+                        help=f"msgs after the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
     expand.add_argument("--full", action="store_true",
-                        help="dump full turn content instead of classifier lines; requires --before and --after")
+                        help="dump full msg content instead of classifier rows; requires --before and --after")
     expand.add_argument("--only", default="", metavar="CLASSIFIER",
-                        help=f"keep only turns matching {ONLY_FORMS}; works in both modes")
+                        help=f"keep only msgs matching {ONLY_FORMS}; works in both modes")
     search = sub.add_parser("search", help="find a term across the deduplicated timelines")
     search.add_argument("term", help="literal term to look for (no regex)")
     search.add_argument("scope", nargs="?", default="", metavar="SCOPE",
@@ -123,7 +125,7 @@ def _parse_args(argv: list) -> argparse.Namespace:
     search.add_argument("--until", default="", metavar="YYYY-MM-DD",
                         help="only sessions started on or before this day (inclusive)")
     search.add_argument("--only", default="", metavar="CLASSIFIER",
-                        help=f"restrict hits to turns matching {ONLY_FORMS}")
+                        help=f"restrict hits to msgs matching {ONLY_FORMS}")
     search.add_argument("--case-sensitive", action="store_true", help="match case exactly (default: ignore case)")
     return parser.parse_args(argv)
 
@@ -221,9 +223,9 @@ def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
     data, code = _load_for(dual_log_dir, args.session)
     if data is None:
         return code
-    turns = data["turns"]
-    if args.turn < 0 or args.turn >= len(turns):
-        print(f"turn {args.turn} out of range (0..{len(turns) - 1})", file=sys.stderr)
+    msgs = data["turns"]
+    if args.msg < 0 or args.msg >= len(msgs):
+        print(f"msg {args.msg} out of range (0..{len(msgs) - 1})", file=sys.stderr)
         return 2
     try:
         wanted = parse_only(args.only)
@@ -235,8 +237,8 @@ def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
     # floor, not a default: an explicit smaller value is raised too
     before = max(_OVERVIEW_FLOOR, args.before if args.before is not None else _OVERVIEW_FLOOR)
     after = max(_OVERVIEW_FLOOR, args.after if args.after is not None else _OVERVIEW_FLOOR)
-    start, end = _window(args.turn, before, after, len(turns))
-    sys.stdout.write(render_expand_overview(data, args.turn, start, end, args.only, wanted))
+    start, end = _window(args.msg, before, after, len(msgs))
+    sys.stdout.write(render_expand_overview(data, args.msg, start, end, args.only, wanted))
     return 0
 
 
@@ -248,18 +250,18 @@ def _run_expand_full(data: dict, args: argparse.Namespace, wanted: tuple) -> int
     if args.before < 0 or args.after < 0:
         print("--before and --after must be 0 or greater", file=sys.stderr)
         return 2
-    turns = data["turns"]
-    start, end = _window(args.turn, args.before, args.after, len(turns))
+    msgs = data["turns"]
+    start, end = _window(args.msg, args.before, args.after, len(msgs))
     dumped = [
-        (turn, full_turn(data["payload"], turn["index"]))
-        for turn in turns[start:end + 1]
-        if matches_only(turn["role"], turn["type"], wanted)
+        (msg, full_turn(data["payload"], msg["index"]))
+        for msg in msgs[start:end + 1]
+        if matches_only(msg["role"], [b["type"] for b in msg["blocks"]], wanted)
     ]
-    sys.stdout.write(render_expand_full(data, args.turn, start, end, args.only, dumped))
+    sys.stdout.write(render_expand_full(data, args.msg, start, end, args.only, dumped))
     return 0
 
 
-# Clamp an anchor-centred window to the turn list
+# Clamp an anchor-centred window to the msg list
 def _window(anchor: int, before: int, after: int, total: int) -> tuple:
     return max(0, anchor - before), min(total - 1, anchor + after)
 
