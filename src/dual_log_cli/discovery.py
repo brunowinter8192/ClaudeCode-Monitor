@@ -121,6 +121,26 @@ def list_sessions(dual_log_dir: Path) -> list:
     return sessions
 
 
+# Keep the sessions whose start day falls inside the inclusive [since, until] window.
+# Compared on the YYYY-MM-DD prefix of the ISO start timestamp — lexicographic order equals
+# calendar order for that format, so no timezone maths is involved. A session with no start
+# timestamp cannot be placed on a calendar, so any active filter drops it.
+def filter_sessions(sessions: list, since: str = "", until: str = "") -> list:
+    if not since and not until:
+        return sessions
+    kept = []
+    for session in sessions:
+        day = (session.get("start") or "")[:10]
+        if not day:
+            continue
+        if since and day < since:
+            continue
+        if until and day > until:
+            continue
+        kept.append(session)
+    return kept
+
+
 # Resolve a stem or unambiguous substring to exactly one session stem
 def resolve_stem(dual_log_dir: Path, query: str) -> str:
     stems = sorted(group_streams(dual_log_dir))
