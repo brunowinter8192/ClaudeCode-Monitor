@@ -8,6 +8,7 @@ from ..constants import (
 from ..utils import _ANSI_ESCAPE_RE, _cell_width, highlight_query_in_line
 from .format import _shorten_model, _format_k, _is_standalone_entry, _fmt_thinking_budget, _fmt_effort
 from .render_messages import _aggregate_req_buckets
+from .parser import badge_flags
 # From search_bar.py: shared BG-restore sentinel (2026-08-18 extraction — single source, see
 # format.py's import comment)
 from ..search_bar import _BG_RESTORE_SENTINEL
@@ -59,9 +60,7 @@ def _build_req_header_line(entry: dict, entry_idx: int, num_label: str, req_symb
     eff_str = f" eff:{_fmt_effort(eff_val)}" if eff_val is not None else ''
     mt = entry.get('max_tokens') or 0
     think_str = f" think:{_fmt_thinking_budget(mt)}" if (mt and model_short != 'haiku') else ''
-    _fid = entry.get('flow_id', '')
-    _has_strip = entry.get('_strip_fns_lookup', {}).get(_fid, False)
-    _has_inj   = entry.get('_inject_fns_lookup', {}).get(_fid, False)
+    _has_strip, _has_inj = badge_flags(entry)
     _has_think = entry.get('has_thinking_delta', False)
     _badge_parts = []
     if _has_strip: _badge_parts.append(f'{YELLOW}strip{SOFT_RESET}')

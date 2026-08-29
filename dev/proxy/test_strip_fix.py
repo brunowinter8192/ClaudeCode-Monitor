@@ -958,6 +958,23 @@ def _deltas_for_single_msg(role: str, old_content, new_content, full_replace: bo
     return s_entry, i_entry
 
 
+# Resolve the REQ-header badge pair the way the pane does: accumulate BOTH dual-log lines of one
+# flow through the real accumulate_dual_log, attach the four per-flow lookups exactly as
+# pane.py does, then ask the real parser.badge_flags. Returns (show_strip, show_inject).
+def _badge_for(s_entry: dict, i_entry: dict, flow_id: str = 'f1') -> tuple:
+    from src.proxy_display.parser import badge_flags
+    _hc_s, acc_s = _accumulate(s_entry, flow_id)
+    _hc_i, acc_i = _accumulate(i_entry, flow_id)
+    entry = {
+        'flow_id': flow_id,
+        '_strip_fns_lookup': acc_s['_has_content_by_flow_id'],
+        '_inject_fns_lookup': acc_i['_has_content_by_flow_id'],
+        '_strip_msgs_lookup': acc_s['_msg_idx_by_flow_id'],
+        '_inject_msgs_lookup': acc_i['_msg_idx_by_flow_id'],
+    }
+    return badge_flags(entry)
+
+
 # Run one delta entry through the REAL accumulate_dual_log; returns (has_content, acc_for_family)
 def _accumulate(entry: dict, flow_id: str = 'f1') -> tuple:
     import tempfile
@@ -991,8 +1008,12 @@ def tt02_total_tokens_badge_false_but_overlay_intact():
     s, i = _deltas_for_single_msg('system', _TT_MSG, '.')
     hc_s, acc_s = _accumulate(s)
     hc_i, acc_i = _accumulate(i)
-    check('TT02_stripped_badge_false', hc_s is False, f'got {hc_s!r}')
-    check('TT02_injected_badge_false', hc_i is False, f'got {hc_i!r}')
+    check('TT02_stripped_signal_false', hc_s is False, f'got {hc_s!r}')
+    check('TT02_injected_signal_false', hc_i is False, f'got {hc_i!r}')
+    # the badge the header actually renders — BOTH words stay off for this class
+    show_strip, show_inject = _badge_for(s, i)
+    check('TT02_badge_strip_off', show_strip is False, f'got {show_strip!r}')
+    check('TT02_badge_inject_off', show_inject is False, f'got {show_inject!r}')
     # overlay + per-flow msg scoping must be EXACTLY as before — spans still render
     check('TT02_stripped_overlay_kept', acc_s['messages'] == {'0': {'0': [_TT_MSG]}}, repr(acc_s['messages']))
     check('TT02_injected_overlay_kept', acc_i['messages'].get('0', {}).get('0') is not None, repr(acc_i['messages']))
@@ -1000,10 +1021,11 @@ def tt02_total_tokens_badge_false_but_overlay_intact():
     check('TT02_msg_idx_tracked_injected', acc_i['_msg_idx_by_flow_id']['f1'] == {'0'}, repr(acc_i['_msg_idx_by_flow_id']))
 
 
-# TT03 — every OTHER role='system' '.'-nuke badges `strip` but NOT `inject`: the '.' is the
-# API-required empty-block filler, not a real injection (2026-06 badge principle). These are rare
-# and their strip IS real signal, so the strip badge must stay True.
-def tt03_other_nukes_badge_strip_only():
+# TT03 — every OTHER '.'-nuke keeps the one-to-one behavior: `strip inject`. Its '.' IS injected and
+# DOES render as a green span, so the header must say so. Only the total_tokens class goes silent.
+# The inject word here comes from the flow coordination in parser.badge_flags — the injected line
+# alone carries just '.', indistinguishable from the total_tokens one.
+def tt03_other_nukes_badge_strip_and_inject():
     cases = [
         ('nag', "<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>"),
         ('deferred', '<system-reminder>\nThe following deferred tools are now available via ToolSearch.\n</system-reminder>'),
@@ -1012,10 +1034,9 @@ def tt03_other_nukes_badge_strip_only():
     ]
     for label, body in cases:
         s, i = _deltas_for_single_msg('system', body, '.')
-        hc_s, _ = _accumulate(s)
-        hc_i, _ = _accumulate(i)
-        check(f'TT03_{label}_strip_badge_true', hc_s is True, f'{label}: got {hc_s!r}')
-        check(f'TT03_{label}_inject_badge_false', hc_i is False, f'{label}: got {hc_i!r}')
+        show_strip, show_inject = _badge_for(s, i)
+        check(f'TT03_{label}_badge_strip_true', show_strip is True, f'{label}: got {show_strip!r}')
+        check(f'TT03_{label}_badge_inject_true', show_inject is True, f'{label}: got {show_inject!r}')
 
 
 # TT04 — a REAL content injection still badges inject (the bg-exit wake-up replacement, the case
@@ -1024,10 +1045,11 @@ def tt04_real_injection_still_badges():
     bgk = 'Background command "sleep 600" completed (exit code 143)\n'
     wake = 'background done — check worker or other process\n'
     s, i = _deltas_for_single_msg('user', bgk, wake, full_replace=False)
-    hc_s, _ = _accumulate(s)
     hc_i, _ = _accumulate(i)
-    check('TT04_strip_badge_true', hc_s is True, f'got {hc_s!r}')
-    check('TT04_inject_badge_true', hc_i is True, f'got {hc_i!r}')
+    check('TT04_real_injection_signal_true', hc_i is True, f'got {hc_i!r}')
+    show_strip, show_inject = _badge_for(s, i)
+    check('TT04_badge_strip_true', show_strip is True, f'got {show_strip!r}')
+    check('TT04_badge_inject_true', show_inject is True, f'got {show_inject!r}')
 
 
 # TT05 — FP guard: the marker QUOTED alongside other content keeps badging. This is the shape a
@@ -1037,11 +1059,13 @@ def tt04_real_injection_still_badges():
 def tt05_marker_with_surrounding_content_still_badges():
     old = tool_result_str(f'log line:\n{_TT_MSG}\nend')
     s, i = _deltas_for_single_msg('user', old, tool_result_str('.'))
-    hc_s, _ = _accumulate(s)
-    check('TT05_tool_result_strip_badge_true', hc_s is True, f'got {hc_s!r}')
-    s2, _i2 = _deltas_for_single_msg('user', f'note: {_TT_MSG} was logged', '.')
-    hc_s2, _ = _accumulate(s2)
-    check('TT05_inline_quote_strip_badge_true', hc_s2 is True, f'got {hc_s2!r}')
+    show_strip, show_inject = _badge_for(s, i)
+    check('TT05_tool_result_badge_strip_true', show_strip is True, f'got {show_strip!r}')
+    check('TT05_tool_result_badge_inject_true', show_inject is True, f'got {show_inject!r}')
+    s2, i2 = _deltas_for_single_msg('user', f'note: {_TT_MSG} was logged', '.')
+    show_strip2, show_inject2 = _badge_for(s2, i2)
+    check('TT05_inline_quote_badge_strip_true', show_strip2 is True, f'got {show_strip2!r}')
+    check('TT05_inline_quote_badge_inject_true', show_inject2 is True, f'got {show_inject2!r}')
 
 
 # TT06 — anchoring near-misses still badge: only the EXACT whole-text marker is suppressed
@@ -1053,12 +1077,14 @@ def tt06_anchoring_near_misses_still_badge():
         ('wrong_wording', '<total_tokens>123 tokens remaining</total_tokens>'),
     ]
     for label, body in near:
-        s, _i = _deltas_for_single_msg('system', body, '.')
-        hc, _ = _accumulate(s)
-        check(f'TT06_{label}_badge_true', hc is True, f'{label}: got {hc!r}')
-    s2, _ = _deltas_for_single_msg('system', f'\n  {_TT_MSG}  \n', '.')
-    hc2, _ = _accumulate(s2)
-    check('TT06_whitespace_padded_badge_false', hc2 is False, f'got {hc2!r}')
+        s, i = _deltas_for_single_msg('system', body, '.')
+        show_strip, show_inject = _badge_for(s, i)
+        check(f'TT06_{label}_badge_strip_true', show_strip is True, f'{label}: got {show_strip!r}')
+        check(f'TT06_{label}_badge_inject_true', show_inject is True, f'{label}: got {show_inject!r}')
+    s2, i2 = _deltas_for_single_msg('system', f'\n  {_TT_MSG}  \n', '.')
+    show_strip2, show_inject2 = _badge_for(s2, i2)
+    check('TT06_whitespace_padded_badge_strip_false', show_strip2 is False, f'got {show_strip2!r}')
+    check('TT06_whitespace_padded_badge_inject_false', show_inject2 is False, f'got {show_inject2!r}')
 
 
 # TT07 — mixed request: a total_tokens nuke AND a real strip in the SAME request must still badge.
@@ -1080,7 +1106,9 @@ def tt07_mixed_request_still_badges():
     }
     s, i, _ns, _ni = _build_deltas(orig, fwd, 'rid-mixed', None, None, 'claude-opus-4', all_ops)
     hc, acc = _accumulate(s)
-    check('TT07_mixed_badge_true', hc is True, f'got {hc!r}')
+    show_strip, show_inject = _badge_for(s, i)
+    check('TT07_mixed_badge_strip_true', show_strip is True, f'got {show_strip!r}')
+    check('TT07_mixed_badge_inject_true', show_inject is True, f'got {show_inject!r}')
     check('TT07_both_msgs_still_in_overlay', set(acc['messages'].keys()) == {'0', '1'}, repr(acc['messages']))
     check('TT07_both_msgs_in_scope', acc['_msg_idx_by_flow_id']['f1'] == {'0', '1'}, repr(acc['_msg_idx_by_flow_id']))
 
@@ -1100,6 +1128,44 @@ def tt08_other_sections_unaffected():
     hc_tt_plus_sys, _ = _accumulate({**base, 'system_delta': {'2': ['x']},
                                      'messages_delta': {'0': {'0': [_TT_MSG]}}})
     check('TT08_tt_plus_system_badges', hc_tt_plus_sys is True, f'got {hc_tt_plus_sys!r}')
+
+
+# TT09 — end-to-end through the REAL header renderer: the rendered badge words themselves. Covers
+# the live-observed case (a task-tools nag nuke rendering only `strip` when it must render
+# `strip inject`) and its counterpart (a total_tokens nuke rendering neither word).
+def tt09_rendered_header_badge_words():
+    import re as _re
+    from src.proxy_display.render_turn import _build_req_header_line
+    _ansi = _re.compile(r'\x1b\[[0-9;]*m')
+
+    def _words(s_entry, i_entry):
+        from src.proxy_display.parser import badge_flags  # noqa: F401 (same path badge_flags takes)
+        _hc_s, acc_s = _accumulate(s_entry, 'f1')
+        _hc_i, acc_i = _accumulate(i_entry, 'f1')
+        entry = {
+            'flow_id': 'f1', 'model': 'claude-opus-4', 'message_count': 3,
+            '_strip_fns_lookup': acc_s['_has_content_by_flow_id'],
+            '_inject_fns_lookup': acc_i['_has_content_by_flow_id'],
+            '_strip_msgs_lookup': acc_s['_msg_idx_by_flow_id'],
+            '_inject_msgs_lookup': acc_i['_msg_idx_by_flow_id'],
+        }
+        header = _build_req_header_line(
+            entry, entry_idx=0, num_label='#1', req_symbol='>', model_short='opus',
+            msg_count=3, mods_str='', warn_str='', pane_width=200, copy_feedback=None,
+        )
+        visible = _ansi.sub('', header)
+        return ' '.join(w for w in ('strip', 'inject') if _re.search(rf'\b{w}\b', visible))
+
+    nag = "<system-reminder>\nThe task tools haven't been used recently.\n</system-reminder>"
+    check('TT09_nag_renders_strip_inject', _words(*_deltas_for_single_msg('system', nag, '.')) == 'strip inject',
+          repr(_words(*_deltas_for_single_msg('system', nag, '.'))))
+    check('TT09_total_tokens_renders_nothing', _words(*_deltas_for_single_msg('system', _TT_MSG, '.')) == '',
+          repr(_words(*_deltas_for_single_msg('system', _TT_MSG, '.'))))
+    bgk = 'Background command "sleep 600" completed (exit code 143)\n'
+    wake = 'background done — check worker or other process\n'
+    check('TT09_real_injection_renders_strip_inject',
+          _words(*_deltas_for_single_msg('user', bgk, wake, full_replace=False)) == 'strip inject',
+          repr(_words(*_deltas_for_single_msg('user', bgk, wake, full_replace=False))))
 
 
 if __name__ == '__main__':
@@ -1138,9 +1204,10 @@ if __name__ == '__main__':
         w29_interrupt_marker_pass_tool_use_wording,
         w30_role_system_mid_turn_user_msg_preserved_whole,
         tt01_total_tokens_still_written_with_spans, tt02_total_tokens_badge_false_but_overlay_intact,
-        tt03_other_nukes_badge_strip_only, tt04_real_injection_still_badges,
+        tt03_other_nukes_badge_strip_and_inject, tt04_real_injection_still_badges,
         tt05_marker_with_surrounding_content_still_badges, tt06_anchoring_near_misses_still_badge,
         tt07_mixed_request_still_badges, tt08_other_sections_unaffected,
+        tt09_rendered_header_badge_words,
     ]
 
     print(f'Running {len(tests)} tests...\n')

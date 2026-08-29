@@ -90,7 +90,7 @@ Imports `src.proxy.diff_engine` and `src.proxy.logging` via `sys.path.insert(0, 
 
 ---
 
-### tt_delta_skip_replay.py (228 LOC)
+### tt_delta_skip_replay.py (273 LOC)
 
 **Purpose:** Before/after proof for the read-side badge suppression of the per-request
 `<total_tokens>N tokens left</total_tokens>` nuke. Replays a recorded `_original.jsonl` through the
@@ -101,16 +101,24 @@ same call `addon.py` makes — and runs the resulting dual-log lines through the
 delta path end to end, because it supplies `all_ops`.
 
 Reports two things separately: the WRITE side (entries carrying `messages_delta`, which must be
-unchanged — the spans keep rendering) and the BADGE signal (`has_content`) under the old rule vs
-the new one. The old rule is reproduced in-process by monkeypatching
-`parser._msgs_delta_is_substantial` to `bool(messages_delta)`, so both readings differ in nothing
-else. Classifies each request as `pure_total_tokens` / `mixed` / `real_strip` / `no_msg_delta` by
+unchanged — the spans keep rendering) and the RENDERED BADGE, resolved through the real
+`parser.badge_flags` (so the flow coordination between the stripped and injected side is exercised,
+not just the per-line filter), under the old one-to-one rule vs the new one. The old rule is
+reproduced in-process by monkeypatching `parser._msgs_delta_is_substantial` to
+`bool(messages_delta)`, so both readings differ in nothing else. Classifies each request as `pure_total_tokens` / `mixed` / `real_strip` / `no_msg_delta` by
 inspecting the original payload's messages.
 
-**Verified:** PASS on `api_requests_opus_monitor_cc_1788011077` (67 requests, 2026-08-29): write
-side unchanged at 60 stripped / 59 injected entries with `messages_delta`; badge signal 61 → 19
-stripped and 61 → 9 injected; 42/42 pure-total_tokens requests badge-silent on both sides while
-42/42 still carry their stripped spans; 11/11 real-strip and 7/7 mixed requests still badge `strip`.
+**Verified:** PASS on `api_requests_opus_monitor_cc_1788011077`, one run of 88 requests on
+2026-08-29 (that log was live during the work, so a later run shows larger absolute counts — the
+script asserts per-class invariants, not fixed totals, and keeps passing as the log grows): write
+side unchanged at 77 stripped / 76 injected entries with `messages_delta`; rendered badge 78 → 25
+for `strip` and 78 → 25 for `inject`; 53/53 pure-total_tokens requests show NEITHER word while 53/53
+still carry their stripped spans; 14/14 real-strip requests show `strip` and 13/13 of those with a
+green message span show `inject`; 10/10 mixed requests show both words.
+
+**Check semantics note:** the inject check is an implication, not an equality — a green message span
+MUST light `inject`, but the converse does not hold, because a system-section injection (proxy rules
+into `system[2]`) legitimately lights `inject` with an empty injected `messages_delta`.
 
 Recorded dual-logs are read from the MAIN checkout (`MAIN_REPO_ROOT`), since they are untracked
 data not duplicated into worktrees; the code under test is imported from the worktree root.
