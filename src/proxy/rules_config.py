@@ -42,21 +42,35 @@ def _read_rule_file(rel_path: str) -> str:
         return ""
 
 
-def _load_system2_rules(model_family: str, project_path: str = "") -> str:
-    """Concatenate system2 rule files for a given model family (global + model-specific + project)."""
+def _load_system2_rules(model_family: str, project_path: str = "", worker_context: str = "") -> str:
+    """Concatenate system2 rule files for a session (global + role-specific + project).
+
+    The ROLE selects the role-specific block, not the model family: a session spawned via
+    worker-cli carries worker_context "worker:<name>" (derived in addon._derive_worker_context
+    from the PROXY_LOG_ID the spawn sets) and gets the "worker" files; every other session is
+    main and gets the "main" files. Model and role became independent when the menubar Models
+    tab started assigning main/worker models separately, so an opus-family worker must still
+    receive worker rules.
+
+    Callers that pass no worker_context at all — dev probes and replay tools calling with 3
+    args, and the one caller passing None — resolve to the main role.
+
+    model_family has exactly one job left here: the haiku short-circuit. Haiku sidecar requests
+    occur INSIDE main sessions, so they must get no rules regardless of role.
+    """
     config = _load_config()
     s2 = config.get("system2_rules", {})
     # Project-level opt-out: exclude_projects patterns suppress all system2 injection
     for pattern in s2.get("exclude_projects", []):
         if pattern and pattern in project_path:
             return ""
-    global_files = s2.get("global", {}).get("files", [])
-    # Map model family to config key: opus → "opus", sonnet/haiku → "worker"
-    model_key = "opus" if model_family == "opus" else "worker"
-    model_files = s2.get(model_key, {}).get("files", [])
     # haiku gets no rules (returns empty → system[2] becomes ".")
     if model_family == "haiku":
         return ""
+    global_files = s2.get("global", {}).get("files", [])
+    # Role → config key. Absent/empty/None context means main (see docstring).
+    role_key = "worker" if (worker_context or "").startswith("worker:") else "main"
+    role_files = s2.get(role_key, {}).get("files", [])
     # Load project-specific files from system2_rules.projects
     project_files = []
     exclusive_files = None
@@ -77,6 +91,6 @@ def _load_system2_rules(model_family: str, project_path: str = "") -> str:
     if exclusive_files is not None:
         all_files = exclusive_files
     else:
-        all_files = global_files + model_files + project_files
+        all_files = global_files + role_files + project_files
     parts = [c for c in (_read_rule_file(f) for f in all_files) if c]
     return "\n\n".join(parts)

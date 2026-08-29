@@ -36,11 +36,13 @@ _SYS1_BOILERPLATE_TEXT = "You are Claude Code, Anthropic's official CLI for Clau
 
 # ORCHESTRATOR
 
-# Apply all proxy modification rules — worker_context selects the bg-launch-ack replacement
-# wording ("main" -> sharper idle-until-notice wording, anything else -> unchanged default,
-# see strip_bg_launch_ack.py) — returns (modified_payload, list_of_applied_rules, original_system2_text, stripped_msg_indices, stripped_msg_originals, stripped_msg_removed, injected_msg_added)
+# Apply all proxy modification rules — worker_context has two jobs: it selects the system2 rule
+# set by session ROLE ("worker:<name>" -> worker rules, anything else incl. absent -> main rules,
+# see _load_system2_rules) and it selects the bg-launch-ack replacement wording ("main" -> sharper
+# idle-until-notice wording, anything else -> unchanged default, see strip_bg_launch_ack.py)
+# — returns (modified_payload, list_of_applied_rules, original_system2_text, stripped_msg_indices, stripped_msg_originals, stripped_msg_removed, injected_msg_added)
 def apply_modification_rules(payload: dict, model_family: str = "opus", project_path: str = "", worker_context: str = "") -> tuple:
-    system_rules = _load_system2_rules(model_family, project_path)
+    system_rules = _load_system2_rules(model_family, project_path, worker_context)
 
     messages_to_process = list(payload.get("messages", []))
     modifications = []
