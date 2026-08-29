@@ -112,23 +112,34 @@ def render_timeline(data: dict) -> str:
 
 
 # Search result: header plus one line per matching block
-def render_search(data: dict, term: str, case_sensitive: bool, hits: list) -> str:
+# Search results across one or more sessions. results is [(session, hits), …] in listing order,
+# already filtered to sessions that HAVE hits. The term line is printed once overall; each session
+# then contributes its own "session <stem>" line plus its hit lines. skipped counts sessions whose
+# timeline could not be loaded — reported only when non-zero, so a clean run stays clean.
+def render_search(term: str, case_sensitive: bool, results: list, skipped: int = 0) -> str:
     mode = "case-sensitive" if case_sensitive else "case-insensitive"
-    lines = [
-        f"session   {data['session']['stem']}",
-        f'term      "{term}"  ({mode})',
-        "",
-    ]
-    if not hits:
+    lines = [f'term      "{term}"  ({mode})', ""]
+    if not results:
         lines.append("no match")
-        return "\n".join(lines) + "\n"
-    label_width = max(len(hit["label"]) for hit in hits)
-    for hit in hits:
-        lines.append(
-            f"#{hit['turn']:<4} {hit['role']:9} {hit['label']:{label_width}}  "
-            f"×{hit['count']:<3} {hit['snippet']}"
-        )
-    return "\n".join(lines) + "\n"
+        return "\n".join(lines + _skipped_lines(skipped)) + "\n"
+    # one width across ALL sessions, so hit lines stay aligned when several sessions are shown
+    label_width = max(len(hit["label"]) for _session, hits in results for hit in hits)
+    for session, hits in results:
+        lines.append(f"session   {session['stem']}")
+        for hit in hits:
+            lines.append(
+                f"#{hit['turn']:<4} {hit['role']:9} {hit['label']:{label_width}}  "
+                f"×{hit['count']:<3} {hit['snippet']}"
+            )
+        lines.append("")
+    return "\n".join(lines[:-1] + _skipped_lines(skipped)) + "\n"
+
+
+# Trailing note about unreadable sessions; empty when nothing was skipped
+def _skipped_lines(skipped: int) -> list:
+    if not skipped:
+        return []
+    return ["", f"({skipped} session{'s' if skipped != 1 else ''} skipped — timeline could not be loaded)"]
 
 
 # Full content of one turn, block by block
