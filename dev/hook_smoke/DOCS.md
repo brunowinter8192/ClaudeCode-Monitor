@@ -354,3 +354,16 @@ python3 dev/hook_smoke/test_hook_setup_main_branch_gate.py
 ```
 
 **Expected output:** `10/10 passed` (exit 0).
+
+---
+
+### test_feedback_bash_error.py (148 LOC)
+
+**Purpose:** 10-case smoke for `feedback_bash_error.py`, the PostToolUseFailure feedback hook. Both fixtures are REAL payloads captured from CC with a stdin-dumping probe (see `process-docs/tool_use_safety/`), not hand-written guesses — the failure carries `error` + `is_interrupt` and no `tool_response`, the success carries `tool_response` and no `error`. Verifies the fire case end to end (exit 0, `hookSpecificOutput.additionalContext` carrying the exact message, `hookEventName` echoed, exactly one fire-log line with `decision="feedback"` and a `reason` field but no `rewritten`), each of the six silent gates (success payload, `is_interrupt=True`, non-Bash tool, whitespace-only `error`, absent `error`, `error: None` — each asserted to write NO fire-log line), and three fail-open stdin cases (malformed, empty, JSON list). Fire-log isolation per case via `MONITOR_CC_HOOK_FIRING_LOG` pointed at a fresh `tempfile`.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_feedback_bash_error.py
+```
+
+**Expected output:** `10/10 passed` (exit 0). HOOK path resolves relative to the test file, so any cwd works.
