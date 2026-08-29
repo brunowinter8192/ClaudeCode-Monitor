@@ -3,6 +3,7 @@ import os
 import re
 from pathlib import Path
 
+from .project_map import build_project_map
 from .reader import infer_family, iter_jsonl
 
 STREAM_SUFFIXES = ("original", "forwarded", "stripped", "injected", "response", "errors")
@@ -10,7 +11,7 @@ STREAM_SUFFIXES = ("original", "forwarded", "stripped", "injected", "response", 
 _STEM_RE = re.compile(r"^(?P<stem>.+)_(?P<stream>" + "|".join(STREAM_SUFFIXES) + r")\.jsonl$")
 _STEM_PREFIX = "api_requests_"
 _TRAILING_EPOCH_RE = re.compile(r"_\d+$")
-_WORKER_SESSION_ID_RE = re.compile(r"^[0-9a-f]{6,}_")
+_WORKER_BODY_RE = re.compile(r"^(?P<sid>[0-9a-f]{6,})_(?P<name>.+)$")
 
 
 class AmbiguousSessionError(Exception):
@@ -44,14 +45,23 @@ def resolve_dual_log_dir() -> Path:
     return direct
 
 
-# Split "opus/<project>" or "worker/<name>" out of a session stem
-def context_for_stem(stem: str) -> str:
+# Render a session stem as "<family>/<project>" for a main session, or "worker/<project>/<name>"
+# for a worker. A worker stem carries its project only as md5(project_path)[:8]; project_map
+# resolves that id to the label main sessions already use, so ONE context filter term catches a
+# project's main sessions and its workers together. An id the map cannot resolve renders as
+# "worker/<sid8>/<name>" — still filterable, by the id itself.
+# project_map is injected rather than looked up here, which keeps this function pure and testable
+# without a filesystem; pass {} to force the fallback rendering everywhere.
+def context_for_stem(stem: str, project_map: dict = None) -> str:
     body = stem[len(_STEM_PREFIX):] if stem.startswith(_STEM_PREFIX) else stem
     body = _TRAILING_EPOCH_RE.sub("", body)
     if body.startswith("worker_"):
-        name = body[len("worker_"):]
-        name = _WORKER_SESSION_ID_RE.sub("", name, count=1)
-        return f"worker/{name}"
+        match = _WORKER_BODY_RE.match(body[len("worker_"):])
+        if not match:
+            return f"worker/{body[len('worker_'):]}"
+        sid, name = match.group("sid"), match.group("name")
+        project = (project_map or {}).get(sid) or sid
+        return f"worker/{project}/{name}"
     head, _, tail = body.partition("_")
     return f"{head}/{tail}" if tail else head
 
@@ -70,7 +80,7 @@ def group_streams(dual_log_dir: Path) -> dict:
 # Build the inventory row for one stem. Reads _forwarded only — it is line-for-line aligned
 # with _original (verified: identical line count and per-line model/message_count) and two
 # orders of magnitude smaller.
-def build_session(stem: str, streams: dict) -> dict:
+def build_session(stem: str, streams: dict, project_map: dict = None) -> dict:
     total_bytes = sum(p.stat().st_size for p in streams.values())
     requests = 0
     start_ts = ""
@@ -94,7 +104,7 @@ def build_session(stem: str, streams: dict) -> dict:
     main_family = _main_family(families)
     return {
         "stem": stem,
-        "context": context_for_stem(stem),
+        "context": context_for_stem(stem, project_map),
         "start": start_ts,
         "end": end_ts,
         "requests": requests,
@@ -114,9 +124,13 @@ def _main_family(families: dict) -> str:
     return max(ranked)[1]
 
 
-# All sessions in the directory, newest first
-def list_sessions(dual_log_dir: Path) -> list:
-    sessions = [build_session(stem, streams) for stem, streams in group_streams(dual_log_dir).items()]
+# All sessions in the directory, newest first. The project map is built once and shared across
+# every session rather than per stem — it costs one scan of CC's transcript store.
+def list_sessions(dual_log_dir: Path, project_map: dict = None) -> list:
+    if project_map is None:
+        project_map = build_project_map()
+    sessions = [build_session(stem, streams, project_map)
+                for stem, streams in group_streams(dual_log_dir).items()]
     sessions.sort(key=lambda s: (s["start"], s["stem"]), reverse=True)
     return sessions
 

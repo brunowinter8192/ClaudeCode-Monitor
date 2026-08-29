@@ -32,7 +32,8 @@ in the main checkout.
 ## Flow
 
 `__main__` parses argv → `discovery` resolves the log dir and groups `*.jsonl` by session stem →
-`sessions` builds one inventory row per stem from that stem's `_forwarded` stream alone;
+`sessions` builds one inventory row per stem from that stem's `_forwarded` stream alone, with
+`project_map` resolving each worker stem's 8-hex project id once per run;
 `timeline` and `search` resolve the stem, then `reader` reverse-seeks the last non-haiku
 `_original` line and parses only that line → `timeline` builds turn rows via
 `proxy.message_summary` plus request boundaries from `_forwarded.counts.messages`, or `search`
@@ -40,7 +41,7 @@ streams the same blocks through the matcher → `render` emits plain terminal te
 
 ## Modules
 
-### __main__.py (170 LOC)
+### __main__.py (171 LOC)
 
 **Purpose:** argparse dispatch for the three subcommands plus the optional `CONTEXT` positional and the `--since` / `--until` / `--turn` / `--full` / `--case-sensitive` variants, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
@@ -50,9 +51,19 @@ streams the same blocks through the matcher → `render` emits plain terminal te
 
 ---
 
-### discovery.py (162 LOC)
+### project_map.py (77 LOC, 2026-08-29)
 
-**Purpose:** Log-directory resolution, stem grouping, context parsing, the session inventory, all session selection in one place (`filter_sessions` — context substring AND inclusive start-day window), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
+**Purpose:** Resolves the proxy's `md5(project_path)[:8]` session id — the only trace of a worker's project in its stem — to a project label. Scans `~/.claude/projects/*/`, takes the first `cwd` record out of the newest transcript per directory, and hashes those real paths with the production helper. Reads CC's transcript store, never the dual logs.
+**Reads:** `~/.claude/projects/<encoded>/<uuid>.jsonl` (first ~40 lines of up to 3 newest transcripts per project dir).
+**Writes:** Nothing — returns `{sid8: label}`; `{}` on any failure, which degrades rendering to the `<sid8>` fallback rather than erroring.
+**Called by:** `discovery.list_sessions` (once per run, shared across all sessions), `__main__._load_for`.
+**Calls out:** `src/proxy_display/forwarded_parser.py` (`_proxy_session_id_for_project` — the single source shared with `addon.py`'s `_derive_session_id`, never re-derived here); stdlib (`json`, `os`, `pathlib`).
+
+---
+
+### discovery.py (176 LOC)
+
+**Purpose:** Log-directory resolution, stem grouping, context rendering (`context_for_stem`, pure — the project map is injected, not looked up), the session inventory, all session selection in one place (`filter_sessions` — context substring AND inclusive start-day window), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
 **Reads:** `MONITOR_CC_ROOT`; the dual_log directory listing; each stem's `_forwarded.jsonl` in full; `stat().st_size` of all six streams.
 **Writes:** Nothing — returns dicts.
 **Called by:** `__main__.py`, and indirectly by `timeline.load_timeline` through the session dict it is handed.
@@ -102,9 +113,14 @@ streams the same blocks through the matcher → `render` emits plain terminal te
 
 ## State
 
-None. Every command is a single pass with no caches, no module-level mutable state, and no files
-written anywhere. Two invocations on an unchanged log directory produce identical output; on a
-live session the output tracks whatever the proxy has appended by then.
+No mutable state — every command is a single pass with no caches, no module-level state, and no
+files written anywhere.
+
+Two inputs decide the output, though, and only one of them is the log directory. Worker contexts
+are resolved through `~/.claude/projects/` (see `project_map.py`), so a run is reproducible only
+while BOTH are unchanged: pruning CC's transcript store flips a worker's context from
+`worker/<project>/<name>` to the `worker/<sid8>/<name>` fallback without the dual logs changing at
+all. On a live session the output additionally tracks whatever the proxy has appended by then.
 
 ## Gotchas
 
@@ -155,7 +171,21 @@ silently hide sessions from a context query.
 
 **The context filter matches the RENDERED context value, family prefix included.** That is what
 makes `opus/` and `worker/` usable as selectors, and they partition the corpus exactly (measured:
-31 + 32 = 63). Matching only the name part would break both.
+31 + 30 = 61). Matching only the name part would break both.
+
+**A worker's project label must be spelled exactly like the main sessions' label, or the whole
+point is lost.** Main stems carry a sanitised label (`opus_gh_cli_…`, `opus_monitor_cc_…`), so
+`project_map.project_label()` applies the same rule to the resolved path — basename with `-`
+collapsed to `_`. That is what lets ONE filter term (`websearch`) return a project's main sessions
+AND its workers. Change either side's spelling and they silently stop meeting.
+
+**The proxy hashes the MAIN project path, never the worktree.** Workers of one project therefore
+share a single `sid8` (measured: 9 websearch workers all on `52fce57c`). The map does contain
+worktree paths too — 157 of 166 entries — but those ids never appear in a worker stem, and there
+are zero hash collisions across all 166 paths. Do not "fix" the map by filtering worktrees out; it
+costs nothing and would only remove a harmless superset. Related near-miss: `tmux_launcher.py`
+hashes the NORMALISED path, so its `monitor_cc_<hash8>` session names are not interchangeable with
+these ids.
 
 **A search hit is one (turn, block) pair, never one occurrence.** A block containing the term N
 times stays one hit carrying `×N`. Changing that granularity changes every reported hit count, so

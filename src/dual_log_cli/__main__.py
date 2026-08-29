@@ -35,6 +35,7 @@ from .discovery import (
     resolve_dual_log_dir,
     resolve_stem,
 )
+from .project_map import build_project_map
 from .render import render_search, render_sessions, render_timeline, render_turn_full
 from .search import find_matches
 from .timeline import full_turn, load_timeline
@@ -116,7 +117,7 @@ def _load_for(dual_log_dir, session_arg: str) -> tuple:
     except (AmbiguousSessionError, UnknownSessionError) as exc:
         print(str(exc), file=sys.stderr)
         return None, 2
-    session = build_session(stem, group_streams(dual_log_dir)[stem])
+    session = build_session(stem, group_streams(dual_log_dir)[stem], build_project_map())
     return load_timeline(session), 0
 
 
