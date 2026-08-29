@@ -17,9 +17,9 @@ proxy appends to them live during a session.
 ```bash
 ./venv/bin/python -m src.dual_log_cli sessions [CONTEXT] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
 ./venv/bin/python -m src.dual_log_cli timeline <stem-or-substring>
-./venv/bin/python -m src.dual_log_cli expand <stem-or-substring> <turn> [--before N] [--after N]
+./venv/bin/python -m src.dual_log_cli expand <stem-or-substring> <turn> [--before N] [--after N] [--only CLASSIFIER]
 ./venv/bin/python -m src.dual_log_cli expand <stem> <turn> --full --before N --after N [--only CLASSIFIER]
-./venv/bin/python -m src.dual_log_cli search <term> [SCOPE] [--since D] [--until D] [--case-sensitive]
+./venv/bin/python -m src.dual_log_cli search <term> [SCOPE] [--since D] [--until D] [--only CLASSIFIER] [--case-sensitive]
 ```
 
 Run from the project root. `bin/duallog` (repo root, mode 755) is the PATH-facing form: it cds to
@@ -47,7 +47,7 @@ terminal text to stdout.
 
 ## Modules
 
-### __main__.py (271 LOC)
+### __main__.py (280 LOC)
 
 **Purpose:** argparse dispatch for the four subcommands plus the optional `CONTEXT` / `SCOPE` positionals and the `--since` / `--until` / `--before` / `--after` / `--full` / `--only` / `--case-sensitive` variants, `expand`'s two-mode argument rules (`_run_expand` / `_run_expand_full` / `_window`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
@@ -64,6 +64,16 @@ terminal text to stdout.
 **Writes:** Nothing — returns `{sid8: label}`; `{}` on any failure, which degrades rendering to the `<sid8>` fallback rather than erroring.
 **Called by:** `discovery.list_sessions` (once per run, shared across all sessions), `__main__._load_for`.
 **Calls out:** `src/proxy_display/forwarded_parser.py` (`_proxy_session_id_for_project` — the single source shared with `addon.py`'s `_derive_session_id`, never re-derived here); stdlib (`json`, `os`, `pathlib`).
+
+---
+
+### classifier.py (47 LOC, 2026-08-29)
+
+**Purpose:** The `--only` vocabulary and its two operations, shared by `expand` (both modes) and `search`. `ROLES` (3) and `TYPES` (8) are the message-level classifiers a turn can carry; `parse_only` turns a spec into a `(role, type)` pair or raises `BadClassifierError`; `matches_only` applies it. `ONLY_FORMS` is the accepted-forms sentence, interpolated into both `--help` texts so the syntax is documented where it is used.
+**Reads:** Nothing — pure vocabulary and predicates.
+**Writes:** Nothing.
+**Called by:** `__main__.py` (validation, once per run), `render.py` (overview filtering), `search.py` (hit filtering).
+**Calls out:** —
 
 ---
 
@@ -87,7 +97,7 @@ terminal text to stdout.
 
 ---
 
-### timeline.py (205 LOC)
+### timeline.py (208 LOC)
 
 **Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator both `search` and the full-turn dump build on), single-turn full extraction, request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), and `load_timeline` as the one call that assembles everything a render needs.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
@@ -97,7 +107,7 @@ terminal text to stdout.
 
 ---
 
-### search.py (43 LOC)
+### search.py (48 LOC)
 
 **Purpose:** The literal-substring matcher over one session's deduplicated timeline. Returns one hit per matching (turn, block) with an occurrence count and a whitespace-collapsed context snippet.
 **Reads:** The parsed payload, streamed block by block via `timeline.iter_block_texts`.
@@ -107,7 +117,7 @@ terminal text to stdout.
 
 ---
 
-### render.py (206 LOC)
+### render.py (214 LOC)
 
 **Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview with a `▶` anchor mark, an HH:MM:SS request-time column and NO request markers, and the full-content window dump whose turn headers carry the same time), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
@@ -229,8 +239,18 @@ answer which of the two indices the reader is supposed to follow.
 **`--only` matches the MESSAGE-level classifier, not block types.** A turn whose message type is
 `tool_use` typically also carries `thinking` and `text` blocks, yet `--only thinking` will not
 select it — the filter compares against the turn's role and its message type, the same two values
-the overview lines print. That keeps overview and read mode talking about the same units; a
-block-level filter would need a different flag and a different output shape.
+the overview lines print. That keeps every view talking about the same units; a block-level filter
+would need a different flag and a different output shape. Accepted syntax is a role, a type, or a
+`role/type` pair, case-insensitive; an unknown token exits 2 naming the accepted forms rather than
+silently matching nothing.
+
+**`--only` works in expand OVERVIEW mode too, and in `search` (revised 2026-08-29).** Overview mode
+previously rejected `--only` with exit 2, on the reasoning that it promises every turn in the window
+and a silent filter would break that promise invisibly. That rule is superseded: the skill now
+documents every classifier name, so an agent filters knowingly instead of guessing, and the header
+keeps stating the FULL window (`turns 683-743 …, only user/text`) so the narrowing is never hidden.
+The floor on `--before`/`--after` is unchanged — filtering narrows WHAT is printed, never the window
+that was examined.
 
 **`timeline --turn N [--full]` no longer exists** (removed 2026-08-29). `expand <s> <t> --full
 --before 0 --after 0` is the replacement for a single-turn read. Unlike `search`'s argument flip,
