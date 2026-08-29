@@ -31,22 +31,16 @@ def render_sessions(sessions: list) -> str:
     if not sessions:
         return "no sessions found\n"
     context_width = max(len(s["context"]) for s in sessions)
-    stem_width = max(len(s["stem"]) for s in sessions)
-    lines = [
-        f"{'START':19}  {'CONTEXT':{context_width}}  {'SESSION':{stem_width}}  {'REQ':>5}  {'MSGS':>5}  {'SIZE':>7}",
-    ]
+    # SESSION is the last column — left unpadded so no line carries trailing whitespace
+    lines = [f"{'START':19}  {'CONTEXT':{context_width}}  SESSION"]
     for session in sessions:
         lines.append(
             f"{fmt_timestamp(session['start']):19}  "
             f"{session['context']:{context_width}}  "
-            f"{session['stem']:{stem_width}}  "
-            f"{session['requests']:>5}  "
-            f"{session['messages']:>5}  "
-            f"{fmt_bytes(session['bytes']):>7}"
+            f"{session['stem']}"
         )
-    total = sum(s["bytes"] for s in sessions)
     lines.append("")
-    lines.append(f"{len(sessions)} sessions, {fmt_bytes(total)} on disk")
+    lines.append(f"{len(sessions)} sessions")
     return "\n".join(lines) + "\n"
 
 
