@@ -5,16 +5,18 @@ Commands:
     sessions <context>       keep only sessions whose context contains that text (substring, any case)
     sessions --since D --until D   bound that listing by start day, inclusive, YYYY-MM-DD
     timeline <session>       deduplicated turn timeline of one session, from its last request line
-    timeline <s> --turn N --full   full content of one turn
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
+    expand <s> <turn>        classifier lines around one turn (overview mode)
+    expand <s> <turn> --full --before N --after N [--only X]   full content of the window
 
 Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli sessions
     ./venv/bin/python -m src.dual_log_cli timeline api_requests_opus_gh_cli_1787995963
-    ./venv/bin/python -m src.dual_log_cli timeline gh_cli_1787995963 --turn 402 --full
     ./venv/bin/python -m src.dual_log_cli search "worker-cli merge" gh_cli_1787939513
     ./venv/bin/python -m src.dual_log_cli search Reißleine websearch --since 2026-08-28
+    ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721
+    ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721 --full --before 0 --after 0
 
 <session> is a full stem or any unambiguous substring of one. The log directory is resolved from
 MONITOR_CC_ROOT, else from the repo root, else from the main checkout when run inside a worktree.
@@ -38,9 +40,17 @@ from .discovery import (
     resolve_stem,
 )
 from .project_map import build_project_map
-from .render import render_search, render_sessions, render_timeline, render_turn_full
+from .render import (
+    render_expand_full,
+    render_expand_overview,
+    render_search,
+    render_sessions,
+    render_timeline,
+)
 from .search import find_matches
 from .timeline import full_turn, load_timeline
+
+_OVERVIEW_FLOOR = 30
 
 # ORCHESTRATOR
 
@@ -55,6 +65,8 @@ def main(argv: list) -> int:
         return _run_sessions(dual_log_dir, args)
     if args.command == "search":
         return _run_search(dual_log_dir, args)
+    if args.command == "expand":
+        return _run_expand(dual_log_dir, args)
     return _run_timeline(dual_log_dir, args)
 
 
@@ -78,8 +90,28 @@ def _parse_args(argv: list) -> argparse.Namespace:
                           help="only sessions started on or before this day (inclusive)")
     timeline = sub.add_parser("timeline", help="render one session as a turn timeline")
     timeline.add_argument("session", help="session stem or unambiguous substring")
-    timeline.add_argument("--turn", type=int, default=None, help="restrict output to one turn index")
-    timeline.add_argument("--full", action="store_true", help="with --turn: print the turn's full content")
+    expand = sub.add_parser(
+        "expand",
+        help="classifier lines around one turn, or the full content of a window",
+        description=(
+            "Overview mode (default): classifier lines for every turn in the window — no blocks, "
+            f"no previews, no filtering. --before/--after default to {_OVERVIEW_FLOOR} and have a "
+            f"HARD FLOOR of {_OVERVIEW_FLOOR}: a smaller value is raised, so the window never gets "
+            "too narrow to read context from. "
+            "Read mode (--full): both --before and --after are REQUIRED explicit numbers with no "
+            "floor (0 and up), and --only may restrict which turns are dumped."
+        ),
+    )
+    expand.add_argument("session", help="session stem or unambiguous substring")
+    expand.add_argument("turn", type=int, help="anchor turn index")
+    expand.add_argument("--before", type=int, default=None,
+                        help=f"turns before the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
+    expand.add_argument("--after", type=int, default=None,
+                        help=f"turns after the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
+    expand.add_argument("--full", action="store_true",
+                        help="dump full turn content instead of classifier lines; requires --before and --after")
+    expand.add_argument("--only", default="", metavar="CLASSIFIER",
+                        help="with --full: dump only turns whose role or message type matches, e.g. tool_result, thinking, user")
     search = sub.add_parser("search", help="find a term across the deduplicated timelines")
     search.add_argument("term", help="literal term to look for (no regex)")
     search.add_argument("scope", nargs="?", default="", metavar="SCOPE",
@@ -171,20 +203,56 @@ def _run_timeline(dual_log_dir, args: argparse.Namespace) -> int:
     data, code = _load_for(dual_log_dir, args.session)
     if data is None:
         return code
-    if args.turn is None:
-        sys.stdout.write(render_timeline(data))
-        return 0
-    if not args.full:
-        turns = data["turns"]
-        if args.turn < 0 or args.turn >= len(turns):
-            print(f"turn {args.turn} out of range (0..{len(turns) - 1})", file=sys.stderr)
-            return 2
-        single = dict(data, turns=[turns[args.turn]], boundaries=[])
-        sys.stdout.write(render_timeline(single))
-        return 0
-    blocks = full_turn(data["payload"], args.turn)
-    sys.stdout.write(render_turn_full(data, args.turn, blocks))
-    return 0 if blocks else 2
+    sys.stdout.write(render_timeline(data))
+    return 0
+
+
+# expand — a window around one turn: classifier lines by default, full content with --full
+def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
+    data, code = _load_for(dual_log_dir, args.session)
+    if data is None:
+        return code
+    turns = data["turns"]
+    if args.turn < 0 or args.turn >= len(turns):
+        print(f"turn {args.turn} out of range (0..{len(turns) - 1})", file=sys.stderr)
+        return 2
+    if args.full:
+        return _run_expand_full(data, args)
+    if args.only:
+        print("--only applies to --full only; overview mode always lists every turn in the window",
+              file=sys.stderr)
+        return 2
+    # floor, not a default: an explicit smaller value is raised too
+    before = max(_OVERVIEW_FLOOR, args.before if args.before is not None else _OVERVIEW_FLOOR)
+    after = max(_OVERVIEW_FLOOR, args.after if args.after is not None else _OVERVIEW_FLOOR)
+    start, end = _window(args.turn, before, after, len(turns))
+    sys.stdout.write(render_expand_overview(data, args.turn, start, end))
+    return 0
+
+
+# expand --full — both bounds explicit, no floor, optional classifier filter
+def _run_expand_full(data: dict, args: argparse.Namespace) -> int:
+    if args.before is None or args.after is None:
+        print("--full requires both bounds: --full --before N --after N (N >= 0)", file=sys.stderr)
+        return 2
+    if args.before < 0 or args.after < 0:
+        print("--before and --after must be 0 or greater", file=sys.stderr)
+        return 2
+    turns = data["turns"]
+    start, end = _window(args.turn, args.before, args.after, len(turns))
+    needle = args.only.lower()
+    dumped = [
+        (turn, full_turn(data["payload"], turn["index"]))
+        for turn in turns[start:end + 1]
+        if not needle or needle in (turn["role"].lower(), turn["type"].lower())
+    ]
+    sys.stdout.write(render_expand_full(data, args.turn, start, end, args.only, dumped))
+    return 0
+
+
+# Clamp an anchor-centred window to the turn list
+def _window(anchor: int, before: int, after: int, total: int) -> tuple:
+    return max(0, anchor - before), min(total - 1, anchor + after)
 
 
 if __name__ == "__main__":

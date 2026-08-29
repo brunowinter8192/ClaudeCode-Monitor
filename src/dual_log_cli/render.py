@@ -142,19 +142,52 @@ def _skipped_lines(skipped: int) -> list:
     return ["", f"({skipped} session{'s' if skipped != 1 else ''} skipped — timeline could not be loaded)"]
 
 
-# Full content of one turn, block by block
-def render_turn_full(data: dict, turn_index: int, blocks: list) -> str:
-    if not blocks:
-        return f"turn {turn_index} out of range (0..{len(data['turns']) - 1})\n"
-    turn = data["turns"][turn_index]
+# expand overview: classifier lines only — turn index, role, type, chars — for the window, with
+# the timeline's REQ markers interleaved and the anchor turn marked. No block sub-lines and no
+# previews: this mode answers "what is around this turn", and every turn in the window is listed.
+def render_expand_overview(data: dict, anchor: int, start: int, end: int) -> str:
+    turns = data["turns"]
+    grouped = boundaries_by_index(data["boundaries"])
     lines = [
         f"session   {data['session']['stem']}",
-        f"turn      #{turn_index}  {turn['role']}  {turn['type']}  {fmt_chars(turn['chars'])} chars, "
-        f"{len(blocks)} block(s)",
+        f"context   {data['session']['context']}",
+        f"window    turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}",
         "",
     ]
-    for position, (label, chars, text) in enumerate(blocks):
-        lines.append(f"── block {position}  {label}  {fmt_chars(chars)} chars ──")
-        lines.append(text)
+    for turn in turns[start:end + 1]:
+        opening = grouped.get(turn["index"])
+        if opening:
+            lines.append(_boundary_line(opening))
+        marker = "▶" if turn["index"] == anchor else " "
+        lines.append(
+            f"{marker} #{turn['index']:<4} {turn['role']:9} {turn['type']:16} "
+            f"{fmt_chars(turn['chars']):>7}"
+        )
+    return "\n".join(lines) + "\n"
+
+
+# expand --full: the complete content of each selected turn in the window
+def render_expand_full(data: dict, anchor: int, start: int, end: int,
+                       only: str, dumped: list) -> str:
+    turns = data["turns"]
+    scope = f"turns {start}-{end} of 0-{len(turns) - 1}, anchor #{anchor}"
+    lines = [
+        f"session   {data['session']['stem']}",
+        f"context   {data['session']['context']}",
+        f"window    {scope}" + (f", only {only}" if only else ""),
+        "",
+    ]
+    if not dumped:
+        lines.append(f"no turn in the window matches --only {only}" if only else "window is empty")
+        return "\n".join(lines) + "\n"
+    for turn, blocks in dumped:
+        marker = "▶" if turn["index"] == anchor else " "
+        lines.append(
+            f"{marker} ═══ #{turn['index']} {turn['role']} {turn['type']} "
+            f"{fmt_chars(turn['chars'])} chars, {len(blocks)} block(s) ═══"
+        )
+        for position, (label, chars, text) in enumerate(blocks):
+            lines.append(f"── block {position}  {label}  {fmt_chars(chars)} chars ──")
+            lines.append(text)
         lines.append("")
     return "\n".join(lines) + "\n"
