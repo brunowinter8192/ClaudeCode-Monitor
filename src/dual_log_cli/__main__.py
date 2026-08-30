@@ -9,7 +9,7 @@ Commands:
                              --only restricts hits to one classifier (role, type, or role/type)
     msgs <session>           request groups: a REQ separator, then the msgs that request added
     msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
-    expand <s> <msg>         full content of that msg
+    expand <s> <msg>         full content of that msg, plus what the proxy stripped/injected there
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
 
 Usage (from project root, or via bin/duallog once symlinked into PATH):
@@ -107,10 +107,12 @@ def _parse_args(argv: list) -> argparse.Namespace:
         "expand",
         help="full content of one msg, or of a window around it",
         description=(
-            "Dumps the complete content of every block of every selected msg. --before/--after "
-            "widen the window around the anchor and default to 0, so a bare call prints exactly "
-            "the anchor msg. --only selects msgs by role and/or ANY block type; a selected msg "
-            "always shows ALL of its blocks."
+            "Dumps the complete content of every block of every selected msg, as CC sent it. A "
+            "block the proxy transformed is followed by `── stripped by REQ n ──` / `── injected "
+            "by REQ n ──` sections showing what it removed and what it put there instead; an "
+            "untouched block shows content only. --before/--after widen the window around the "
+            "anchor and default to 0, so a bare call prints exactly the anchor msg. --only selects "
+            "msgs by role and/or ANY block type; a selected msg always shows ALL of its blocks."
         ),
     )
     expand.add_argument("session", help="session stem or unambiguous substring")
