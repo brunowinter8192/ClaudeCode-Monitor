@@ -1,16 +1,6 @@
 # INFRASTRUCTURE
-from .classifier import matches_only
-from .timeline import boundaries_by_index
 
 # FUNCTIONS
-
-
-# Byte count as a short human string
-def fmt_bytes(size: int) -> str:
-    for unit, factor in (("G", 1 << 30), ("M", 1 << 20), ("K", 1 << 10)):
-        if size >= factor:
-            return f"{size / factor:.1f}{unit}"
-    return f"{size}B"
 
 
 # Char count as a short human string
@@ -45,73 +35,6 @@ def render_sessions(sessions: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-# Header block for a timeline
-def _timeline_header(data: dict) -> list:
-    session = data["session"]
-    entry = data["entry"]
-    boundaries = data["boundaries"]
-    restarts = [b for b in boundaries if b["restart"]]
-    lines = [
-        f"session   {session['stem']}",
-        f"context   {session['context']}   family {data['family']}   model {entry.get('model', '?')}",
-        f"requests  {session['requests']} total, {len(boundaries)} on {data['family']} "
-        f"({data['haiku_lines_skipped']} trailing non-conversation lines skipped)",
-        f"source    last {data['family']} request of _original, {fmt_bytes(data['line_bytes'])}, "
-        f"{fmt_timestamp(entry.get('timestamp', ''))}",
-        f"msgs      {len(data['turns'])} messages, {fmt_chars(sum(t['chars'] for t in data['turns']))} chars",
-    ]
-    if restarts:
-        first = restarts[0]["request_no"]
-        lines.append(
-            f"WARNING   message count regressed at request {first} (CC restart within this log id) — "
-            "request markers before it do not align with the final message list"
-        )
-    lines.append("")
-    return lines
-
-
-# Marker line for the requests that open at one message index. Several requests share an index
-# when a request added no message (re-fire) or when a restart reset the index to 0 — a range is
-# only printed when the request numbers really are consecutive.
-def _boundary_line(group: list) -> str:
-    first, last = group[0], group[-1]
-    stamp = fmt_timestamp(first["timestamp"])
-    if len(group) == 1:
-        return f"── REQ {first['request_no']}  {stamp}  msgs {first['message_count']} ──"
-    numbers = [b["request_no"] for b in group]
-    consecutive = last["request_no"] - first["request_no"] == len(group) - 1
-    label = f"{first['request_no']}-{last['request_no']}" if consecutive else ",".join(str(n) for n in numbers[:6])
-    if not consecutive and len(numbers) > 6:
-        label += f",+{len(numbers) - 6}"
-    return (
-        f"── REQ {label}  {stamp}  msgs {last['message_count']}  "
-        f"({len(group)} requests, no new messages) ──"
-    )
-
-
-# Deduplicated msg timeline: request markers plus one line per msg and per block
-def render_timeline(data: dict) -> str:
-    lines = _timeline_header(data)
-    grouped = boundaries_by_index(data["boundaries"])
-    turn_count = len(data["turns"])
-    for turn in data["turns"]:
-        opening = grouped.get(turn["index"])
-        if opening:
-            lines.append(_boundary_line(opening))
-        lines.append(
-            f"#{turn['index']:<4} {turn['role']:9} {turn['type']:16} "
-            f"{fmt_chars(turn['chars']):>7}  {len(turn['blocks'])} block(s)"
-        )
-        for block in turn["blocks"]:
-            size = fmt_chars(block["chars"])
-            if block["type"] == "thinking" and block.get("sig_chars"):
-                size = f"{size}+sig{fmt_chars(block['sig_chars'])}"
-            lines.append(f"      {block['label']:16} {size:>10}  {block['preview']}")
-    for index in sorted(k for k in grouped if k >= turn_count):
-        lines.append(_boundary_line(grouped[index]))
-    return "\n".join(lines) + "\n"
-
-
 # Search result: header plus one line per matching block
 # Search results across one or more sessions. results is [(session, hits), …] in listing order,
 # already filtered to sessions that HAVE hits. The term line is printed once overall; each session
@@ -143,56 +66,7 @@ def _skipped_lines(skipped: int) -> list:
     return ["", f"({skipped} session{'s' if skipped != 1 else ''} skipped — timeline could not be loaded)"]
 
 
-# expand overview: classifier rows only — msg index, time, role, type-or-block-count, chars — for
-# the window, with the anchor msg marked. No block sub-lines, no previews, and no REQ boundary markers: this mode
-# navigates by turn index, so the request view is noise here (timeline keeps it). Every turn in the
-# window is listed.
-def render_expand_overview(data: dict, anchor: int, start: int, end: int, only: str = "",
-                           wanted: tuple = ("", "")) -> str:
-    msgs = data["turns"]
-    times = data.get("turn_times", {})
-    lines = [
-        f"session   {data['session']['stem']}",
-        f"context   {data['session']['context']}",
-        f"window    msgs {start}-{end} of 0-{len(msgs) - 1}, anchor #{anchor}, "
-        f"{_window_date(data, anchor)}" + (f", only {only}" if only else ""),
-        "",
-    ]
-    shown = 0
-    for msg in msgs[start:end + 1]:
-        if not matches_only(msg["role"], [b["type"] for b in msg["blocks"]], wanted):
-            continue
-        shown += 1
-        marker = "▶" if msg["index"] == anchor else " "
-        blocks = msg["blocks"]
-        # pane grammar: one block keeps its type inline, several collapse to a block COUNT and
-        # always list their blocks as sub-rows — the aggregated message type is not shown then,
-        # because it names only one of the blocks it stands for
-        head = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
-        lines.append(
-            f"{marker} #{msg['index']:<4} {_clock(times.get(msg['index'])):8} "
-            f"{msg['role']:9} {head:16} {fmt_chars(msg['chars']):>7}"
-        )
-        if len(blocks) > 1:
-            for position, block in enumerate(blocks):
-                lines.append(f"       [{position}] {block['type']:14} {fmt_chars(block['chars']):>7}")
-    if not shown:
-        lines.append(f"no msg in the window matches --only {only}")
-    return "\n".join(lines) + "\n"
-
-
-# HH:MM:SS of the request that first carried a msg; "?" when it has no reliable time
-def _clock(timestamp) -> str:
-    return timestamp[11:19] if timestamp else "?"
-
-
-# Calendar day for the window header — the anchor's own day, else the session's start day
-def _window_date(data: dict, anchor: int) -> str:
-    stamp = data.get("turn_times", {}).get(anchor) or data["session"].get("start", "")
-    return stamp[:10] if stamp else "?"
-
-
-# expand --full: the complete content of each selected msg in the window
+# expand: the complete content of each selected msg in the window
 def render_expand_full(data: dict, anchor: int, start: int, end: int,
                        only: str, dumped: list) -> str:
     msgs = data["turns"]
@@ -219,3 +93,14 @@ def render_expand_full(data: dict, anchor: int, start: int, end: int,
             lines.append(text)
         lines.append("")
     return "\n".join(lines) + "\n"
+
+
+# HH:MM:SS of the request that first carried a msg; "?" when it has no reliable time
+def _clock(timestamp) -> str:
+    return timestamp[11:19] if timestamp else "?"
+
+
+# Calendar day for the window header — the anchor's own day, else the session's start day
+def _window_date(data: dict, anchor: int) -> str:
+    stamp = data.get("turn_times", {}).get(anchor) or data["session"].get("start", "")
+    return stamp[:10] if stamp else "?"

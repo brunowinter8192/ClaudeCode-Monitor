@@ -5,8 +5,10 @@
 Read-only command-line inspector for the six-stream dual-log quartet in `src/logs/dual_log/`
 written by `src/proxy/addon.py`. Turns ~15 GB of unreadable JSONL — every `_original` line
 re-embeds the entire conversation history, so grep and head report every content hit once per
-subsequent request — into a session inventory and a deduplicated per-session msg timeline. The user-facing unit is the
-msg (one API message) and its blocks, matching the proxy pane's display grammar.
+subsequent request — into a session inventory, a deduplicated search, and a full-content read of
+any msg window. The deduplicated msg timeline still exists as the internal data structure all three
+commands build on, but it has no command of its own. The user-facing unit is the msg (one API
+message) and its blocks, matching the proxy pane's display grammar.
 Touch this package to add read-side views over the dual logs. Do NOT add anything here that
 writes, creates or locks a path under `src/logs/dual_log/`: the logs are frozen evidence and the
 proxy appends to them live during a session.
@@ -17,9 +19,7 @@ proxy appends to them live during a session.
 
 ```bash
 ./venv/bin/python -m src.dual_log_cli sessions [CONTEXT] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
-./venv/bin/python -m src.dual_log_cli timeline <stem-or-substring>
 ./venv/bin/python -m src.dual_log_cli expand <stem-or-substring> <msg> [--before N] [--after N] [--only CLASSIFIER]
-./venv/bin/python -m src.dual_log_cli expand <stem> <msg> --full --before N --after N [--only CLASSIFIER]
 ./venv/bin/python -m src.dual_log_cli search <term> [SCOPE] [--since D] [--until D] [--only CLASSIFIER] [--case-sensitive]
 ```
 
@@ -36,21 +36,20 @@ in the main checkout.
 
 `__main__` parses argv → `discovery` resolves the log dir and groups `*.jsonl` by session stem →
 `sessions` builds one inventory row per stem from that stem's `_forwarded` stream alone, with
-`project_map` resolving each worker stem's 8-hex project id once per run;
-`timeline` resolves one stem, then `reader` reverse-seeks the last non-haiku `_original` line and
+`project_map` resolving each worker stem's 8-hex project id once per run.
+`expand` resolves one stem, then `reader` reverse-seeks the last non-haiku `_original` line and
 parses only that line → `timeline` builds turn rows via `proxy.message_summary` plus request
-boundaries from `_forwarded.counts.messages`. `search` selects a SET of sessions the same way
-`sessions` does (scope + date window), then repeats that per-session reconstruction for each one
-and streams its blocks through the matcher, skipping any session whose timeline will not load.
-`expand` reuses the timeline of one session and slices an anchor-centred window out of its msg
-rows — classifier rows by default, full block content with `--full` → `render` emits plain
-terminal text to stdout.
+boundaries from `_forwarded.counts.messages`, and `expand` slices an anchor-centred window out of
+those msg rows and re-summarizes each selected msg for its full block content. `search` selects a
+SET of sessions the same way `sessions` does (scope + date window), repeats that per-session
+reconstruction for each one and streams its blocks through the matcher, skipping any session whose
+timeline will not load → `render` emits plain terminal text to stdout.
 
 ## Modules
 
-### __main__.py (282 LOC)
+### __main__.py (237 LOC)
 
-**Purpose:** argparse dispatch for the four subcommands plus the optional `CONTEXT` / `SCOPE` positionals and the `--since` / `--until` / `--before` / `--after` / `--full` / `--only` / `--case-sensitive` variants, `expand`'s two-mode argument rules (`_run_expand` / `_run_expand_full` / `_window`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
+**Purpose:** argparse dispatch for the three subcommands (`sessions`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
 **Writes:** stdout (rendered text), stderr (resolution, range and empty-term errors). Never touches the log directory.
 **Called by:** the user, via `python -m src.dual_log_cli` or `bin/duallog`.
@@ -70,10 +69,10 @@ terminal text to stdout.
 
 ### classifier.py (50 LOC, 2026-08-29)
 
-**Purpose:** The `--only` vocabulary and its two operations, shared by `expand` (both modes) and `search`. `ROLES` (3) and `TYPES` (9) are the BLOCK types a msg can carry — the real content blocks (text, thinking, tool_use, tool_result, image) plus the pseudo-types a str-content msg contributes as its single synthetic block; `parse_only` turns a spec into a `(role, type)` pair or raises `BadClassifierError`; `matches_only` applies it, matching the type side against ANY of a msg's block types. `ONLY_FORMS` is the accepted-forms sentence, interpolated into both `--help` texts so the syntax is documented where it is used.
+**Purpose:** The `--only` vocabulary and its two operations, shared by `expand` and `search`. `ROLES` (3) and `TYPES` (9) are the BLOCK types a msg can carry — the real content blocks (text, thinking, tool_use, tool_result, image) plus the pseudo-types a str-content msg contributes as its single synthetic block; `parse_only` turns a spec into a `(role, type)` pair or raises `BadClassifierError`; `matches_only` applies it, matching the type side against ANY of a msg's block types. `ONLY_FORMS` is the accepted-forms sentence, interpolated into both `--help` texts so the syntax is documented where it is used.
 **Reads:** Nothing — pure vocabulary and predicates.
 **Writes:** Nothing.
-**Called by:** `__main__.py` (validation, once per run), `render.py` (overview filtering), `search.py` (hit filtering).
+**Called by:** `__main__.py` (validation once per run, then msg selection in `expand`), `search.py` (hit filtering).
 **Calls out:** —
 
 ---
@@ -98,9 +97,9 @@ terminal text to stdout.
 
 ---
 
-### timeline.py (210 LOC)
+### timeline.py (202 LOC)
 
-**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator both `search` and the full-turn dump build on), single-turn full extraction, request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), and `load_timeline` as the one call that assembles everything a render needs.
+**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), and `load_timeline` as the one call that assembles everything a render needs. `load_timeline` still returns `entry`, `family`, `line_bytes`, `haiku_lines_skipped` and `boundaries`; since the `timeline` command was dropped only `session`, `payload`, `turns` and `turn_times` have readers, and `boundaries` survives as the input `build_turn_times` consumes inside the same function.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
 **Writes:** Nothing — returns row lists, a generator, and one data dict.
 **Called by:** `__main__.py`, `search.py`.
@@ -118,13 +117,13 @@ terminal text to stdout.
 
 ---
 
-### render.py (221 LOC)
+### render.py (106 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), timeline with request markers, search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s two renderers (classifier-only overview in pane grammar — a `▶` anchor mark, an HH:MM:SS request-time column, no request markers, a single-block msg inline and a multi-block msg as a block count plus `[i] type chars` sub-rows — and the full-content window dump whose msg headers carry the same time), and the size/char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block), and the char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
-**Calls out:** `timeline` (`boundaries_by_index`).
+**Calls out:** — (package-local imports dropped with the `timeline` command and the expand overview).
 
 ---
 
@@ -143,9 +142,10 @@ all. On a live session the output additionally tracks whatever the proxy has app
 
 **The last line of `_original` is usually NOT the conversation.** Every session file interleaves
 haiku sidecar requests (1 message, ~0.5–2 KB) with the real family. `reader.load_last_request`
-walks backwards past them via a 512-byte model sniff and only parses the first non-haiku line;
-the timeline header reports how many were skipped. Any new read path must reuse that function
-rather than taking the file's final line.
+walks backwards past them via a 512-byte model sniff and only parses the first non-haiku line.
+The skipped count reaches `load_timeline`'s dict but no command prints it since the `timeline`
+header was removed. Any new read path must reuse that function rather than taking the file's final
+line.
 
 **Never parse an `_original` line to decide whether you want it.** Lines reach 15 MB. The
 top-level key order written by `addon.py` is `timestamp, flow_id, request_id, model, payload`, so
@@ -155,13 +155,14 @@ top-level key order written by `addon.py` is `timestamp, flow_id, request_id, mo
 **`_forwarded` is a line-for-line mirror of `_original`, and that is load-bearing.** Verified:
 identical line count and identical per-line `(model, message_count)`. The whole 62-session
 inventory therefore reads 108 MB of `_forwarded` instead of 14 GB of `_original`. If a future
-proxy change breaks that 1:1 alignment, `sessions` silently reports wrong request counts and the
-timeline's request markers drift — re-verify the alignment before relying on it again.
+proxy change breaks that 1:1 alignment, `sessions` silently reports wrong request counts and
+`expand`'s time column drifts — re-verify the alignment before relying on it again.
 
-**A message-count regression means CC restarted inside one log id.** The renderer prints an
-explicit WARNING and stops trusting the earlier markers, because request boundaries before the
-restart index into a message list that no longer exists. Do not "fix" this by clamping the
-indices — the misalignment is real and must stay visible.
+**A message-count regression means CC restarted inside one log id.** Request boundaries before the
+restart index into a message list that no longer exists, so `build_turn_times` stops trusting them
+(see the `?` gotcha below). Since the `timeline` command was dropped there is no header left that
+announces the regression in words — the only surviving signal is the `?` time column. Do not "fix"
+the misalignment by clamping indices; it is real.
 
 **`_summarize_message` returns `blocks == []` for string content.** CC delivers `role='system'`
 messages as plain strings, so `timeline.build_turns` and `timeline.iter_block_texts` synthesize a
@@ -210,11 +211,12 @@ it is a contract, not a formatting detail. Since 2026-08-29 the header no longer
 so hits, turns and occurrences are read off the lines — the `×N` markers are the only place the
 occurrence count survives.
 
-**`expand`'s 30 is a FLOOR in overview mode, not a default.** An explicitly smaller `--before 5`
-or `--before 0` is raised to 30; only values above it are honoured. The mode exists to show what
-surrounds a turn, and a reader who narrows the window defeats that without noticing. Read mode
-(`--full`) is the opposite: both bounds are REQUIRED explicit numbers with no floor, because there
-the caller is paying for every dumped character.
+**`expand` dumps full content and nothing else, and its bounds default to 0.** A bare
+`expand <session> <msg>` prints exactly the anchor msg with every block in full — the old
+classifier-rows overview and its 30-row hard floor are gone (2026-08-30), and so is the `--full`
+flag that used to select the content dump. `--before`/`--after` are optional, may be 0, and a
+negative value exits 2. The caller pays for every dumped character, so widening a window on a
+tool_result-heavy stretch costs megabytes of stdout — widen deliberately.
 
 **`expand`'s time column is the REQUEST's time, not a per-message time.** A turn shows when the
 request that FIRST carried it was sent — derived by walking `_forwarded`'s `counts.messages` chain,
@@ -228,14 +230,14 @@ logs offers the latter.
 that restart's message count unmapped — the requests that first carried those messages described a
 different message list and cannot be walked against the final one. Measured: 766/766 turns mapped
 in a restart-free session, 504/506 in the `/clear` session with exactly turns 0 and 1 unmapped.
-Same conservative stance as the timeline's WARNING; do not "fix" it by falling back to the
-pre-restart requests.
+Do not "fix" it by falling back to the pre-restart requests.
 
-**Request markers belong to `timeline`, not to `expand`.** The overview used to interleave the
-same `── REQ n ──` lines; they were dropped 2026-08-29 because `expand` navigates by turn index and
-a second numbering system in the same block is noise. `timeline` keeps them unchanged — it is the
-view where request boundaries ARE the structure. Anything reintroducing them here should first
-answer which of the two indices the reader is supposed to follow.
+**No view prints `── REQ n ──` markers any more.** `expand`'s overview dropped them 2026-08-29
+because it navigates by msg index and a second numbering system is noise there, and the `timeline`
+command that owned them was removed 2026-08-30. Request boundaries survive only as data:
+`timeline.request_boundaries` feeds `build_turn_times`, so a request's send time still reaches the
+reader through `expand`'s HH:MM:SS column. Anything reintroducing markers should first answer which
+of the two indices the reader is supposed to follow.
 
 **`--only` matches BLOCK types, not the aggregated message type (revised 2026-08-29).** It used to
 compare against the msg's single aggregated type, so a msg labelled `tool_use` was invisible to
@@ -247,29 +249,22 @@ aggregated as `tool_result` and `task-notification` that carry text blocks. Acce
 role, a type, or a `role/type` pair, case-insensitive; an unknown token exits 2 naming the accepted
 forms rather than silently matching nothing.
 
-**The overview follows the proxy pane's grammar, and the aggregated type is deliberately absent for
-multi-block msgs.** A single-block msg prints its type inline (`#713 18:17:02 user text 952`); a
-multi-block msg prints a block COUNT plus total chars and always lists `[i] type chars` sub-rows
-(`#715 18:17:38 assistant 3 blocks 1.6k`). Showing an aggregated label there would name just one of
-the blocks it stands for — which is exactly the confusion the block-level `--only` revision above
-removed.
-
 **The user-facing unit is the msg, not the turn.** One msg is one API message; its parts are
 blocks. Internal identifiers still say `turns` in places (`data["turns"]`, `hit["turn"]`), but no
 output string or `--help` text does — that split is intentional, and new output should say msg.
 
-**`--only` works in expand OVERVIEW mode too, and in `search` (revised 2026-08-29).** Overview mode
-previously rejected `--only` with exit 2, on the reasoning that it promises every turn in the window
-and a silent filter would break that promise invisibly. That rule is superseded: the skill now
-documents every classifier name, so an agent filters knowingly instead of guessing, and the header
-keeps stating the FULL window (`turns 683-743 …, only user/text`) so the narrowing is never hidden.
-The floor on `--before`/`--after` is unchanged — filtering narrows WHAT is printed, never the window
-that was examined.
+**`--only` never narrows the WINDOW, only what is printed from it.** The `expand` header keeps
+stating the full examined range (`msgs 38-41 of 0-1416, anchor #40, 2026-08-29, only user`), so a
+filter that hides most of the window is visible in the output rather than silent. A window in which
+nothing matches prints `no msg in the window matches --only <spec>` and still exits 0 — an empty
+result is a finding, not an error.
 
-**`timeline --turn N [--full]` no longer exists** (removed 2026-08-29). `expand <s> <t> --full
---before 0 --after 0` is the replacement for a single-turn read. Unlike `search`'s argument flip,
-this break is LOUD — argparse rejects `--turn` as an unrecognized argument with exit 2 — because
-the flag was deleted rather than reinterpreted.
+**Three commands removed so far, all of them LOUD.** `timeline --turn N [--full]` went 2026-08-29;
+`timeline` itself and `expand --full` went 2026-08-30. All three break with argparse exit 2 —
+`invalid choice: 'timeline'` and `unrecognized arguments: --full` — because the command and the flag
+were deleted rather than reinterpreted. Replacements: `expand <s> <msg>` for a single-msg read,
+`search` for finding something across a session, and there is no replacement for the whole-session
+msg listing. Contrast `search`'s argument flip below, which fails silently.
 
 **`search` takes the TERM FIRST, and the old order fails silently.** The 2026-08-29 redesign
 flipped `search <session> <term>` to `search <term> [scope]`. Both arguments stay structurally
