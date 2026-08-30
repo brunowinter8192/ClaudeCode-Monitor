@@ -23,6 +23,12 @@ attach -> `render_messages`) over recorded sessions and asserts:
      demanded here.
   4. The in-window path still renders spans: at least one entry shows an olive or green span, so a
      regression that killed span rendering outright cannot pass as "no prepend".
+  5. The write-side LAG CORRECTION holds (2026-08-30): every coordinate the parser attributes back
+     to the flow that actually stripped it carries the total_tokens marker text (never a
+     mid-conversation overwrite such as the task-tools nag, which would be neighbour bleed), and
+     every such coordinate falling inside its flow's delta window really renders an olive span and
+     a green ".". Without the correction those messages render as a bare "." — the defect this
+     check guards.
 
 It also REPORTS (never asserts) how many entries have an out-of-window touched index whose stripped
 original is therefore invisible in the pane — the accepted cost of the removal, recoverable only
@@ -82,6 +88,7 @@ def _load_session(stem: str) -> list:
         entry['_inject_fns_lookup'] = fam_i.setdefault('_has_content_by_flow_id', {})
         entry['_strip_msgs_lookup'] = fam_s.setdefault('_msg_idx_by_flow_id', {})
         entry['_inject_msgs_lookup'] = fam_i.setdefault('_msg_idx_by_flow_id', {})
+        entry['_lag_msgs_lookup'] = fam_s.setdefault('_lag_msg_idx_by_flow_id', {})
     return entries
 
 
@@ -153,6 +160,36 @@ def _substantial_touches(stem: str) -> dict:
     return verdicts
 
 
+# Check 5: the lag correction is marker-only, and the coordinates it fixes really render spans.
+# Returns (coords_with_wrong_text, coords_in_window_without_spans, total_corrected).
+def _check_lag_correction(entries: list, rendered: dict) -> tuple:
+    marker = re.compile(r'^<total_tokens>\d+ tokens left</total_tokens>$')
+    accs = {}
+    for entry in entries:
+        lag = entry.get('_lag_msgs_lookup')
+        if lag is not None and id(lag) not in accs:
+            accs[id(lag)] = (lag, entry['_stripped_spans']['messages'])
+    bad_text = []
+    total = 0
+    for lag, spans in accs.values():
+        for fid, idxs in lag.items():
+            for i in idxs:
+                total += 1
+                texts = [t for b in spans.get(i, {}).values() if isinstance(b, list)
+                         for t in b if isinstance(t, str)]
+                if not (len(texts) == 1 and marker.match(texts[0].strip())):
+                    bad_text.append((fid[:8], i, str(texts)[:50]))
+    unrendered = []
+    for idx, (body, start, _outside) in rendered.items():
+        fid = entries[idx].get('flow_id', '')
+        for i in entries[idx].get('_lag_msgs_lookup', {}).get(fid, set()):
+            if int(i) < start:
+                continue  # outside this entry's delta window — nothing is drawn there at all
+            if DIM_YELLOW_BG not in body or DIM_GREEN_BG not in body:
+                unrendered.append((idx, i))
+    return bad_text, unrendered, total
+
+
 # Checks 2's source-level half: the removed symbols must not come back
 def _removed_symbols_absent() -> tuple:
     from src.proxy_display import render_messages as rm
@@ -191,6 +228,8 @@ def _check_session(stem: str) -> tuple:
     spans_seen = sum(1 for body, _s, _o in rendered.values()
                      if DIM_YELLOW_BG in body or DIM_GREEN_BG in body)
 
+    lag_bad_text, lag_unrendered, lag_total = _check_lag_correction(entries, rendered)
+
     rows = [
         ('no_msg_below_delta_window', not below,
          f'{len(rendered)} entries rendered; bodies starting below their own delta window: '
@@ -203,6 +242,10 @@ def _check_session(stem: str) -> tuple:
          f'of them SUBSTANTIAL; of those {len(silent)} show NO badge word (want 0) {silent[:3]}'),
         ('in_window_spans_still_render', spans_seen > 0,
          f'{spans_seen} of {len(rendered)} entries render an olive/green span in-window'),
+        ('lag_correction_sound_and_effective', not lag_bad_text and not lag_unrendered,
+         f'{lag_total} coordinates re-attributed to the flow that stripped them; '
+         f'{len(lag_bad_text)} carry non-marker text (want 0) {lag_bad_text[:2]}; '
+         f'{len(lag_unrendered)} sit in-window without olive+green (want 0) {lag_unrendered[:2]}'),
     ]
     stats = {
         'entries_rendered': len(rendered),
@@ -210,6 +253,7 @@ def _check_session(stem: str) -> tuple:
         'entries_whose_out_of_window_touch_is_substantial': len(with_real_outside),
         'out_of_window_indices_now_invisible': sum(len(o) for _b, _s, o in rendered.values()),
         'entries_showing_in_window_spans': spans_seen,
+        'lag_corrected_coordinates': lag_total,
     }
     return rows, stats
 

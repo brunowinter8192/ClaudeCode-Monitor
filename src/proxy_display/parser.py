@@ -54,6 +54,18 @@ def _msg_delta_entry_is_substantial(blks, is_injected: bool) -> bool:
     return bool(texts)
 
 
+# Is this delta entry the per-request total_tokens nuke — exactly ONE stripped text full-matching
+# the marker? The narrow shape the lag correction below keys on; see `accumulate_dual_log`.
+def _is_total_tokens_nuke(blks) -> bool:
+    if not isinstance(blks, dict):
+        return False
+    texts = [
+        t for blk in blks.values() if isinstance(blk, list)
+        for t in blk if isinstance(t, str)
+    ]
+    return len(texts) == 1 and bool(_TOTAL_TOKENS_NUKE_RE.match(texts[0].strip()))
+
+
 # Does this line's messages_delta carry anything BADGE-worthy? Badge-only helper — the overlay
 # dicts and _msg_idx_by_flow_id are populated from the raw delta regardless, so the expanded view
 # keeps rendering IN-WINDOW every span this filters out here. Out-of-window there is nothing left
@@ -198,6 +210,23 @@ def _find_dual_log_paths(main_log_path: Optional[Path]) -> tuple:
 # shows a neighbor request's span there. It no longer drives any out-of-window rendering: the
 # expanded body is the request's payload delta only (2026-08-30), so an index this flow touched
 # outside that window is simply not drawn.
+# '_lag_msg_idx_by_flow_id': {flow_id -> set(msg_idx str)} — the WRITE-SIDE LAG CORRECTION.
+# CC hangs the cache-control breakpoint on the last message, so a request's fresh trailing
+# role='system' total_tokens msg arrives list-shaped; `_apply_role_system_strip` nukes it correctly
+# but `_ops_from_content_change` yields no ops for list content, so the delta writer records no
+# stripped span for it. The NEXT request re-sends that msg as a plain string, produces the op, and
+# records the strip — one request too late (measured: 0 of 510 recorded against the request that
+# performed them, 510 of 510 against the following one). This maps such a delta back onto the flow
+# that actually stripped it, so `_lookup_spans` shows the olive original and green "." in-window.
+# Three conditions, all required: the index is the PREVIOUS line's trailing msg (prev_count - 1),
+# the count did not regress (no restart), and the delta is a total_tokens nuke. That last guard is
+# load-bearing — CC overwrites a mid-conversation index in place (the task-tools nag lands on the
+# index that was a previous request's trailing msg), and without the marker check the nag's text
+# would be attributed to a request that stripped something else there, which is real neighbor bleed.
+# Self-neutralising if the writer is ever fixed: the request would record its own strip and the next
+# line's repeat would be hash-deduped away, leaving nothing to correct.
+# '_last_line_meta': (flow_id, counts.messages) of the previous line of this family — the state the
+# correction needs, kept in the acc dict so it survives across incremental calls.
 # Returns new file position; silently ignores missing/unreadable file.
 def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict) -> int:
     if path is None or not path.exists():
@@ -229,6 +258,8 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                         acc[section].clear()
                     acc.setdefault('_has_content_by_flow_id', {}).clear()
                     acc.setdefault('_msg_idx_by_flow_id', {}).clear()
+                    acc.setdefault('_lag_msg_idx_by_flow_id', {}).clear()
+                    acc['_last_line_meta'] = None
                 acc['system'].update(entry.get('system_delta') or {})
                 for name, val in (entry.get('tools_delta') or {}).items():
                     acc['tools'][name] = val
@@ -245,6 +276,16 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                 )
                 acc.setdefault('_has_content_by_flow_id', {})[fid] = has_content
                 acc.setdefault('_msg_idx_by_flow_id', {})[fid] = set(msgs_delta.keys())
+                count = (entry.get('counts') or {}).get('messages', 0)
+                prev_meta = acc.get('_last_line_meta')
+                if prev_meta is not None:
+                    prev_fid, prev_count = prev_meta
+                    trailing = str(prev_count - 1)
+                    if (count >= prev_count and prev_count > 0
+                            and _is_total_tokens_nuke(msgs_delta.get(trailing))):
+                        acc.setdefault('_lag_msg_idx_by_flow_id', {}).setdefault(
+                            prev_fid, set()).add(trailing)
+                acc['_last_line_meta'] = (fid, count)
             return f.tell()
     except OSError:
         return last_pos

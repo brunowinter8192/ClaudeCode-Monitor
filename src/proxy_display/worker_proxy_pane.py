@@ -425,6 +425,8 @@ def _refresh_worker_proxy_data(now: float, input_changed: bool, last_data_refres
                 entry['_inject_fns_lookup'] = _worker_proxy_acc_injected[family].setdefault('_has_content_by_flow_id', {})
                 entry['_strip_msgs_lookup'] = _worker_proxy_acc_stripped[family].setdefault('_msg_idx_by_flow_id', {})
                 entry['_inject_msgs_lookup'] = _worker_proxy_acc_injected[family].setdefault('_msg_idx_by_flow_id', {})
+                # One lag set governs BOTH sides — see pane.py's note at the same attachment
+                entry['_lag_msgs_lookup'] = _worker_proxy_acc_stripped[family].setdefault('_lag_msg_idx_by_flow_id', {})
             _worker_proxy_log_path = log_path
             _strip_inactive_wp_messages(worker_proxy_entries, worker_proxy_expand_states)
             if new_entries:
