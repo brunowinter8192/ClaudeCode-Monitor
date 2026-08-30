@@ -6,7 +6,8 @@ Read-only command-line inspector for the six-stream dual-log quartet in `src/log
 written by `src/proxy/addon.py`. Turns ~15 GB of unreadable JSONL — every `_original` line
 re-embeds the entire conversation history, so grep and head report every content hit once per
 subsequent request — into a session inventory, a deduplicated search, a msg listing grouped by
-request, and a full-content read of any msg window. The deduplicated msg timeline is the internal
+request, and a full-content read of any msg window that also shows what the proxy stripped from
+and injected into those msgs. The deduplicated msg timeline is the internal
 data structure all four commands build on; it has no command that renders it whole, because the two
 views worth having are the request-grouped classifier listing (`msgs`) and the full content of a
 chosen range (`expand`). The
@@ -46,7 +47,9 @@ line and parses only that line → `timeline` builds turn rows via `proxy.messag
 request boundaries from `_forwarded.counts.messages`. `msgs` prints those rows for an inclusive
 index range, interleaving one REQ separator per request group (`timeline.request_markers` folds the
 boundaries into `{msg_index: {number, timestamp, refires}}`); `expand` slices an anchor-centred
-window out of the same rows and re-summarizes each selected msg for its full block content.
+window out of the same rows, re-summarizes each selected msg for its full block content, and adds
+the proxy's own transformations of those blocks via `overlay` (which accumulates the session's
+`_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log`).
 `search` selects a
 SET of sessions the same way `sessions` does (scope + date window), repeats that per-session
 reconstruction for each one and streams its blocks through the matcher, skipping any session whose
@@ -54,13 +57,13 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ## Modules
 
-### __main__.py (283 LOC)
+### __main__.py (289 LOC)
 
 **Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
 **Writes:** stdout (rendered text), stderr (resolution, range and empty-term errors). Never touches the log directory.
 **Called by:** the user, via `python -m src.dual_log_cli` or `bin/duallog`.
-**Calls out:** `discovery`, `render`, `search`, `timeline` (all package-local).
+**Calls out:** `discovery`, `render`, `search`, `timeline`, `overlay` (all package-local; `overlay` only from `_run_expand`).
 
 ---
 
@@ -104,13 +107,23 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### timeline.py (235 LOC)
+### timeline.py (257 LOC)
 
-**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires}}`, what `msgs` draws its REQ separators from), and `load_timeline` as the one call that assembles everything a render needs. `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed. Its `number` deliberately counts only msg-adding requests, which is what aligns it with the proxy pane's `#N` (see Gotchas). `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
+**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires}}`, what `msgs` draws its REQ separators from), `request_numbers_by_flow` (boundaries → `{flow_id: REQ number}`, what `overlay` uses to name the request behind a strip), and `load_timeline` as the one call that assembles everything a render needs. Both numbering consumers share `_running_request_numbers`, so the overlay can never drift from the number `msgs` prints. Boundaries carry `flow_id` since 2026-08-30 — additive, `request_markers` ignores it. `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed. Its `number` deliberately counts only msg-adding requests, which is what aligns it with the proxy pane's `#N` (see Gotchas). `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
 **Writes:** Nothing — returns row lists, a generator, and one data dict.
 **Called by:** `__main__.py`, `search.py`.
 **Calls out:** `src/proxy/message_summary.py` (`_summarize_message` — imported, not copied), `reader`.
+
+---
+
+### overlay.py (86 LOC, new 2026-08-30)
+
+**Purpose:** Builds `expand`'s strip/inject overlay: `{(msg_idx, blk_idx): {stripped, injected, req}}` for one session, by running the session's `_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log` — REUSED, not re-implemented, so duallog inherits both the per-coordinate accumulation and the write-side attribution-lag correction (`_lag_msg_idx_by_flow_id`) that credits a trailing-msg total_tokens strip to the request that performed it. `_owners_by_index` resolves each coordinate to its performing flow (lag set wins over the raw recorder), `timeline.request_numbers_by_flow` turns that into the REQ number a reader already sees in `msgs`, and `_texts` normalises the two recorded shapes (stripped = flat strings; injected = `(tag, text)` pairs of which only the `injected` ones are new content, the `equal` parts being the surviving original already on screen).
+**Reads:** The session's `_stripped.jsonl` and `_injected.jsonl` (delta JSONL, 64-336 KB per session — negligible beside the `_original` stream this package deliberately never parses whole).
+**Writes:** Nothing — returns one dict.
+**Called by:** `__main__.py` (`_run_expand` only, so `sessions`/`msgs`/`search` cannot move with it).
+**Calls out:** `src/proxy_display/parser.py` (`accumulate_dual_log`), `timeline` (`request_numbers_by_flow`).
 
 ---
 
@@ -124,9 +137,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### render.py (153 LOC)
+### render.py (175 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, then one `[idx] role type chars` line per msg, and NOTHING else: no totals, no sub-rows; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block), and the char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, then one `[idx] role type chars` line per msg, and NOTHING else: no totals, no sub-rows; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -217,6 +230,12 @@ times stays one hit carrying `×N`. Changing that granularity changes every repo
 it is a contract, not a formatting detail. Since 2026-08-29 the header no longer states the totals,
 so hits, turns and occurrences are read off the lines — the `×N` markers are the only place the
 occurrence count survives.
+
+**`expand`'s overlay names the request that PERFORMED the strip, which is not always the request whose `msgs` separator carries the msg.** CC overwrites a mid-conversation index in place, so a msg can arrive with one request and be transformed by a later one: msg 176 of the monitor_cc session sits under `── REQ 61 ──` in `msgs` (that is when it arrived) while `expand` reports `── stripped by REQ 62 ──` (that is who nuked the content CC had put there in the meantime). Both are correct and they answer different questions. The trailing total_tokens case is the opposite trap and is handled: the delta line that RECORDS such a strip belongs to the following request, so a naive reading would credit REQ 63 for what REQ 62 did — `overlay` takes the lag-corrected owner from `proxy_display.parser`'s `_lag_msg_idx_by_flow_id` instead. Verified: 746 overlay coordinates across two sessions, 0 attribution mismatches against `proxy_display`'s own ownership, 524 of them lag-corrected.
+
+**The overlay's direction is INVERTED relative to the proxy pane, because the two read different streams.** The pane reads `_forwarded` (post-strip) and colours in what was removed; duallog reads `_original` (pre-strip), so the block body already IS the original and the `── stripped ──` section repeats the exact text above it whenever the strip was a whole-content nuke. That repetition is not redundancy to optimise away — a partial strip shows only the removed fragment there, and the reader cannot otherwise tell whole from partial.
+
+**The recorded strip text and the displayed block can differ by whitespace, and no gate rejects that.** The accumulator is cumulative last-writer-wins per coordinate, so in principle it could describe content CC later overwrote. Measured over 741 stripped coordinates in two sessions: 670 exact matches, 19 substrings, 52 whitespace-variants (one example differs by a single `\n` in 892 chars, similarity ≥ 0.972), and **0 unrelated**. No coordinate was ever touched by more than one flow. So the overlay is shown unconditionally rather than gated on containment, which would have wrongly dropped those 52.
 
 **`msgs` prints msg lines and REQ separators, and NOTHING else.** No header, no count line, no
 block sub-rows, no previews, no per-msg time column — an agent pipes it into `grep`/`wc` or reads

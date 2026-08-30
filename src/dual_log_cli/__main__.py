@@ -9,7 +9,7 @@ Commands:
                              --only restricts hits to one classifier (role, type, or role/type)
     msgs <session>           request groups: a REQ separator, then the msgs that request added
     msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
-    expand <s> <msg>         full content of that msg
+    expand <s> <msg>         full content of that msg, plus what the proxy stripped/injected there
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
 
 Usage (from project root, or via bin/duallog once symlinked into PATH):
@@ -43,6 +43,7 @@ from .discovery import (
     resolve_dual_log_dir,
     resolve_stem,
 )
+from .overlay import build_overlay
 from .project_map import build_project_map
 from .render import render_expand_full, render_msgs, render_search, render_sessions
 from .search import find_matches
@@ -106,10 +107,12 @@ def _parse_args(argv: list) -> argparse.Namespace:
         "expand",
         help="full content of one msg, or of a window around it",
         description=(
-            "Dumps the complete content of every block of every selected msg. --before/--after "
-            "widen the window around the anchor and default to 0, so a bare call prints exactly "
-            "the anchor msg. --only selects msgs by role and/or ANY block type; a selected msg "
-            "always shows ALL of its blocks."
+            "Dumps the complete content of every block of every selected msg, as CC sent it. A "
+            "block the proxy transformed is followed by `── stripped by REQ n ──` / `── injected "
+            "by REQ n ──` sections showing what it removed and what it put there instead; an "
+            "untouched block shows content only. --before/--after widen the window around the "
+            "anchor and default to 0, so a bare call prints exactly the anchor msg. --only selects "
+            "msgs by role and/or ANY block type; a selected msg always shows ALL of its blocks."
         ),
     )
     expand.add_argument("session", help="session stem or unambiguous substring")
@@ -258,7 +261,10 @@ def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
         for msg in msgs[start:end + 1]
         if matches_only(msg["role"], [b["type"] for b in msg["blocks"]], wanted)
     ]
-    sys.stdout.write(render_expand_full(data, args.msg, start, end, args.only, dumped))
+    # Only expand builds the overlay — sessions/msgs/search never read the _stripped/_injected
+    # streams, so their output cannot move with it
+    overlay = build_overlay(data["session"], data["family"], data["boundaries"])
+    sys.stdout.write(render_expand_full(data, args.msg, start, end, args.only, dumped, overlay))
     return 0
 
 
