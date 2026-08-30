@@ -140,6 +140,7 @@ def request_boundaries(forwarded_path: Path, family: str) -> list:
         restart = count < prev_count
         boundaries.append({
             "request_no": request_no,
+            "flow_id": entry.get("flow_id", ""),
             "timestamp": entry.get("timestamp", ""),
             "model": entry.get("model", ""),
             "start_index": 0 if restart else prev_count,
@@ -190,12 +191,7 @@ def build_turn_times(boundaries: list) -> dict:
 # message count and timestamp). The raw request_no would NOT match — it also counts re-fires, which
 # the pane renders as `#N.M` without advancing N.
 def request_markers(boundaries: list) -> dict:
-    numbers = []
-    adding = 0
-    for boundary in boundaries:
-        if boundary["start_index"] < boundary["message_count"]:
-            adding += 1
-        numbers.append(adding)
+    numbers = _running_request_numbers(boundaries)
     grouped: dict = {}
     for position, boundary in enumerate(boundaries):
         grouped.setdefault(boundary["start_index"], []).append(position)
@@ -208,6 +204,32 @@ def request_markers(boundaries: list) -> dict:
             "refires": len(positions) - 1,
         }
     return markers
+
+
+# Running REQ number per boundary position — the shared counting rule: only a msg-ADDING request
+# advances the number, which is what keeps it equal to the proxy pane's `#N`. A re-fire carries the
+# number of the request before it.
+def _running_request_numbers(boundaries: list) -> list:
+    numbers = []
+    adding = 0
+    for boundary in boundaries:
+        if boundary["start_index"] < boundary["message_count"]:
+            adding += 1
+        numbers.append(adding)
+    return numbers
+
+
+# {flow_id: REQ number} for the boundaries of one session — the same numbering `msgs` prints, so an
+# overlay attributed to a flow can name the request a reader already sees there. A re-fire maps to
+# the number of the msg-adding request before it; the overlay renderer shows "?" for a flow absent
+# here entirely (a sidecar the boundary list never carried).
+def request_numbers_by_flow(boundaries: list) -> dict:
+    numbers = _running_request_numbers(boundaries)
+    return {
+        boundary["flow_id"]: numbers[position]
+        for position, boundary in enumerate(boundaries)
+        if boundary.get("flow_id")
+    }
 
 
 # Load everything a command needs for one session: the last request's payload plus its msg rows

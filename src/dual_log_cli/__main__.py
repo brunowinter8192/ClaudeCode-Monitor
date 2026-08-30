@@ -43,6 +43,7 @@ from .discovery import (
     resolve_dual_log_dir,
     resolve_stem,
 )
+from .overlay import build_overlay
 from .project_map import build_project_map
 from .render import render_expand_full, render_msgs, render_search, render_sessions
 from .search import find_matches
@@ -258,7 +259,10 @@ def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
         for msg in msgs[start:end + 1]
         if matches_only(msg["role"], [b["type"] for b in msg["blocks"]], wanted)
     ]
-    sys.stdout.write(render_expand_full(data, args.msg, start, end, args.only, dumped))
+    # Only expand builds the overlay — sessions/msgs/search never read the _stripped/_injected
+    # streams, so their output cannot move with it
+    overlay = build_overlay(data["session"], data["family"], data["boundaries"])
+    sys.stdout.write(render_expand_full(data, args.msg, start, end, args.only, dumped, overlay))
     return 0
 
 
