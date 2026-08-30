@@ -80,7 +80,7 @@ role='system' mid-turn user message body "jetzt") must survive byte-for-byte. Re
 **Writes:** `md/mid_turn_user_msg_preserve_probe_report.md`.
 **Calls out:** `src.proxy.message_passes` (`_apply_role_system_strip`).
 
-### p6_no_flow_extra_prepend_probe.py (250 LOC)
+### p6_no_flow_extra_prepend_probe.py (294 LOC)
 
 **Purpose:** Verifies that an expanded request body is the request's payload delta and nothing
 else, after the out-of-window prepend was removed entirely (2026-08-30). Replaces
@@ -97,7 +97,7 @@ dual-log lines via `parser._msg_delta_entry_is_substantial` because a total_toke
 deliberately badges nothing; and at least one entry still renders an in-window olive/green span, so
 a regression that killed span rendering outright cannot pass as "no prepend". Reports, without
 asserting, how many entries have an out-of-window touched index whose stripped original is
-therefore invisible in the pane — the accepted cost, recoverable only from the `_stripped` stream.
+therefore invisible in the pane — the accepted cost, recoverable only from the `_stripped` stream. **Fifth check (2026-08-30):** the write-side lag correction is sound and effective — every coordinate re-attributed to the flow that stripped it carries the total_tokens marker (never a mid-conversation overwrite, which would be neighbour bleed), and every such coordinate inside its flow's delta window really renders olive+green. Guards the bare-`.` defect.
 **Reads:** `src/logs/dual_log/api_requests_{opus_monitor_cc_1788091735,opus_gh_cli_1787995963}_{forwarded,stripped,injected}.jsonl` (override via argv).
 **Writes:** `md/no_flow_extra_prepend_report.md`.
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_messages,render_turn}`.

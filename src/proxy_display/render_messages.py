@@ -131,6 +131,13 @@ def _render_span_content(full_text: str, i_blk: list, s_blk: list, indent: str, 
 # across all entries of a family, so without this an entry can render a later/neighbor
 # request's span at a coordinate it never touched itself. Entries without the ownership
 # lookups (e.g. synthetic test fixtures) fall back to the unscoped lookup.
+#
+# `_lag_msgs_lookup` (2026-08-30) widens ownership by the indices the delta writer attributed one
+# request too late — a request's own fresh trailing total_tokens msg, which it demonstrably
+# stripped (its forwarded payload carries the ".") but which only the NEXT line records. The
+# parser derives that set under a marker-shape guard, so this can only ever admit the message the
+# entry itself nuked, never a neighbour's differing content at the same index. Both sides consult
+# the one set: the class is a stripped total_tokens plus its injected "." at the same coordinate.
 def _lookup_spans(entry: dict, msg_idx: int, bidx, use_dual: bool) -> tuple:
     if not use_dual:
         return [], []
@@ -138,9 +145,10 @@ def _lookup_spans(entry: dict, msg_idx: int, bidx, use_dual: bool) -> tuple:
     i_blk = entry['_injected_spans']['messages'].get(msg_key, {}).get(str(bidx)) or []
     s_blk = entry['_stripped_spans']['messages'].get(msg_key, {}).get(str(bidx)) or []
     fid = entry.get('flow_id', '')
-    if '_inject_msgs_lookup' in entry and msg_key not in entry['_inject_msgs_lookup'].get(fid, set()):
+    lagged = entry.get('_lag_msgs_lookup', {}).get(fid, set())
+    if '_inject_msgs_lookup' in entry and msg_key not in entry['_inject_msgs_lookup'].get(fid, set()) and msg_key not in lagged:
         i_blk = []
-    if '_strip_msgs_lookup' in entry and msg_key not in entry['_strip_msgs_lookup'].get(fid, set()):
+    if '_strip_msgs_lookup' in entry and msg_key not in entry['_strip_msgs_lookup'].get(fid, set()) and msg_key not in lagged:
         s_blk = []
     return i_blk, s_blk
 

@@ -442,6 +442,9 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
         entry['_inject_fns_lookup'] = _proxy_acc_injected[family].setdefault('_has_content_by_flow_id', {})
         entry['_strip_msgs_lookup'] = _proxy_acc_stripped[family].setdefault('_msg_idx_by_flow_id', {})
         entry['_inject_msgs_lookup'] = _proxy_acc_injected[family].setdefault('_msg_idx_by_flow_id', {})
+        # One lag set governs BOTH sides — the class it corrects is a stripped total_tokens nuke
+        # plus its injected "." at the same coordinate, and only the stripped line can identify it
+        entry['_lag_msgs_lookup'] = _proxy_acc_stripped[family].setdefault('_lag_msg_idx_by_flow_id', {})
     _strip_inactive_messages(proxy_entries, proxy_expand_states)
     main_sessions = monitor.get_main_session_files()
     if main_sessions:
