@@ -417,16 +417,14 @@ def _refresh_worker_proxy_data(now: float, input_changed: bool, last_data_refres
             for entry in new_entries:
                 family = _infer_model_family(entry.get('model', ''))
                 if family not in _worker_proxy_acc_stripped:
-                    _worker_proxy_acc_stripped[family] = {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}, '_has_content_by_flow_id': {}, '_msg_idx_by_flow_id': {}, '_msg_idx_sub_by_flow_id': {}}
-                    _worker_proxy_acc_injected[family] = {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}, '_has_content_by_flow_id': {}, '_msg_idx_by_flow_id': {}, '_msg_idx_sub_by_flow_id': {}}
+                    _worker_proxy_acc_stripped[family] = {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}, '_has_content_by_flow_id': {}, '_msg_idx_by_flow_id': {}}
+                    _worker_proxy_acc_injected[family] = {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}, '_has_content_by_flow_id': {}, '_msg_idx_by_flow_id': {}}
                 entry['_stripped_spans'] = _worker_proxy_acc_stripped[family]
                 entry['_injected_spans'] = _worker_proxy_acc_injected[family]
                 entry['_strip_fns_lookup'] = _worker_proxy_acc_stripped[family].setdefault('_has_content_by_flow_id', {})
                 entry['_inject_fns_lookup'] = _worker_proxy_acc_injected[family].setdefault('_has_content_by_flow_id', {})
                 entry['_strip_msgs_lookup'] = _worker_proxy_acc_stripped[family].setdefault('_msg_idx_by_flow_id', {})
                 entry['_inject_msgs_lookup'] = _worker_proxy_acc_injected[family].setdefault('_msg_idx_by_flow_id', {})
-                entry['_strip_msgs_sub_lookup'] = _worker_proxy_acc_stripped[family].setdefault('_msg_idx_sub_by_flow_id', {})
-                entry['_inject_msgs_sub_lookup'] = _worker_proxy_acc_injected[family].setdefault('_msg_idx_sub_by_flow_id', {})
             _worker_proxy_log_path = log_path
             _strip_inactive_wp_messages(worker_proxy_entries, worker_proxy_expand_states)
             if new_entries:

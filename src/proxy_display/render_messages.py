@@ -239,7 +239,7 @@ def _render_new_messages(entry_idx: int, entry: dict, messages: list, prev_msg_c
             keys.extend(content_keys)
     return lines, keys
 
-# Branch-2 body: modified messages in range [diff_start, len(messages)) + removed tail, returning (lines, keys, diff_start)
+# Branch-2 body: modified messages in range [diff_start, len(messages)) + removed tail, returning (lines, keys)
 # Also pre-renders stripped messages from [fdi, diff_start) skipped by the main loop
 def _render_modified_messages(entry_idx: int, entry: dict, messages: list, prev_entry_for_delta, fdi: int, stripped_indices: set, use_dual: bool, expand_states: dict, pane_width: int) -> tuple:
     lines = []
@@ -291,58 +291,12 @@ def _render_modified_messages(entry_idx: int, entry: dict, messages: list, prev_
         m_chars = msg.get('chars', 0)
         lines.append(f"    {RED}removed:{SOFT_RESET} {DIM}[{m_idx:3d}] {role:<4}  {m_type:<20} {m_chars:,}c{SOFT_RESET}")
         keys.append(None)
-    return lines, keys, diff_start
-
-# The message indices of THIS entry's flow on one side, preferring the SUBSTANTIAL subset
-# (parser's _msg_idx_sub_by_flow_id) over the raw touched set. Feature-detected like _lookup_spans
-# above: an entry without the sub-lookup (synthetic fixtures, older probes) keeps the raw set and
-# therefore the pre-suppression behavior.
-def _own_msgs(entry: dict, sub_key: str, raw_key: str, fid: str) -> set:
-    lookup = entry.get(sub_key) if sub_key in entry else entry.get(raw_key, {})
-    return lookup.get(fid, set())
-
-# Render messages at indices THIS entry's own flow touched SUBSTANTIALLY (stripped and/or
-# injected) that sit below covered_from — outside the normal new/modified window (e.g. a
-# mid-conversation system-role message CC overwrites in place, which the forwarded reconstruction
-# sees no delta for since post-strip content is unchanged). No-op when the entry carries no
-# ownership lookups (synthetic fixtures) or none of its own indices fall outside the window.
-# Substantial is the parser's per-index verdict, the same one the badge uses: an index whose only
-# touch is the per-request total_tokens nuke is NOT prepended, mirroring that class's badge
-# silence (2026-08-30). Without it nearly every request opened with the PREVIOUS request's
-# trailing system message, so the view showed a `syst` msg twice and stopped mirroring the
-# payload's delta. In-window rendering is unaffected — _lookup_spans still uses the raw set, so
-# the nuke keeps its olive/green spans wherever the delta window already covers it.
-def _render_flow_extra_messages(entry_idx: int, entry: dict, messages: list, covered_from: int, expand_states: dict, pane_width: int) -> tuple:
-    lines = []
-    keys = []
-    fid = entry.get('flow_id', '')
-    s_msgs = _own_msgs(entry, '_strip_msgs_sub_lookup', '_strip_msgs_lookup', fid)
-    i_msgs = _own_msgs(entry, '_inject_msgs_sub_lookup', '_inject_msgs_lookup', fid)
-    extra = sorted({int(m) for m in (s_msgs | i_msgs) if int(m) < covered_from})
-    for msg_idx in extra:
-        if msg_idx >= len(messages):
-            continue
-        msg = messages[msg_idx]
-        role = msg.get('role', '?')[:4]
-        msg_type = msg.get('type', 'text')
-        blocks = msg.get('blocks', [])
-        type_label = f"{len(blocks)} blocks" if len(blocks) > 1 else msg_type
-        lines.append(f"    {WHITE}[{msg_idx:3d}] {role:<4}  {type_label:<20}{SOFT_RESET}")
-        keys.append(None)
-        if blocks:
-            for bidx, blk in enumerate(blocks):
-                b_lines, b_keys = _render_block_spans(entry_idx, msg_idx, bidx, blk, entry, True, expand_states, pane_width)
-                lines.extend(b_lines)
-                keys.extend(b_keys)
-        else:
-            preview = msg.get('content_tail', msg.get('content_preview', ''))
-            i_blk, s_blk = _lookup_spans(entry, msg_idx, 0, True)
-            content_lines, content_keys = _render_span_content(preview, i_blk, s_blk, "      ", highlight_suspect=False)
-            lines.extend(content_lines)
-            keys.extend(content_keys)
     return lines, keys
 
-# Render new/modified/removed messages for an expanded request entry, returning (lines, keys)
+# Render new/modified/removed messages for an expanded request entry, returning (lines, keys).
+# The body is EXACTLY this request's payload delta and nothing else (2026-08-30): out-of-window
+# messages that only THIS flow touched are no longer prepended. See DOCS.md's Gotcha for the
+# consequence that buys — the badge words become the sole in-pane trace of such a strip.
 def render_messages(entry_idx: int, entry: dict, prev_entry_for_delta, entries: list, expand_states: dict, pane_width: int) -> tuple:
     messages = entry.get('messages', [])
     stripped_indices = set(entry.get('stripped_msg_indices', []))
@@ -353,15 +307,8 @@ def render_messages(entry_idx: int, entry: dict, prev_entry_for_delta, entries: 
         fdi = 0
     use_dual = '_stripped_spans' in entry
     if prev_msg_count < len(messages):
-        lines, keys = _render_new_messages(entry_idx, entry, messages, prev_msg_count, fdi, stripped_indices, use_dual, expand_states, pane_width)
-        covered_from = prev_msg_count
-    else:
-        lines, keys, covered_from = _render_modified_messages(entry_idx, entry, messages, prev_entry_for_delta, fdi, stripped_indices, use_dual, expand_states, pane_width)
-    if use_dual:
-        extra_lines, extra_keys = _render_flow_extra_messages(entry_idx, entry, messages, covered_from, expand_states, pane_width)
-        lines = extra_lines + lines
-        keys = extra_keys + keys
-    return lines, keys
+        return _render_new_messages(entry_idx, entry, messages, prev_msg_count, fdi, stripped_indices, use_dual, expand_states, pane_width)
+    return _render_modified_messages(entry_idx, entry, messages, prev_entry_for_delta, fdi, stripped_indices, use_dual, expand_states, pane_width)
 
 
 # Compute aggregated strip bucket signals for an expanded REQ header (INERT/IDX/LEAK/SUS)
