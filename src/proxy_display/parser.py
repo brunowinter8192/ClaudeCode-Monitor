@@ -26,9 +26,39 @@ _TOTAL_TOKENS_NUKE_RE = re.compile(r"^<total_tokens>\d+ tokens left</total_token
 
 # FUNCTIONS
 
+# Is ONE message index's delta entry substantial? The per-index verdict behind both consumers:
+# `_msgs_delta_is_substantial` (badge, any-of over all indices) and `accumulate_dual_log`'s
+# `_msg_idx_sub_by_flow_id` (which indices the expanded view prepends out-of-window). Keeping the
+# marker matching here is what stops the render layer from re-deriving it.
+# `blks` is one messages_delta value: {blk_idx -> [stripped texts]} or {blk_idx -> [(tag, text)]}.
+def _msg_delta_entry_is_substantial(blks, is_injected: bool) -> bool:
+    if not isinstance(blks, dict):
+        return False
+    if is_injected:
+        for spans in blks.values():
+            if not isinstance(spans, list):
+                continue
+            texts = [
+                s[1] for s in spans
+                if isinstance(s, (list, tuple)) and len(s) == 2 and s[0] == 'injected' and s[1]
+            ]
+            if texts and ' '.join(texts) != '.':
+                return True
+        return False
+    texts = [
+        t for blk in blks.values() if isinstance(blk, list)
+        for t in blk if isinstance(t, str)
+    ]
+    if len(texts) == 1 and _TOTAL_TOKENS_NUKE_RE.match(texts[0].strip()):
+        return False
+    return bool(texts)
+
+
 # Does this line's messages_delta carry anything BADGE-worthy? Badge-only helper — the overlay
 # dicts and _msg_idx_by_flow_id are populated from the raw delta regardless, so the expanded view
-# keeps rendering every span this filters out here.
+# keeps rendering IN-WINDOW every span this filters out here. Since 2026-08-30 the same per-index
+# rule (via _msg_idx_sub_by_flow_id) also gates the OUT-OF-WINDOW prepend, so what this function
+# silences on the header no longer prepends a message of its own either.
 # Two classes are not substantial (2026-08-29):
 #   - stripped side: a message whose blocks' stripped texts amount to exactly ONE text full-matching
 #     the total_tokens marker — the per-request CC token-budget nuke, noise on nearly every request.
@@ -42,29 +72,10 @@ _TOTAL_TOKENS_NUKE_RE = re.compile(r"^<total_tokens>\d+ tokens left</total_token
 # total_tokens class ends up with both badge words off.
 def _msgs_delta_is_substantial(msgs_delta: dict, entry_type: str) -> bool:
     is_injected = entry_type == 'injected_delta'
-    for blks in (msgs_delta or {}).values():
-        if not isinstance(blks, dict):
-            continue
-        if is_injected:
-            for spans in blks.values():
-                if not isinstance(spans, list):
-                    continue
-                texts = [
-                    s[1] for s in spans
-                    if isinstance(s, (list, tuple)) and len(s) == 2 and s[0] == 'injected' and s[1]
-                ]
-                if texts and ' '.join(texts) != '.':
-                    return True
-        else:
-            texts = [
-                t for blk in blks.values() if isinstance(blk, list)
-                for t in blk if isinstance(t, str)
-            ]
-            if len(texts) == 1 and _TOTAL_TOKENS_NUKE_RE.match(texts[0].strip()):
-                continue
-            if texts:
-                return True
-    return False
+    return any(
+        _msg_delta_entry_is_substantial(blks, is_injected)
+        for blks in (msgs_delta or {}).values()
+    )
 
 
 # Resolve the REQ-header's two badge booleans for one entry -> (show_strip, show_inject).
@@ -186,6 +197,12 @@ def _find_dual_log_paths(main_log_path: Optional[Path]) -> tuple:
 # messages_delta touched. Lets the expanded view render this flow's own spans even when they
 # sit outside the rendered delta window, and scope span lookups so a request that did not
 # touch a given index never shows a neighbor request's span there.
+# '_msg_idx_sub_by_flow_id': the SUBSTANTIAL subset of the same indices, per
+# `_msg_delta_entry_is_substantial`. Same filter the badge uses, applied per index instead of
+# per line: an index whose only touch is the per-request total_tokens nuke (stripped side) or a
+# "."-filler (injected side) is absent here. Only the out-of-window PREPEND reads this — in-window
+# span scoping stays on the unfiltered set above, so the nuke's olive/green spans keep rendering
+# where the delta window already covers them.
 # Returns new file position; silently ignores missing/unreadable file.
 def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict) -> int:
     if path is None or not path.exists():
@@ -210,6 +227,7 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                     {
                         'system': {}, 'tools': {}, 'messages': {}, 'fields': {},
                         '_has_content_by_flow_id': {}, '_msg_idx_by_flow_id': {},
+                        '_msg_idx_sub_by_flow_id': {},
                     }
                 )
                 if entry.get('is_first', False):
@@ -217,6 +235,7 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                         acc[section].clear()
                     acc.setdefault('_has_content_by_flow_id', {}).clear()
                     acc.setdefault('_msg_idx_by_flow_id', {}).clear()
+                    acc.setdefault('_msg_idx_sub_by_flow_id', {}).clear()
                 acc['system'].update(entry.get('system_delta') or {})
                 for name, val in (entry.get('tools_delta') or {}).items():
                     acc['tools'][name] = val
@@ -227,12 +246,17 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                     acc['messages'][midx].update(blks)
                 acc['fields'].update(entry.get('fields_delta') or {})
                 fid = entry.get('flow_id', '')
+                is_injected = entry.get('type', '') == 'injected_delta'
                 has_content = bool(
                     entry.get('system_delta') or entry.get('tools_delta')
                     or _msgs_delta_is_substantial(msgs_delta, entry.get('type', ''))
                 )
                 acc.setdefault('_has_content_by_flow_id', {})[fid] = has_content
                 acc.setdefault('_msg_idx_by_flow_id', {})[fid] = set(msgs_delta.keys())
+                acc.setdefault('_msg_idx_sub_by_flow_id', {})[fid] = {
+                    midx for midx, blks in msgs_delta.items()
+                    if _msg_delta_entry_is_substantial(blks, is_injected)
+                }
             return f.tell()
     except OSError:
         return last_pos
