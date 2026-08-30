@@ -316,8 +316,10 @@ result is a finding, not an error.
 were deleted rather than reinterpreted. Replacements: `expand <s> <msg>` for a single-msg read,
 `search` for finding something across a session, and — since `msgs` arrived the same day — `msgs
 <s>` for the whole-session listing the old `timeline` and the old expand overview both used to
-serve. `msgs` is deliberately narrower than either: no request markers, no block sub-rows, no
-previews. Contrast `search`'s argument flip below, which fails silently.
+serve. `msgs` is narrower than either: no block sub-rows and no previews. It DOES carry request
+markers — since 2026-08-30 they are its default grouping — but they are the compact
+`── REQ n  HH:MM:SS ──` form, not the old `timeline` marker with its running msgs total. Contrast
+`search`'s argument flip below, which fails silently.
 
 **`search` takes the TERM FIRST, and the old order fails silently.** The 2026-08-29 redesign
 flipped `search <session> <term>` to `search <term> [scope]`. Both arguments stay structurally

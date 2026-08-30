@@ -36,22 +36,6 @@ def render_sessions(sessions: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-# The group covering a msg index — the nearest one opening at or before it. None when the msg sits
-# below every boundary, which happens only if the _forwarded stream does not reach back that far.
-def _governing_marker(markers: dict, index: int):
-    starts = [s for s in markers if s <= index]
-    return markers[max(starts)] if starts else None
-
-
-# One REQ separator: the request that opened this msg index, and when it was sent
-def _req_separator(marker: dict) -> str:
-    refires = marker["refires"]
-    extra = ""
-    if refires:
-        extra = f"  (+{refires} re-fire{'s' if refires != 1 else ''})"
-    return f"── REQ {marker['number']}  {_clock(marker['timestamp'])} ──{extra}"
-
-
 # msgs: request groups — one REQ separator, then the msgs that request added. The msg line is
 # `[idx] role type chars` and nothing else: no count line, no block sub-rows, no previews. Pane
 # grammar: role clipped to 4 chars, and a multi-block msg shows its block COUNT instead of a type,
@@ -80,6 +64,22 @@ def render_msgs(data: dict, start: int, end: int) -> str:
         chars = f"{msg['chars']:,}c"
         lines.append(f"[{msg['index']:3d}] {msg['role'][:4]:<4}  {label:<20}{chars:>6}")
     return "\n".join(lines) + "\n"
+
+
+# The group covering a msg index — the nearest one opening at or before it. None when the msg sits
+# below every boundary, which happens only if the _forwarded stream does not reach back that far.
+def _governing_marker(markers: dict, index: int):
+    starts = [s for s in markers if s <= index]
+    return markers[max(starts)] if starts else None
+
+
+# One REQ separator: the request that opened this msg index, and when it was sent
+def _req_separator(marker: dict) -> str:
+    refires = marker["refires"]
+    extra = ""
+    if refires:
+        extra = f"  (+{refires} re-fire{'s' if refires != 1 else ''})"
+    return f"── REQ {marker['number']}  {_clock(marker['timestamp'])} ──{extra}"
 
 
 # Search result: header plus one line per matching block
