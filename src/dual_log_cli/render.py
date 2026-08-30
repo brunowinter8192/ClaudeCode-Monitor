@@ -66,17 +66,6 @@ def _skipped_lines(skipped: int) -> list:
     return ["", f"({skipped} session{'s' if skipped != 1 else ''} skipped — timeline could not be loaded)"]
 
 
-# HH:MM:SS of the request that first carried a msg; "?" when it has no reliable time
-def _clock(timestamp) -> str:
-    return timestamp[11:19] if timestamp else "?"
-
-
-# Calendar day for the window header — the anchor's own day, else the session's start day
-def _window_date(data: dict, anchor: int) -> str:
-    stamp = data.get("turn_times", {}).get(anchor) or data["session"].get("start", "")
-    return stamp[:10] if stamp else "?"
-
-
 # expand: the complete content of each selected msg in the window
 def render_expand_full(data: dict, anchor: int, start: int, end: int,
                        only: str, dumped: list) -> str:
@@ -104,3 +93,14 @@ def render_expand_full(data: dict, anchor: int, start: int, end: int,
             lines.append(text)
         lines.append("")
     return "\n".join(lines) + "\n"
+
+
+# HH:MM:SS of the request that first carried a msg; "?" when it has no reliable time
+def _clock(timestamp) -> str:
+    return timestamp[11:19] if timestamp else "?"
+
+
+# Calendar day for the window header — the anchor's own day, else the session's start day
+def _window_date(data: dict, anchor: int) -> str:
+    stamp = data.get("turn_times", {}).get(anchor) or data["session"].get("start", "")
+    return stamp[:10] if stamp else "?"

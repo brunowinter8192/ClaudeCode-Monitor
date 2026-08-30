@@ -177,7 +177,7 @@ def build_turn_times(boundaries: list) -> dict:
     return times
 
 
-# Load everything the timeline renderer needs for one session
+# Load everything a command needs for one session: the last request's payload plus its msg rows
 def load_timeline(session: dict) -> dict:
     original = session["streams"].get("original")
     if original is None:
