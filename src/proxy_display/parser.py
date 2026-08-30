@@ -56,7 +56,9 @@ def _msg_delta_entry_is_substantial(blks, is_injected: bool) -> bool:
 
 # Does this line's messages_delta carry anything BADGE-worthy? Badge-only helper — the overlay
 # dicts and _msg_idx_by_flow_id are populated from the raw delta regardless, so the expanded view
-# keeps rendering every span this filters out here.
+# keeps rendering IN-WINDOW every span this filters out here. Since 2026-08-30 the same per-index
+# rule (via _msg_idx_sub_by_flow_id) also gates the OUT-OF-WINDOW prepend, so what this function
+# silences on the header no longer prepends a message of its own either.
 # Two classes are not substantial (2026-08-29):
 #   - stripped side: a message whose blocks' stripped texts amount to exactly ONE text full-matching
 #     the total_tokens marker — the per-request CC token-budget nuke, noise on nearly every request.
