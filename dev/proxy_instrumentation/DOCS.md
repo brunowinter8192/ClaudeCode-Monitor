@@ -41,7 +41,13 @@ mid-conversation system messages (deferred-tools notice, task-tools nag, bg-noti
 a synthetic fields-only delta line (`fields_delta` must not badge) and a full-session
 collapsed-header sweep (`⚠S` badge must never render). `_render_body`'s `render_messages()` call
 passes `idx` as `entry_idx` as of 2026-08-28 (thinking-expander milestone signature bump),
-mechanical update only.
+mechanical update only. **Two of its six cases are obsolete as of 2026-08-30** — `msg1
+deferred-tools notice below window` and `msg33 task-tools nag outside window` assert that an
+out-of-window span renders inside the touching request's own body, which is exactly the prepend
+mechanism removed that day (see `p6_no_flow_extra_prepend_probe.py`). Its neighbour-bleed,
+fields-only and `⚠S` cases are unaffected. Independently, the probe has been unrunnable since its
+recorded session (`api_requests_opus_websearch_1786052022`) left the disk, so this was not caught
+by a failing run — reviving it needs both the log restored AND those two cases rewritten.
 **Reads:** `src/logs/dual_log/api_requests_opus_websearch_1786052022_{forwarded,stripped,injected}.jsonl`.
 **Writes:** `md/badge_inline_probe_report.md`.
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn,render_messages,format}`.

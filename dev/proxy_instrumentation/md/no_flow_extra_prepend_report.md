@@ -8,18 +8,18 @@ counts are reported rather than asserted so log growth cannot break them.
 
 | metric | value |
 |---|---|
-| entries_rendered | 148 |
-| entries_with_out_of_window_touch | 129 |
-| entries_whose_out_of_window_touch_is_substantial | 23 |
-| out_of_window_indices_now_invisible | 132 |
-| entries_showing_in_window_spans | 37 |
+| entries_rendered | 161 |
+| entries_with_out_of_window_touch | 141 |
+| entries_whose_out_of_window_touch_is_substantial | 24 |
+| out_of_window_indices_now_invisible | 144 |
+| entries_showing_in_window_spans | 41 |
 
 | check | pass | detail |
 |---|---|---|
-| no_msg_below_delta_window | PASS | 148 entries rendered; bodies starting below their own delta window: 0 [] |
+| no_msg_below_delta_window | PASS | 161 entries rendered; bodies starting below their own delta window: 0 [] |
 | removed_symbols_stay_removed | PASS | render_messages still exporting none; parser mentions _msg_idx_sub_by_flow_id: False; entries carrying a sub-lookup: 0 |
-| substantial_out_of_window_strips_still_badge | PASS | 129 entries have an out-of-window touched index, 23 of them SUBSTANTIAL; of those 0 show NO badge word (want 0) [] |
-| in_window_spans_still_render | PASS | 37 of 148 entries render an olive/green span in-window |
+| substantial_out_of_window_strips_still_badge | PASS | 141 entries have an out-of-window touched index, 24 of them SUBSTANTIAL; of those 0 show NO badge word (want 0) [] |
+| in_window_spans_still_render | PASS | 41 of 161 entries render an olive/green span in-window |
 
 ## `api_requests_opus_gh_cli_1787995963`
 
