@@ -293,17 +293,31 @@ def _render_modified_messages(entry_idx: int, entry: dict, messages: list, prev_
         keys.append(None)
     return lines, keys, diff_start
 
-# Render messages at indices THIS entry's own flow touched (stripped and/or injected) that sit
-# below covered_from — outside the normal new/modified window (e.g. a mid-conversation
-# system-role message CC overwrites in place, which the forwarded reconstruction sees no delta
-# for since post-strip content is unchanged). No-op when the entry carries no ownership lookups
-# (synthetic fixtures) or none of its own indices fall outside the window.
+# The message indices of THIS entry's flow on one side, preferring the SUBSTANTIAL subset
+# (parser's _msg_idx_sub_by_flow_id) over the raw touched set. Feature-detected like _lookup_spans
+# above: an entry without the sub-lookup (synthetic fixtures, older probes) keeps the raw set and
+# therefore the pre-suppression behavior.
+def _own_msgs(entry: dict, sub_key: str, raw_key: str, fid: str) -> set:
+    lookup = entry.get(sub_key) if sub_key in entry else entry.get(raw_key, {})
+    return lookup.get(fid, set())
+
+# Render messages at indices THIS entry's own flow touched SUBSTANTIALLY (stripped and/or
+# injected) that sit below covered_from — outside the normal new/modified window (e.g. a
+# mid-conversation system-role message CC overwrites in place, which the forwarded reconstruction
+# sees no delta for since post-strip content is unchanged). No-op when the entry carries no
+# ownership lookups (synthetic fixtures) or none of its own indices fall outside the window.
+# Substantial is the parser's per-index verdict, the same one the badge uses: an index whose only
+# touch is the per-request total_tokens nuke is NOT prepended, mirroring that class's badge
+# silence (2026-08-30). Without it nearly every request opened with the PREVIOUS request's
+# trailing system message, so the view showed a `syst` msg twice and stopped mirroring the
+# payload's delta. In-window rendering is unaffected — _lookup_spans still uses the raw set, so
+# the nuke keeps its olive/green spans wherever the delta window already covers it.
 def _render_flow_extra_messages(entry_idx: int, entry: dict, messages: list, covered_from: int, expand_states: dict, pane_width: int) -> tuple:
     lines = []
     keys = []
     fid = entry.get('flow_id', '')
-    s_msgs = entry.get('_strip_msgs_lookup', {}).get(fid, set())
-    i_msgs = entry.get('_inject_msgs_lookup', {}).get(fid, set())
+    s_msgs = _own_msgs(entry, '_strip_msgs_sub_lookup', '_strip_msgs_lookup', fid)
+    i_msgs = _own_msgs(entry, '_inject_msgs_sub_lookup', '_inject_msgs_lookup', fid)
     extra = sorted({int(m) for m in (s_msgs | i_msgs) if int(m) < covered_from})
     for msg_idx in extra:
         if msg_idx >= len(messages):

@@ -74,6 +74,26 @@ role='system' mid-turn user message body "jetzt") must survive byte-for-byte. Re
 **Writes:** `md/mid_turn_user_msg_preserve_probe_report.md`.
 **Calls out:** `src.proxy.message_passes` (`_apply_role_system_strip`).
 
+### p6_flow_extra_suppress_probe.py (312 LOC)
+
+**Purpose:** Verifies the 2026-08-30 flow-extra suppression — a message index whose only
+out-of-window flow touch is the per-request total_tokens nuke must NOT be prepended by
+`render_messages._render_flow_extra_messages`. Renders every entry of a recorded session TWICE in
+one process: once as the panes assemble it, once with the `_strip_msgs_sub_lookup` /
+`_inject_msgs_sub_lookup` attachments removed, which drops the renderer onto its pre-suppression
+fallback path — so the two runs differ in the suppression and nothing else. Five invariants
+(counts are reported but never asserted, so it survives log growth): a suppressing entry drops
+exactly the suppressed indices' blocks with the rest of its body verbatim (a MIXED request keeps
+its real prepend and loses only the nuke's); an entry prepending only substantial indices is
+byte-identical; an entry that never prepended is byte-identical (in-window guarantee);
+`parser.badge_flags` is identical on both sides; and the suppressed/kept split is cross-checked
+against `parser._msg_delta_entry_is_substantial` read straight off the raw dual-log lines, proving
+the render layer never re-derives the rule. Takes stems as argv, defaults to two recorded sessions,
+skips a stem whose log is not on disk.
+**Reads:** `src/logs/dual_log/api_requests_{opus_monitor_cc_1788091735,opus_gh_cli_1787995963}_{forwarded,stripped,injected}.jsonl` (override via argv).
+**Writes:** `md/flow_extra_suppress_report.md`.
+**Calls out:** `src.proxy_display.{forwarded_parser,parser,render_messages,render_turn}`.
+
 ### p1_measure_full_replacement_blast_radius.py (536 LOC)
 
 **Purpose:** Measurement script (dev/ M1 "bg-ack-shapes" milestone, 2026-07-29) — drives real
