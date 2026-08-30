@@ -8,20 +8,20 @@ counts are reported rather than asserted so log growth cannot break them.
 
 | metric | value |
 |---|---|
-| entries_rendered | 213 |
-| entries_with_out_of_window_touch | 186 |
-| entries_whose_out_of_window_touch_is_substantial | 30 |
-| out_of_window_indices_now_invisible | 189 |
-| entries_showing_in_window_spans | 186 |
-| lag_corrected_coordinates | 158 |
+| entries_rendered | 218 |
+| entries_with_out_of_window_touch | 190 |
+| entries_whose_out_of_window_touch_is_substantial | 31 |
+| out_of_window_indices_now_invisible | 193 |
+| entries_showing_in_window_spans | 190 |
+| lag_corrected_coordinates | 161 |
 
 | check | pass | detail |
 |---|---|---|
-| no_msg_below_delta_window | PASS | 213 entries rendered; bodies starting below their own delta window: 0 [] |
+| no_msg_below_delta_window | PASS | 218 entries rendered; bodies starting below their own delta window: 0 [] |
 | removed_symbols_stay_removed | PASS | render_messages still exporting none; parser mentions _msg_idx_sub_by_flow_id: False; entries carrying a sub-lookup: 0 |
-| substantial_out_of_window_strips_still_badge | PASS | 186 entries have an out-of-window touched index, 30 of them SUBSTANTIAL; of those 0 show NO badge word (want 0) [] |
-| in_window_spans_still_render | PASS | 186 of 213 entries render an olive/green span in-window |
-| lag_correction_sound_and_effective | PASS | 158 coordinates re-attributed to the flow that stripped them; 0 carry non-marker text (want 0) []; 0 sit in-window without olive+green (want 0) [] |
+| substantial_out_of_window_strips_still_badge | PASS | 190 entries have an out-of-window touched index, 31 of them SUBSTANTIAL; of those 0 show NO badge word (want 0) [] |
+| in_window_spans_still_render | PASS | 190 of 218 entries render an olive/green span in-window |
+| lag_correction_sound_and_effective | PASS | 161 coordinates re-attributed to the flow that stripped them; 0 carry non-marker text (want 0) []; 0 sit in-window without olive+green (want 0) [] |
 
 ## `api_requests_opus_gh_cli_1787995963`
 
