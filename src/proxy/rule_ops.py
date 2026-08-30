@@ -52,12 +52,32 @@ def _block_inner_text(block) -> str:
 # Per-block ops {blk_idx: [(offset, removed, injected)]} from a content change — used by op-recording passes.
 # full_replace threads straight through to _extract_block_op for every block/string pair — see
 # that function's docstring for why this can only be a caller-supplied signal, never inferred.
+#
+# Three shape transitions, not two. The MIXED list->str case (2026-08-30) is what a pass produces
+# when it collapses block content to a bare string — `_apply_role_system_strip` setting content to
+# "." is the live instance, and it fires whenever CC hangs the cache-control breakpoint on the
+# message, which makes a plain-string message arrive list-shaped. Without this branch the pass
+# still rewrote the payload correctly but recorded NO op, so `_process_messages_section`'s
+# `if s_texts:` wrote no stripped span and the strip surfaced only one request later, attributed to
+# whichever request re-sent the message as a string (measured before the fix: 0 of 510 trailing
+# total_tokens strips recorded against the request that performed them).
+# The new string is the "after" text of block 0 — matching `_process_messages_section`, which
+# recomputes each block's before-text from the ORIGINAL content and reads only block 0 in this case
+# (`_diff_messages` emits a single block diff for a mixed shape). Further blocks are recorded as
+# removed for completeness; nothing consumes them today, and no multi-block list->str collapse
+# occurs in any recorded session.
 def _ops_from_content_change(old_content, new_content, full_replace: bool = False) -> dict:
     ops: dict = {}
     if isinstance(old_content, list) and isinstance(new_content, list):
         for bi in range(max(len(old_content), len(new_content))):
             bt = _block_inner_text(old_content[bi]) if bi < len(old_content) else ""
             at = _block_inner_text(new_content[bi]) if bi < len(new_content) else ""
+            for op in _extract_block_op(bt, at, full_replace):
+                ops.setdefault(bi, []).append(op)
+    elif isinstance(old_content, list) and isinstance(new_content, str):
+        for bi in range(len(old_content)):
+            bt = _block_inner_text(old_content[bi])
+            at = new_content if bi == 0 else ""
             for op in _extract_block_op(bt, at, full_replace):
                 ops.setdefault(bi, []).append(op)
     elif isinstance(old_content, str) and isinstance(new_content, str):
