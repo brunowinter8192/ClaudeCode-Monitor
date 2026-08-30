@@ -4,20 +4,18 @@ Commands:
     sessions                 list every session (start, context, stem), newest first
     sessions <context>       keep only sessions whose context contains that text (substring, any case)
     sessions --since D --until D   bound that listing by start day, inclusive, YYYY-MM-DD
-    timeline <session>       deduplicated msg timeline of one session, from its last request line
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
-    expand <s> <msg>         classifier rows around one msg (overview mode)
-    expand <s> <msg> --full --before N --after N [--only X]    full content of the window
+    expand <s> <msg>         full content of that msg
+    expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
 
 Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli sessions
-    ./venv/bin/python -m src.dual_log_cli timeline api_requests_opus_gh_cli_1787995963
     ./venv/bin/python -m src.dual_log_cli search "worker-cli merge" gh_cli_1787939513
     ./venv/bin/python -m src.dual_log_cli search Reißleine websearch --since 2026-08-28
     ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721
-    ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721 --full --before 0 --after 0
+    ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721 --before 2 --after 1
 
 <session> is a full stem or any unambiguous substring of one. The log directory is resolved from
 MONITOR_CC_ROOT, else from the repo root, else from the main checkout when run inside a worktree.
@@ -42,17 +40,9 @@ from .discovery import (
     resolve_stem,
 )
 from .project_map import build_project_map
-from .render import (
-    render_expand_full,
-    render_expand_overview,
-    render_search,
-    render_sessions,
-    render_timeline,
-)
+from .render import render_expand_full, render_search, render_sessions
 from .search import find_matches
 from .timeline import full_turn, load_timeline
-
-_OVERVIEW_FLOOR = 30
 
 # ORCHESTRATOR
 
@@ -67,9 +57,7 @@ def main(argv: list) -> int:
         return _run_sessions(dual_log_dir, args)
     if args.command == "search":
         return _run_search(dual_log_dir, args)
-    if args.command == "expand":
-        return _run_expand(dual_log_dir, args)
-    return _run_timeline(dual_log_dir, args)
+    return _run_expand(dual_log_dir, args)
 
 
 # FUNCTIONS
@@ -90,32 +78,24 @@ def _parse_args(argv: list) -> argparse.Namespace:
                           help="only sessions started on or after this day (inclusive)")
     sessions.add_argument("--until", default="", metavar="YYYY-MM-DD",
                           help="only sessions started on or before this day (inclusive)")
-    timeline = sub.add_parser("timeline", help="render one session as a msg timeline")
-    timeline.add_argument("session", help="session stem or unambiguous substring")
     expand = sub.add_parser(
         "expand",
-        help="classifier rows around one msg, or the full content of a window",
+        help="full content of one msg, or of a window around it",
         description=(
-            "Overview mode (default): one classifier row per msg in the window — a single-block msg keeps "
-            "its type inline, a multi-block msg shows its block count and lists the blocks as sub-rows. "
-            f"no previews, no filtering. --before/--after default to {_OVERVIEW_FLOOR} and have a "
-            f"HARD FLOOR of {_OVERVIEW_FLOOR}: a smaller value is raised, so the window never gets "
-            "too narrow to read context from. "
-            "Read mode (--full): both --before and --after are REQUIRED explicit numbers with no "
-            "floor (0 and up). --only selects msgs by role and/or ANY block type in both modes; a "
-            "selected msg always shows ALL of its blocks."
+            "Dumps the complete content of every block of every selected msg. --before/--after "
+            "widen the window around the anchor and default to 0, so a bare call prints exactly "
+            "the anchor msg. --only selects msgs by role and/or ANY block type; a selected msg "
+            "always shows ALL of its blocks."
         ),
     )
     expand.add_argument("session", help="session stem or unambiguous substring")
     expand.add_argument("msg", type=int, help="anchor msg index")
-    expand.add_argument("--before", type=int, default=None,
-                        help=f"msgs before the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
-    expand.add_argument("--after", type=int, default=None,
-                        help=f"msgs after the anchor (overview: floor {_OVERVIEW_FLOOR}; --full: required, no floor)")
-    expand.add_argument("--full", action="store_true",
-                        help="dump full msg content instead of classifier rows; requires --before and --after")
+    expand.add_argument("--before", type=int, default=0,
+                        help="msgs before the anchor (0 and up, default 0)")
+    expand.add_argument("--after", type=int, default=0,
+                        help="msgs after the anchor (0 and up, default 0)")
     expand.add_argument("--only", default="", metavar="CLASSIFIER",
-                        help=f"keep only msgs matching {ONLY_FORMS}; works in both modes")
+                        help=f"keep only msgs matching {ONLY_FORMS}")
     search = sub.add_parser("search", help="find a term across the deduplicated timelines")
     search.add_argument("term", help="literal term to look for (no regex)")
     search.add_argument("scope", nargs="?", default="", metavar="SCOPE",
@@ -209,16 +189,7 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
     return 0
 
 
-# timeline — one session, reconstructed from its last conversation request
-def _run_timeline(dual_log_dir, args: argparse.Namespace) -> int:
-    data, code = _load_for(dual_log_dir, args.session)
-    if data is None:
-        return code
-    sys.stdout.write(render_timeline(data))
-    return 0
-
-
-# expand — a window around one turn: classifier lines by default, full content with --full
+# expand — the full content of the anchor msg, widened by --before/--after, optionally filtered
 def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
     data, code = _load_for(dual_log_dir, args.session)
     if data is None:
@@ -232,25 +203,9 @@ def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
     except BadClassifierError as exc:
         print(str(exc), file=sys.stderr)
         return 2
-    if args.full:
-        return _run_expand_full(data, args, wanted)
-    # floor, not a default: an explicit smaller value is raised too
-    before = max(_OVERVIEW_FLOOR, args.before if args.before is not None else _OVERVIEW_FLOOR)
-    after = max(_OVERVIEW_FLOOR, args.after if args.after is not None else _OVERVIEW_FLOOR)
-    start, end = _window(args.msg, before, after, len(msgs))
-    sys.stdout.write(render_expand_overview(data, args.msg, start, end, args.only, wanted))
-    return 0
-
-
-# expand --full — both bounds explicit, no floor, optional classifier filter
-def _run_expand_full(data: dict, args: argparse.Namespace, wanted: tuple) -> int:
-    if args.before is None or args.after is None:
-        print("--full requires both bounds: --full --before N --after N (N >= 0)", file=sys.stderr)
-        return 2
     if args.before < 0 or args.after < 0:
         print("--before and --after must be 0 or greater", file=sys.stderr)
         return 2
-    msgs = data["turns"]
     start, end = _window(args.msg, args.before, args.after, len(msgs))
     dumped = [
         (msg, full_turn(data["payload"], msg["index"]))

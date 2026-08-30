@@ -42,8 +42,9 @@ def _block_preview(block: dict) -> str:
     return _preview(full)
 
 
-# Compact rows for every message of a payload. full_text is dropped here — only the requested
-# turn is re-summarized for --full, so peak memory stays near the parsed payload.
+# Compact rows for every message of a payload. full_text is dropped here — only the msgs of the
+# expand window are re-summarized for their content dump, so peak memory stays near the parsed
+# payload.
 def build_turns(payload: dict) -> list:
     turns = []
     for index, message in enumerate(payload.get("messages", []) or []):
@@ -157,7 +158,7 @@ def request_boundaries(forwarded_path: Path, family: str) -> list:
 # it: those earlier requests described a different message list, so their counts cannot be walked
 # against the final one. Only the chain from the LAST restart onward is used, and every turn below
 # that restart's message count stays unmapped — the requests that first carried those messages are
-# not in this chain at all. Same conservative stance as the timeline's WARNING.
+# not in this chain at all, so such a turn renders its time as "?" rather than a wrong one.
 def build_turn_times(boundaries: list) -> dict:
     chain = boundaries
     covered = 0
@@ -174,15 +175,6 @@ def build_turn_times(boundaries: list) -> dict:
             times[index] = boundary["timestamp"]
         covered = count
     return times
-
-
-# Group boundaries by the message index they open, collapsing consecutive re-fires that added
-# no messages into one marker
-def boundaries_by_index(boundaries: list) -> dict:
-    grouped: dict = {}
-    for boundary in boundaries:
-        grouped.setdefault(boundary["start_index"], []).append(boundary)
-    return grouped
 
 
 # Load everything the timeline renderer needs for one session
