@@ -5,10 +5,12 @@
 Read-only command-line inspector for the six-stream dual-log quartet in `src/logs/dual_log/`
 written by `src/proxy/addon.py`. Turns ~15 GB of unreadable JSONL — every `_original` line
 re-embeds the entire conversation history, so grep and head report every content hit once per
-subsequent request — into a session inventory, a deduplicated search, and a full-content read of
-any msg window. The deduplicated msg timeline still exists as the internal data structure all three
-commands build on, but it has no command of its own. The user-facing unit is the msg (one API
-message) and its blocks, matching the proxy pane's display grammar.
+subsequent request — into a session inventory, a deduplicated search, a bare msg listing, and a
+full-content read of any msg window. The deduplicated msg timeline is the internal data structure
+all four commands build on; it has no command that renders it whole, because the two views worth
+having are the classifier listing (`msgs`) and the full content of a chosen range (`expand`). The
+user-facing unit is the msg (one API message) and its blocks, matching the proxy pane's display
+grammar.
 Touch this package to add read-side views over the dual logs. Do NOT add anything here that
 writes, creates or locks a path under `src/logs/dual_log/`: the logs are frozen evidence and the
 proxy appends to them live during a session.
@@ -19,6 +21,7 @@ proxy appends to them live during a session.
 
 ```bash
 ./venv/bin/python -m src.dual_log_cli sessions [CONTEXT] [--since YYYY-MM-DD] [--until YYYY-MM-DD]
+./venv/bin/python -m src.dual_log_cli msgs <stem-or-substring> [FROM] [TO]
 ./venv/bin/python -m src.dual_log_cli expand <stem-or-substring> <msg> [--before N] [--after N] [--only CLASSIFIER]
 ./venv/bin/python -m src.dual_log_cli search <term> [SCOPE] [--since D] [--until D] [--only CLASSIFIER] [--case-sensitive]
 ```
@@ -37,19 +40,20 @@ in the main checkout.
 `__main__` parses argv → `discovery` resolves the log dir and groups `*.jsonl` by session stem →
 `sessions` builds one inventory row per stem from that stem's `_forwarded` stream alone, with
 `project_map` resolving each worker stem's 8-hex project id once per run.
-`expand` resolves one stem, then `reader` reverse-seeks the last non-haiku `_original` line and
-parses only that line → `timeline` builds turn rows via `proxy.message_summary` plus request
-boundaries from `_forwarded.counts.messages`, and `expand` slices an anchor-centred window out of
-those msg rows and re-summarizes each selected msg for its full block content. `search` selects a
+`msgs` and `expand` resolve one stem, then `reader` reverse-seeks the last non-haiku `_original`
+line and parses only that line → `timeline` builds turn rows via `proxy.message_summary` plus
+request boundaries from `_forwarded.counts.messages`. `msgs` prints those rows directly for an
+inclusive index range; `expand` slices an anchor-centred window out of them and re-summarizes each
+selected msg for its full block content. `search` selects a
 SET of sessions the same way `sessions` does (scope + date window), repeats that per-session
 reconstruction for each one and streams its blocks through the matcher, skipping any session whose
 timeline will not load → `render` emits plain terminal text to stdout.
 
 ## Modules
 
-### __main__.py (237 LOC)
+### __main__.py (281 LOC)
 
-**Purpose:** argparse dispatch for the three subcommands (`sessions`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
+**Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
 **Writes:** stdout (rendered text), stderr (resolution, range and empty-term errors). Never touches the log directory.
 **Called by:** the user, via `python -m src.dual_log_cli` or `bin/duallog`.
@@ -117,9 +121,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### render.py (106 LOC)
+### render.py (123 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block), and the char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' bare classifier listing (`render_msgs` — one `[idx] role type chars` line per msg and NOTHING else: no header, no totals, no sub-rows), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block), and the char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -210,6 +214,22 @@ times stays one hit carrying `×N`. Changing that granularity changes every repo
 it is a contract, not a formatting detail. Since 2026-08-29 the header no longer states the totals,
 so hits, turns and occurrences are read off the lines — the `×N` markers are the only place the
 occurrence count survives.
+
+**`msgs` prints ONLY its lines, and that is the feature.** No header, no count line, no block
+sub-rows, no time column, no request markers — an agent pipes it into `grep`/`wc` or reads it
+whole, and any decoration would have to be filtered back out. `msgs <session>` is the whole
+session, `msgs <session> F T` an inclusive range, and `msgs <session> F` runs from F to the last
+msg. A bad bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
+`TO 2 is before FROM 5`). A NEGATIVE bound needs a `--` separator (`msgs <s> -- -1`), else argparse
+reads it as a flag — the exit code is 2 either way.
+
+**`msgs`' columns are fixed-width, and two real cases exceed them by one character.** The line is
+`[{idx:3d}] {role:.4} {type:<20}{chars:>6}`. An index of 1000+ widens the whole line by one
+(measured: 417 of 1417 msgs in one session), and a chars value needing 7 characters — `68,021c` —
+pushes its own line out by one (12 of 1417, 2 of them overlapping the first case). Right-alignment
+means both still read correctly, they just sit one column off their neighbours. Widening the
+columns would trade that for permanent extra padding on every short line; the narrow default was
+chosen deliberately.
 
 **`expand` dumps full content and nothing else, and its bounds default to 0.** A bare
 `expand <session> <msg>` prints exactly the anchor msg with every block in full — the old

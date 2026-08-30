@@ -35,6 +35,23 @@ def render_sessions(sessions: list) -> str:
     return "\n".join(lines) + "\n"
 
 
+# msgs: one classifier line per msg, `[idx] role type chars`, and NOTHING else — no header, no
+# count line, no block sub-rows. Pane grammar: role clipped to 4 chars, and a multi-block msg
+# shows its block COUNT instead of a type, because the aggregated type would name just one of the
+# blocks it stands for. Chars carry the pane's `1,234c` spelling rather than fmt_chars' `1.2k`,
+# since this view is for locating a msg by size, not for skimming magnitudes. The 6-wide chars
+# column fits every value up to 99,999c; a wider one right-aligns past it and pushes its own line
+# out by a character rather than truncating.
+def render_msgs(data: dict, start: int, end: int) -> str:
+    lines = []
+    for msg in data["turns"][start:end + 1]:
+        blocks = msg["blocks"]
+        label = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
+        chars = f"{msg['chars']:,}c"
+        lines.append(f"[{msg['index']:3d}] {msg['role'][:4]:<4}  {label:<20}{chars:>6}")
+    return "\n".join(lines) + "\n"
+
+
 # Search result: header plus one line per matching block
 # Search results across one or more sessions. results is [(session, hits), …] in listing order,
 # already filtered to sessions that HAVE hits. The term line is printed once overall; each session
