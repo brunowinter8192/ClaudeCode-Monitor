@@ -5,10 +5,11 @@
 Read-only command-line inspector for the six-stream dual-log quartet in `src/logs/dual_log/`
 written by `src/proxy/addon.py`. Turns ~15 GB of unreadable JSONL — every `_original` line
 re-embeds the entire conversation history, so grep and head report every content hit once per
-subsequent request — into a session inventory, a deduplicated search, a bare msg listing, and a
-full-content read of any msg window. The deduplicated msg timeline is the internal data structure
-all four commands build on; it has no command that renders it whole, because the two views worth
-having are the classifier listing (`msgs`) and the full content of a chosen range (`expand`). The
+subsequent request — into a session inventory, a deduplicated search, a msg listing grouped by
+request, and a full-content read of any msg window. The deduplicated msg timeline is the internal
+data structure all four commands build on; it has no command that renders it whole, because the two
+views worth having are the request-grouped classifier listing (`msgs`) and the full content of a
+chosen range (`expand`). The
 user-facing unit is the msg (one API message) and its blocks, matching the proxy pane's display
 grammar.
 Touch this package to add read-side views over the dual logs. Do NOT add anything here that
@@ -42,16 +43,18 @@ in the main checkout.
 `project_map` resolving each worker stem's 8-hex project id once per run.
 `msgs` and `expand` resolve one stem, then `reader` reverse-seeks the last non-haiku `_original`
 line and parses only that line → `timeline` builds turn rows via `proxy.message_summary` plus
-request boundaries from `_forwarded.counts.messages`. `msgs` prints those rows directly for an
-inclusive index range; `expand` slices an anchor-centred window out of them and re-summarizes each
-selected msg for its full block content. `search` selects a
+request boundaries from `_forwarded.counts.messages`. `msgs` prints those rows for an inclusive
+index range, interleaving one REQ separator per request group (`timeline.request_markers` folds the
+boundaries into `{msg_index: {number, timestamp, refires}}`); `expand` slices an anchor-centred
+window out of the same rows and re-summarizes each selected msg for its full block content.
+`search` selects a
 SET of sessions the same way `sessions` does (scope + date window), repeats that per-session
 reconstruction for each one and streams its blocks through the matcher, skipping any session whose
 timeline will not load → `render` emits plain terminal text to stdout.
 
 ## Modules
 
-### __main__.py (281 LOC)
+### __main__.py (283 LOC)
 
 **Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
@@ -101,9 +104,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### timeline.py (202 LOC)
+### timeline.py (235 LOC)
 
-**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), and `load_timeline` as the one call that assembles everything a render needs. `load_timeline` still returns `entry`, `family`, `line_bytes`, `haiku_lines_skipped` and `boundaries`; since the `timeline` command was dropped only `session`, `payload`, `turns` and `turn_times` have readers, and `boundaries` survives as the input `build_turn_times` consumes inside the same function.
+**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires}}`, what `msgs` draws its REQ separators from), and `load_timeline` as the one call that assembles everything a render needs. `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed. Its `number` deliberately counts only msg-adding requests, which is what aligns it with the proxy pane's `#N` (see Gotchas). `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
 **Writes:** Nothing — returns row lists, a generator, and one data dict.
 **Called by:** `__main__.py`, `search.py`.
@@ -121,13 +124,13 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### render.py (123 LOC)
+### render.py (153 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' bare classifier listing (`render_msgs` — one `[idx] role type chars` line per msg and NOTHING else: no header, no totals, no sub-rows), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block), and the char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, then one `[idx] role type chars` line per msg, and NOTHING else: no totals, no sub-rows; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block), and the char/timestamp formatters. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
-**Calls out:** — (package-local imports dropped with the `timeline` command and the expand overview).
+**Calls out:** `timeline` (`request_markers`, for `msgs`' REQ separators).
 
 ---
 
@@ -215,13 +218,41 @@ it is a contract, not a formatting detail. Since 2026-08-29 the header no longer
 so hits, turns and occurrences are read off the lines — the `×N` markers are the only place the
 occurrence count survives.
 
-**`msgs` prints ONLY its lines, and that is the feature.** No header, no count line, no block
-sub-rows, no time column, no request markers — an agent pipes it into `grep`/`wc` or reads it
-whole, and any decoration would have to be filtered back out. `msgs <session>` is the whole
-session, `msgs <session> F T` an inclusive range, and `msgs <session> F` runs from F to the last
-msg. A bad bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
+**`msgs` prints msg lines and REQ separators, and NOTHING else.** No header, no count line, no
+block sub-rows, no previews, no per-msg time column — an agent pipes it into `grep`/`wc` or reads
+it whole, and any further decoration would have to be filtered back out. The separator became part
+of the contract on 2026-08-30 (it was absent for the command's first hours): every msg line sits
+under the `── REQ n  HH:MM:SS ──` line of the request that added it, so `grep -v '^──'` recovers
+the original separator-free listing exactly. `msgs <session>` is the whole session,
+`msgs <session> F T` an inclusive range, and `msgs <session> F` runs from F to the last msg. A bad
+bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
 `TO 2 is before FROM 5`). A NEGATIVE bound needs a `--` separator (`msgs <s> -- -1`), else argparse
 reads it as a flag — the exit code is 2 either way.
+
+**A FROM landing mid-group still prints that group's separator, and it is not the group's own
+first line.** `_governing_marker` falls back to the nearest request opening at or before the first
+printed msg, so `msgs <s> 178 178` shows `── REQ 60 ──` even though REQ 60's group starts at 176.
+Only the FIRST printed msg gets that fallback; every later separator appears at its group's real
+start. Without it a mid-group range would print msgs under no request at all, which is the one
+thing the separator exists to prevent.
+
+**`msgs`' REQ numbers match the proxy pane's `#N` for the same session — by construction, not by
+luck.** The number counts only requests that ADDED msgs, which is exactly the pane's rule
+(`format.py` numbers `#N` on `messages_added > 0` and renders a re-fire as `#N.M` without advancing
+N). Measured: 971 of 971 requests across three sessions agree on number, timestamp AND message
+count simultaneously. `timeline.request_boundaries`' own `request_no` does NOT match — it counts
+every forwarded line, so the 3 re-fires in the gh_cli session push it out of step on 223 of 482
+requests. Two divergences are possible but unexercised by any recorded session: a non-haiku sidecar
+(`sys_chars == 0 and tools_chars == 0`, which the pane labels `S` and does not count, while these
+boundaries would) and a session mixing model families (these boundaries keep only the last
+request's family). Both measured at zero occurrences; if either appears, the numbers drift from
+there on.
+
+**A re-fire leaves its only trace on the separator.** A request that re-sent the same message list
+added no msg, so it opens no group of its own; it is folded into the next separator as
+`(+1 re-fire)`. Measured: 3 in 1417 msgs on the gh_cli session, 0 in the other two. Drop that
+suffix and a re-fire becomes completely invisible in this view — the pane still shows it as a
+`#N.M` row.
 
 **`msgs`' columns are fixed-width, and two real cases exceed them by one character.** The line is
 `[{idx:3d}] {role:.4} {type:<20}{chars:>6}`. An index of 1000+ widens the whole line by one
