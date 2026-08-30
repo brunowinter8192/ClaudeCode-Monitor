@@ -7,7 +7,7 @@ Commands:
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
-    msgs <session>           one classifier line per msg of that session, in index order
+    msgs <session>           request groups: a REQ separator, then the msgs that request added
     msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
     expand <s> <msg>         full content of that msg
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
@@ -88,10 +88,12 @@ def _parse_args(argv: list) -> argparse.Namespace:
         "msgs",
         help="one classifier line per msg of a session",
         description=(
-            "Prints `[idx] role type chars` for every msg in index order and nothing else — no "
-            "header, no totals, no block sub-rows. A multi-block msg shows its block count in "
-            "place of the type. FROM and TO are inclusive msg indices; omit both for the whole "
-            "session, or give FROM alone to run from there to the last msg."
+            "Prints the session as request groups: a `── REQ n  HH:MM:SS ──` separator, then the "
+            "`[idx] role type chars` line of every msg that request added. Nothing else — no "
+            "totals, no block sub-rows. A multi-block msg shows its block count in place of the "
+            "type. FROM and TO are inclusive msg indices; omit both for the whole session, or "
+            "give FROM alone to run from there to the last msg; a partially shown group keeps "
+            "its separator."
         ),
     )
     # "from" is a Python keyword, so the code-side name has to differ from the user-facing one

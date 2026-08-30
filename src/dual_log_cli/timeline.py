@@ -177,6 +177,39 @@ def build_turn_times(boundaries: list) -> dict:
     return times
 
 
+# Which request opened each msg index -> {msg_index: {number, timestamp, refires}}.
+#
+# Boundaries are grouped by the index they open. Several land on one index when a request re-fired
+# without adding a msg (a retry/abort re-send) or when a restart reset the index to 0. At most ONE
+# boundary of a group can add msgs, and it is always the LAST: every member shares the same
+# prev_count, so the one that raises message_count ends the group. That member owns the group — its
+# timestamp is when the msgs below actually arrived, and the earlier members are counted as refires.
+#
+# `number` counts only msg-ADDING requests, which is what makes it equal the proxy pane's `#N` for
+# the same session (measured: 0 mismatches over 967 requests in 3 sessions, comparing number,
+# message count and timestamp). The raw request_no would NOT match — it also counts re-fires, which
+# the pane renders as `#N.M` without advancing N.
+def request_markers(boundaries: list) -> dict:
+    numbers = []
+    adding = 0
+    for boundary in boundaries:
+        if boundary["start_index"] < boundary["message_count"]:
+            adding += 1
+        numbers.append(adding)
+    grouped: dict = {}
+    for position, boundary in enumerate(boundaries):
+        grouped.setdefault(boundary["start_index"], []).append(position)
+    markers = {}
+    for index, positions in grouped.items():
+        owner = positions[-1]
+        markers[index] = {
+            "number": numbers[owner],
+            "timestamp": boundaries[owner]["timestamp"],
+            "refires": len(positions) - 1,
+        }
+    return markers
+
+
 # Load everything a command needs for one session: the last request's payload plus its msg rows
 def load_timeline(session: dict) -> dict:
     original = session["streams"].get("original")

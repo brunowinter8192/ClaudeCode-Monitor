@@ -1,4 +1,5 @@
 # INFRASTRUCTURE
+from .timeline import request_markers
 
 # FUNCTIONS
 
@@ -35,21 +36,50 @@ def render_sessions(sessions: list) -> str:
     return "\n".join(lines) + "\n"
 
 
-# msgs: one classifier line per msg, `[idx] role type chars`, and NOTHING else — no header, no
-# count line, no block sub-rows. Pane grammar: role clipped to 4 chars, and a multi-block msg
-# shows its block COUNT instead of a type, because the aggregated type would name just one of the
-# blocks it stands for. Chars carry the pane's `1,234c` spelling rather than fmt_chars' `1.2k`,
-# since this view is for locating a msg by size, not for skimming magnitudes. The 6-wide chars
-# column fits every value up to 99,999c; a wider one right-aligns past it and pushes its own line
-# out by a character rather than truncating.
+# msgs: request groups — one REQ separator, then the msgs that request added. The msg line is
+# `[idx] role type chars` and nothing else: no count line, no block sub-rows, no previews. Pane
+# grammar: role clipped to 4 chars, and a multi-block msg shows its block COUNT instead of a type,
+# because the aggregated type would name just one of the blocks it stands for. Chars carry the
+# pane's `1,234c` spelling rather than fmt_chars' `1.2k`, since this view is for locating a msg by
+# size, not for skimming magnitudes. The 6-wide chars column fits every value up to 99,999c; a
+# wider one right-aligns past it and pushes its own line out by a character rather than truncating.
+#
+# A separator is emitted immediately before the first msg of its group that is actually PRINTED, so
+# a group with no printed msgs (out of range, or trailing re-fires past the last msg) emits nothing.
+# The FIRST printed msg is special: a FROM that lands mid-group would otherwise leave it with no
+# separator at all, so it falls back to the group that GOVERNS it — the nearest one opening at or
+# before it. A session whose _forwarded stream is missing or yields no boundaries prints no
+# separators at all, which is exactly the pre-separator output.
 def render_msgs(data: dict, start: int, end: int) -> str:
+    markers = request_markers(data.get("boundaries") or [])
     lines = []
-    for msg in data["turns"][start:end + 1]:
+    for offset, msg in enumerate(data["turns"][start:end + 1]):
+        marker = markers.get(msg["index"])
+        if marker is None and offset == 0:
+            marker = _governing_marker(markers, msg["index"])
+        if marker is not None:
+            lines.append(_req_separator(marker))
         blocks = msg["blocks"]
         label = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
         chars = f"{msg['chars']:,}c"
         lines.append(f"[{msg['index']:3d}] {msg['role'][:4]:<4}  {label:<20}{chars:>6}")
     return "\n".join(lines) + "\n"
+
+
+# The group covering a msg index — the nearest one opening at or before it. None when the msg sits
+# below every boundary, which happens only if the _forwarded stream does not reach back that far.
+def _governing_marker(markers: dict, index: int):
+    starts = [s for s in markers if s <= index]
+    return markers[max(starts)] if starts else None
+
+
+# One REQ separator: the request that opened this msg index, and when it was sent
+def _req_separator(marker: dict) -> str:
+    refires = marker["refires"]
+    extra = ""
+    if refires:
+        extra = f"  (+{refires} re-fire{'s' if refires != 1 else ''})"
+    return f"── REQ {marker['number']}  {_clock(marker['timestamp'])} ──{extra}"
 
 
 # Search result: header plus one line per matching block
