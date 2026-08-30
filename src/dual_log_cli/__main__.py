@@ -7,6 +7,8 @@ Commands:
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
+    msgs <session>           one classifier line per msg of that session, in index order
+    msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
     expand <s> <msg>         full content of that msg
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
 
@@ -14,6 +16,8 @@ Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli sessions
     ./venv/bin/python -m src.dual_log_cli search "worker-cli merge" gh_cli_1787939513
     ./venv/bin/python -m src.dual_log_cli search Reißleine websearch --since 2026-08-28
+    ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727
+    ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 700 740
     ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721
     ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721 --before 2 --after 1
 
@@ -40,7 +44,7 @@ from .discovery import (
     resolve_stem,
 )
 from .project_map import build_project_map
-from .render import render_expand_full, render_search, render_sessions
+from .render import render_expand_full, render_msgs, render_search, render_sessions
 from .search import find_matches
 from .timeline import full_turn, load_timeline
 
@@ -57,6 +61,8 @@ def main(argv: list) -> int:
         return _run_sessions(dual_log_dir, args)
     if args.command == "search":
         return _run_search(dual_log_dir, args)
+    if args.command == "msgs":
+        return _run_msgs(dual_log_dir, args)
     return _run_expand(dual_log_dir, args)
 
 
@@ -78,6 +84,22 @@ def _parse_args(argv: list) -> argparse.Namespace:
                           help="only sessions started on or after this day (inclusive)")
     sessions.add_argument("--until", default="", metavar="YYYY-MM-DD",
                           help="only sessions started on or before this day (inclusive)")
+    msgs = sub.add_parser(
+        "msgs",
+        help="one classifier line per msg of a session",
+        description=(
+            "Prints `[idx] role type chars` for every msg in index order and nothing else — no "
+            "header, no totals, no block sub-rows. A multi-block msg shows its block count in "
+            "place of the type. FROM and TO are inclusive msg indices; omit both for the whole "
+            "session, or give FROM alone to run from there to the last msg."
+        ),
+    )
+    # "from" is a Python keyword, so the code-side name has to differ from the user-facing one
+    msgs.add_argument("session", help="session stem or unambiguous substring")
+    msgs.add_argument("from_msg", nargs="?", type=int, default=None, metavar="FROM",
+                      help="first msg index (inclusive, default 0)")
+    msgs.add_argument("to_msg", nargs="?", type=int, default=None, metavar="TO",
+                      help="last msg index (inclusive, default the session's last msg)")
     expand = sub.add_parser(
         "expand",
         help="full content of one msg, or of a window around it",
@@ -186,6 +208,28 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
         if hits:
             results.append((session, hits))
     sys.stdout.write(render_search(args.term, args.case_sensitive, results, skipped))
+    return 0
+
+
+# msgs — one classifier line per msg, optionally bounded to an inclusive FROM..TO index range
+def _run_msgs(dual_log_dir, args: argparse.Namespace) -> int:
+    data, code = _load_for(dual_log_dir, args.session)
+    if data is None:
+        return code
+    last = len(data["turns"]) - 1
+    if last < 0:
+        print("session carries no msgs", file=sys.stderr)
+        return 2
+    start = 0 if args.from_msg is None else args.from_msg
+    end = last if args.to_msg is None else args.to_msg
+    for label, value in (("FROM", start), ("TO", end)):
+        if value < 0 or value > last:
+            print(f"{label} {value} out of range (0..{last})", file=sys.stderr)
+            return 2
+    if end < start:
+        print(f"TO {end} is before FROM {start}", file=sys.stderr)
+        return 2
+    sys.stdout.write(render_msgs(data, start, end))
     return 0
 
 
