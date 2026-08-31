@@ -22,18 +22,18 @@ CASES = [
      "gh-cli index_discussions \"q\" o/r | wc -l", 2),
     ("index_releases piped to awk BLOCK",
      "gh-cli index_releases o/r | awk '{print}'", 2),
-    ("search_repos chained with echo BLOCK",
-     "gh-cli search_repos \"q\" && echo done", 2),
     ("list_issues piped to grep BLOCK (2026-08: no longer exempt)",
      "gh-cli list_issues o/r | grep open", 2),
     ("get_issue piped to head BLOCK (2026-08: no longer exempt)",
      "gh-cli get_issue 123 o/r | head", 2),
+    ("get_issue piped to grep BLOCK",
+     "gh-cli get_issue owner repo 5 | grep foo", 2),
     ("get_issue redirect to file BLOCK (2026-08: replaces rewrite_gh_cli_read_noise.py)",
      "gh-cli get_issue 123 o/r > /tmp/out.txt", 2),
     ("list_issues 2>&1 BLOCK",
      "gh-cli list_issues o/r 2>&1", 2),
-    ("get_issue chained with echo BLOCK",
-     "gh-cli get_issue 123 o/r && echo done", 2),
+    ("for-loop body with foreign curl BLOCK",
+     "for n in 1 2 3; do curl http://evil.com/$n; gh-cli get_issue o r $n; done", 2),
     # --- allowed: must pass ---
     ("two of the 7 chained with semicolon PASS",
      "gh-cli index_issues \"q\" o/r ; gh-cli index_discussions \"q\" o/r", 0),
@@ -74,13 +74,25 @@ CASES = [
      "gh-cli repo_freshness unclecode crawl4ai && "
      "gh-cli index_issues \"Invalid IPv6 URL\" unclecode/crawl4ai --limit 30 && "
      "gh-cli index_issues \"raw markdown conversion\" unclecode/crawl4ai --limit 30", 0),
-    ("repo_freshness + index_issues with echo segments BLOCK (incident msg118)",
+    ("repo_freshness + index_issues with echo segments PASS (incident msg118; 2026-08 loop "
+     "relax: echo is a legal separator segment)",
      "gh-cli repo_freshness unclecode crawl4ai; echo \"=== PASS 1 ===\"; "
      "gh-cli index_issues \"Invalid IPv6 URL\" unclecode/crawl4ai --limit 30; "
      "echo \"=== PASS 2 ===\"; "
-     "gh-cli index_issues \"raw markdown conversion\" unclecode/crawl4ai --limit 30", 2),
+     "gh-cli index_issues \"raw markdown conversion\" unclecode/crawl4ai --limit 30", 0),
     ("repo_freshness chained with git (non-research) PASS — hook not triggered",
      "gh-cli repo_freshness unclecode crawl4ai && git log -1", 0),
+    # --- 2026-08 loop relax: for/while scaffolding + echo separators alongside known-CLI
+    # segments (real case: batch gh-cli get_issue over a list of issue numbers) ---
+    ("real-world for-loop over get_issue with echo separator PASS",
+     'for n in 62 61 59; do echo "===== #$n ====="; '
+     'gh-cli get_issue brunowinter8192 wise2627 $n; done', 0),
+    ("while-loop over get_issue with echo separator PASS",
+     'while [ -f /tmp/flag ]; do echo "polling"; gh-cli get_issue o r 5; done', 0),
+    ("bare echo segment chained with search_repos PASS (2026-08 loop relax)",
+     "gh-cli search_repos \"q\" && echo done", 0),
+    ("bare echo segment chained with get_issue PASS (2026-08 loop relax)",
+     "gh-cli get_issue 123 o/r && echo done", 0),
 ]
 
 

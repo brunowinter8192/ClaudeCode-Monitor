@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _shell_strip import _strip_non_shell_active
 from _fire_log import log_fire
-from _known_cli import is_known_cli_segment, is_guard_segment
+from _known_cli import is_allowed_chain_segment
 
 # `worker-cli capture` / `worker-cli response` — PROTECTED: must run with no redirect (bounded,
 # context-destined output). 2026-08: replaces the deleted rewrite_worker_cli_capture_noise.py /
@@ -62,7 +62,7 @@ def block_worker_cli_read_chained_workflow() -> None:
             if _REDIRECT_RE.search(seg):
                 _block(_REDIRECT_MESSAGE, command, session_id)
             continue
-        if is_known_cli_segment(seg) or is_guard_segment(seg):
+        if is_allowed_chain_segment(seg):
             continue
         _block(_BLOCK_MESSAGE, command, session_id)
     sys.exit(0)

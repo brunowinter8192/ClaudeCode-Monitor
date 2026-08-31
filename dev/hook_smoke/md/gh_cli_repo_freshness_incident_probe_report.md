@@ -5,10 +5,7 @@ Replays the exact commands from the websearch-session incident (`api_requests_op
 | case | source | expected exit | actual exit | stderr shape | pass |
 |---|---|---|---|---|---|
 | msg121_fixed_retry_now_passes | incident msg [121] | 0 | 0 | (empty) | PASS |
-| msg118_echo_variant_still_blocked | incident msg [118] | 2 | 2 | 726 chars | PASS |
-
-  stderr: `gh-cli search/research tools (search_repos, search_code, get_repo_tree, get_file_content, index_issues, index_discussions, index_releases, repo_freshness) and read commands (get_issue, list_issues) mu...`
-
+| msg118_echo_variant_now_passes_too | incident msg [118] (2026-08 loop relax: echo is now a legal separator segment) | 0 | 0 | (empty) | PASS |
 | index_issues_piped_to_head_still_blocked | generalization of the piping restriction | 2 | 2 | 726 chars | PASS |
 
   stderr: `gh-cli search/research tools (search_repos, search_code, get_repo_tree, get_file_content, index_issues, index_discussions, index_releases, repo_freshness) and read commands (get_issue, list_issues) mu...`
@@ -17,7 +14,7 @@ Replays the exact commands from the websearch-session incident (`api_requests_op
 | repo_freshness_chained_with_git_still_passes | hook must not trigger — repo_freshness alone never matches _GH_TRIGGER_RE | 0 | 0 | (empty) | PASS |
 | plain_non_gh_cli_command_untouched | baseline no-op | 0 | 0 | (empty) | PASS |
 
-## _BLOCK_MESSAGE content checks (against msg118 echo-variant stderr)
+## _BLOCK_MESSAGE content checks (against index_issues piped-to-head stderr)
 
 | check | pass |
 |---|---|

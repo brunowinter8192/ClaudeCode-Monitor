@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _shell_strip import _strip_non_shell_active
 from _fire_log import log_fire
-from _known_cli import is_known_cli_segment, is_guard_segment
+from _known_cli import is_allowed_chain_segment
 
 # Trigger: any of the 7 search/research tools OR the 2 read commands (get_issue, list_issues) —
 # the hook only engages once one of these 9 is present. 2026-08: get_issue/list_issues absorbed
@@ -66,7 +66,7 @@ def block_gh_cli_chained_workflow() -> None:
             if _REDIRECT_RE.search(seg):
                 _block(_READ_REDIRECT_MESSAGE, command, session_id)
             continue
-        if is_known_cli_segment(seg) or is_guard_segment(seg):
+        if is_allowed_chain_segment(seg):
             continue
         _block(_BLOCK_MESSAGE, command, session_id)
     sys.exit(0)

@@ -4,7 +4,8 @@ Replays the exact commands from the websearch-session repo_freshness incident
 through the real block_gh_cli_chained.py hook via subprocess, verifying:
 
   - repo_freshness is now a legal segment in a combined research chain (the [121] retry passes)
-  - the [118] echo-variant still blocks (echo is not a legal segment)
+  - the [118] echo-variant now ALSO passes (2026-08 loop relax: echo is a legal separator
+    segment, absorbing the original msg118 incident into the same fix as the loop-scaffold relax)
   - piping a research call to `head` still blocks
   - the [129] double-index_issues chain (already legal pre-fix) still passes
   - repo_freshness chained with a non-research command (git) still never triggers the hook
@@ -47,7 +48,8 @@ _MSG129_DOUBLE_INDEX = (
 CASES = [
     # (label, command, expected_exit, expect_stderr, source)
     ('msg121_fixed_retry_now_passes', _MSG121_FIXED_RETRY, 0, False, 'incident msg [121]'),
-    ('msg118_echo_variant_still_blocked', _MSG118_ECHO_VARIANT, 2, True, 'incident msg [118]'),
+    ('msg118_echo_variant_now_passes_too', _MSG118_ECHO_VARIANT, 0, False,
+     'incident msg [118] (2026-08 loop relax: echo is now a legal separator segment)'),
     ('index_issues_piped_to_head_still_blocked',
      'gh-cli index_issues "Invalid IPv6 URL" unclecode/crawl4ai --limit 30 | head -20', 2, True,
      'generalization of the piping restriction'),
@@ -91,8 +93,10 @@ def main() -> None:
             lines.append('')
             lines.append(f'  stderr: `{stderr.strip()[:200]}...`' if len(stderr.strip()) > 200 else f'  stderr: `{stderr.strip()}`')
             lines.append('')
-    # Message-content assertions on one representative BLOCK case
-    _, block_stderr = _run_hook(_MSG118_ECHO_VARIANT)
+    # Message-content assertions on one representative BLOCK case (msg118 echo-variant no longer
+    # blocks under the 2026-08 loop relax — use the still-blocking piped-to-head case instead)
+    _, block_stderr = _run_hook(
+        'gh-cli index_issues "Invalid IPv6 URL" unclecode/crawl4ai --limit 30 | head -20')
     msg_checks = [
         ('combine example present',
          'gh-cli index_issues "q1" owner/repo && gh-cli get_issue owner/repo 5' in block_stderr),
@@ -102,7 +106,7 @@ def main() -> None:
          'Cross-CLI and multi-call chains ARE allowed' in block_stderr),
     ]
     lines.append('')
-    lines.append('## _BLOCK_MESSAGE content checks (against msg118 echo-variant stderr)')
+    lines.append('## _BLOCK_MESSAGE content checks (against index_issues piped-to-head stderr)')
     lines.append('')
     lines.append('| check | pass |')
     lines.append('|---|---|')

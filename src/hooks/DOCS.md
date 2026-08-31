@@ -28,12 +28,12 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### _known_cli.py (34 LOC, 2026-08)
+### _known_cli.py (67 LOC, 2026-08 loop-scaffold relax)
 
-**Purpose:** Shared utility — provides `is_known_cli_segment(segment)` and `is_guard_segment(segment)`, the allow-predicate pair used by the chained-CLI block hooks (`block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`) to decide whether a foreign-looking Bash segment is actually fine. 2026-08 cross-CLI relax: these hooks used to require every chained segment to be the SAME protected tool (or, for gh-cli, one of an explicit legal-segment list); now any segment invoking a `KNOWN_CLI_TOOLS` entry — `gh-cli`, `rag-cli`, `worker-cli`, `reddit-cli`, `linkedin`, `websearch` (sourced by grepping every CLI token actually referenced across `src/hooks/*.py`; `bd` deliberately excluded — retired, see `rewrite_bd_invalid_repo.py` deletion) — passes, regardless of which tool or subcommand. `is_guard_segment` recognizes `cd`, `test`, and `[ ... ]` bracket-test segments (generalizes `block_rag_cli_chained.py`'s pre-existing "cd, guards" allowance to all four hooks).
+**Purpose:** Shared utility — provides `is_allowed_chain_segment(segment)`, the single allow-predicate used by the chained-CLI block hooks (`block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`) to decide whether a foreign-looking Bash segment is actually fine; composed from `is_known_cli_segment`, `is_guard_segment`, `is_echo_segment`, and `is_loop_scaffold_segment`. 2026-08 cross-CLI relax: `is_known_cli_segment` passes any segment invoking a `KNOWN_CLI_TOOLS` entry — `gh-cli`, `rag-cli`, `worker-cli`, `reddit-cli`, `linkedin`, `websearch` (sourced by grepping every CLI token actually referenced across `src/hooks/*.py`; `bd` deliberately excluded — retired, see `rewrite_bd_invalid_repo.py` deletion) — regardless of which tool or subcommand. `is_guard_segment` recognizes `cd`, `test`, and `[ ... ]` bracket-test segments. **2026-08 loop-scaffold relax:** real case blocked wrongly — `for n in 62 61 59; do echo "===== #$n ====="; gh-cli get_issue owner repo $n; done` — none of `for ...`, `do echo ...`, `done` are known-CLI/guard segments. `is_echo_segment` passes a pure `echo`/`printf` segment (output-only, cannot filter/truncate another segment's output). `is_loop_scaffold_segment` passes a `for ...`/`while ...` header, a bare `do`/`done`, or `do <segment>` where `<segment>` is itself a known-CLI call, guard, or echo/printf — a foreign command inside `do <cmd>` (e.g. `do curl ...`) still fails all four predicates and blocks.
 **Reads:** n/a (pure logic module, not a standalone script).
 **Writes:** n/a.
-**Called by:** `block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py` via `sys.path` insertion + `from _known_cli import is_known_cli_segment, is_guard_segment`.
+**Called by:** `block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py` via `sys.path` insertion + `from _known_cli import is_allowed_chain_segment`.
 **Calls out:** stdlib only (`re`).
 
 ---
@@ -219,20 +219,20 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_gh_cli_chained.py (95 LOC, 2026-08 cross-CLI relax + get_issue/list_issues absorbed)
+### block_gh_cli_chained.py (95 LOC, 2026-08 loop-scaffold relax)
 
-**Purpose:** PreToolUse hook (Bash) — engages on any of the 7 gh-cli search/research tools (`search_repos`, `search_code`, `get_repo_tree`, `get_file_content`, `index_issues`, `index_discussions`, `index_releases`) OR the 2 read commands `get_issue`/`list_issues` (2026-08: absorbed from the deleted `rewrite_gh_cli_read_noise.py` — rewrite-and-strip-noise superseded by block, same incident-class reasoning as `block_websearch_scrape_chained.py`). `get_issue`/`list_issues` are PROTECTED: no redirect (`_GH_READ_SEGMENT_RE` + `_REDIRECT_RE`) — output is bounded and must land directly in context, retiring the old rewrite hook's "save full output to disk" redirect allowance. The other 7 keep their pre-existing redirect-allowed behavior unchanged. **2026-08 cross-CLI relax:** every OTHER segment in the command must now be a known CLI call (`_known_cli.is_known_cli_segment` — gh-cli, rag-cli, worker-cli, reddit-cli, linkedin, websearch, ANY subcommand) or a leading cd/guard (`_known_cli.is_guard_segment`), not specifically one of these 9 gh-cli tools — chaining `gh-cli index_issues ... && rag-cli search ...` is now allowed, where it used to block. This also subsumes the old dedicated `repo_freshness`-as-legal-segment carve-out (any gh-cli subcommand, including `repo_freshness`, `create_issue`, etc., now passes as a known-CLI segment) — simpler mechanism, same practical outcome for the incident it fixed. `create_issue`/`update_issue`/`delete_issue` are not PROTECTED (writes, one-line confirmation, no truncation risk) but ARE now checked as ordinary known-CLI segments rather than being fully hook-exempt. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — engages on any of the 7 gh-cli search/research tools (`search_repos`, `search_code`, `get_repo_tree`, `get_file_content`, `index_issues`, `index_discussions`, `index_releases`) OR the 2 read commands `get_issue`/`list_issues` (2026-08: absorbed from the deleted `rewrite_gh_cli_read_noise.py` — rewrite-and-strip-noise superseded by block, same incident-class reasoning as `block_websearch_scrape_chained.py`). `get_issue`/`list_issues` are PROTECTED: no redirect (`_GH_READ_SEGMENT_RE` + `_REDIRECT_RE`) — output is bounded and must land directly in context, retiring the old rewrite hook's "save full output to disk" redirect allowance. The other 7 keep their pre-existing redirect-allowed behavior unchanged. **2026-08 cross-CLI relax:** every OTHER segment in the command must now be a known CLI call, guard, echo/printf, or loop scaffold (`_known_cli.is_allowed_chain_segment`), not specifically one of these 9 gh-cli tools — chaining `gh-cli index_issues ... && rag-cli search ...` is now allowed, where it used to block. This also subsumes the old dedicated `repo_freshness`-as-legal-segment carve-out (any gh-cli subcommand, including `repo_freshness`, `create_issue`, etc., now passes as a known-CLI segment) — simpler mechanism, same practical outcome for the incident it fixed. **2026-08 loop-scaffold relax:** `for`/`while` batch loops over `gh-cli` calls (real case: `for n in 62 61 59; do echo "=== #$n ==="; gh-cli get_issue owner repo $n; done`) used to block on every `for`/`do`/`done`/`echo` segment — now allowed via `_known_cli.is_allowed_chain_segment`'s loop-scaffold/echo predicates; a foreign command inside the loop body (`do curl ...`) still blocks. `create_issue`/`update_issue`/`delete_issue` are not PROTECTED (writes, one-line confirmation, no truncation risk) but ARE now checked as ordinary known-CLI segments rather than being fully hook-exempt. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_allowed_chain_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
 
 **Blocked patterns:**
 - `gh-cli search_repos "q" | grep foo` — piped to a non-CLI command
-- `gh-cli search_code "q" o/r && echo done` — chained with echo
 - `gh-cli get_file_content o/r path | head -10` — piped to head
 - `gh-cli get_issue 123 o/r | head` / `gh-cli list_issues o/r | grep open` — 2026-08: no longer exempt, protected read commands piped
 - `gh-cli get_issue 123 o/r > /tmp/out.txt` — protected read command redirected
+- `for n in 1 2 3; do curl http://evil.com/$n; gh-cli get_issue o r $n; done` — foreign command inside a loop body still blocks
 
 **Allowed patterns:**
 - `gh-cli index_issues "q" o/r --limit 30 --offset 0` — standalone with tool-native args
@@ -242,11 +242,13 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 - `gh-cli index_issues "q" o/r && rag-cli search "q" coll` — cross-CLI chain (2026-08 relax; used to block)
 - `gh-cli get_file_content o/r path > /tmp/out.txt` — the 7 search/research tools keep redirect-allowed
 - `cd /tmp && gh-cli index_issues "q" o/r` — leading guard
+- `gh-cli search_repos "q" && echo done` — bare echo segment (2026-08 loop-scaffold relax)
+- `for n in 62 61 59; do echo "=== #$n ==="; gh-cli get_issue o r $n; done` — batch loop over a known CLI (2026-08 loop-scaffold relax)
 - any command with none of the 9 protected/trigger tools — not policed
 
-**Segment split.** `_SEPARATOR_RE` splits the (quote-stripped) command on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact (no whitespace before `&`). `_GH_TRIGGER_RE` (fires the hook at all) matches the 7 + `get_issue`/`list_issues`. Per segment: `_GH_READ_SEGMENT_RE` match → check `_REDIRECT_RE`, block if present, else pass; else `is_known_cli_segment()` or `is_guard_segment()` → pass; else block.
+**Segment split.** `_SEPARATOR_RE` splits the (quote-stripped) command on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact (no whitespace before `&`). `_GH_TRIGGER_RE` (fires the hook at all) matches the 7 + `get_issue`/`list_issues`. Per segment: `_GH_READ_SEGMENT_RE` match → check `_REDIRECT_RE`, block if present, else pass; else `is_allowed_chain_segment()` (known-CLI, guard, echo/printf, or loop scaffold) → pass; else block.
 
-**Smoke:** `dev/hook_smoke/test_block_gh_cli_chained.py` (30 cases incl. protected-redirect/pipe blocks for get_issue/list_issues, cross-CLI-relax passes, get_issue/list_issues combine passes, repo_freshness/echo incident replay). Incident replay probe (verbatim commands + stderr-content checks, not folded into the smoke suite): `dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py`.
+**Smoke:** `dev/hook_smoke/test_block_gh_cli_chained.py` (34 cases incl. protected-redirect/pipe blocks for get_issue/list_issues, cross-CLI-relax passes, get_issue/list_issues combine passes, repo_freshness/echo incident replay, for/while loop-scaffold passes, foreign-command-in-loop-body block). Incident replay probe (verbatim commands + stderr-content checks, not folded into the smoke suite): `dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py`.
 
 ---
 
@@ -262,19 +264,19 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_rag_cli_chained.py (86 LOC, 2026-08 cross-CLI relax + search redirect absorbed)
+### block_rag_cli_chained.py (86 LOC, 2026-08 loop-scaffold relax)
 
-**Purpose:** PreToolUse hook (Bash) — engages on any `rag-cli` token. `rag-cli search` is PROTECTED: no redirect (`_RAG_SEARCH_SEGMENT_RE` + `_REDIRECT_RE`) — output is bounded and must land directly in context (2026-08: absorbed from the deleted `rewrite_rag_cli_search_noise.py` — rewrite-and-strip-noise superseded by block). Other rag-cli subcommands (`index`, `delete`, `list_documents`, etc.) keep their pre-existing redirect-allowed behavior unchanged. **2026-08 cross-CLI relax:** every OTHER segment (in ANY position, not just trailing) must be a known CLI call (`_known_cli.is_known_cli_segment` — gh-cli, rag-cli, worker-cli, reddit-cli, linkedin, websearch, ANY subcommand) or a `cd`/`test`/bracket-test guard (`_known_cli.is_guard_segment`) — replaces the old "trailing-only, same-tool-only" rule (`rag-cli index ... && rag-cli delete ...` allowed, `rag-cli index ... && rag-cli search ... && gh-cli get_issue ...` now ALSO allowed, where a non-rag-cli trailing segment used to block unconditionally). Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — engages on any `rag-cli` token. `rag-cli search` is PROTECTED: no redirect (`_RAG_SEARCH_SEGMENT_RE` + `_REDIRECT_RE`) — output is bounded and must land directly in context (2026-08: absorbed from the deleted `rewrite_rag_cli_search_noise.py` — rewrite-and-strip-noise superseded by block). Other rag-cli subcommands (`index`, `delete`, `list_documents`, etc.) keep their pre-existing redirect-allowed behavior unchanged. **2026-08 cross-CLI relax:** every OTHER segment (in ANY position, not just trailing) must be a known CLI call, guard, echo/printf, or loop scaffold (`_known_cli.is_allowed_chain_segment`) — replaces the old "trailing-only, same-tool-only" rule (`rag-cli index ... && rag-cli delete ...` allowed, `rag-cli index ... && rag-cli search ... && gh-cli get_issue ...` now ALSO allowed, where a non-rag-cli trailing segment used to block unconditionally). **2026-08 loop-scaffold relax:** `for`/`while` batch loops over `rag-cli` calls and bare `echo`/`printf` segments (e.g. `rag-cli index ... && echo done`) now pass via `_known_cli.is_allowed_chain_segment`'s loop-scaffold/echo predicates; a foreign command inside a loop body still blocks. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_allowed_chain_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
 
 **Blocked patterns:**
 - `rag-cli index --collection x ; tail /tmp/x.txt` — rag-cli followed by tail via `;`
-- `rag-cli index --collection x && echo done` — rag-cli followed by echo via `&&`
 - `rag-cli search "q" coll | grep foo` / `rag-cli list_documents coll | head` — piped to a non-CLI command
 - `rag-cli search "q" coll > /tmp/out.txt` — protected search command redirected
+- `for c in a b c; do curl http://evil.com/$c; rag-cli search "$c" coll; done` — foreign command inside a loop body still blocks
 
 **Allowed patterns:**
 - `rag-cli index --collection x > /tmp/x.txt` — non-search subcommand, redirect-allowed
@@ -282,65 +284,73 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 - `cd /some/path && rag-cli index --collection x` — leading cd guard
 - `rag-cli delete --collection x && rag-cli index --collection x` — both segments are rag-cli
 - `rag-cli search "q" coll && gh-cli get_issue owner/repo 5` — cross-CLI chain (2026-08 relax; used to block)
+- `rag-cli index --collection x && echo done` — bare echo segment (2026-08 loop-scaffold relax)
+- `for c in a b c; do echo "collection: $c"; rag-cli search "$c" coll; done` — batch loop over a known CLI (2026-08 loop-scaffold relax)
 - any command with no `rag-cli` — not policed (anchor exits early)
 - `rag-cli` inside single-quoted string / heredoc body — blanked by `_strip_non_shell_active`, anchor fails
 
-**Segment split.** Same `_SEPARATOR_RE` as `block_gh_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact. Per segment: `_RAG_SEARCH_SEGMENT_RE` match → check `_REDIRECT_RE`, block if present, else pass; else `is_known_cli_segment()` or `is_guard_segment()` → pass; else block.
+**Segment split.** Same `_SEPARATOR_RE` as `block_gh_cli_chained.py`: splits on `&&` `||` `;` `|` newline and space-bounded `&`; `>&`/`2>&1` redirects survive intact. Per segment: `_RAG_SEARCH_SEGMENT_RE` match → check `_REDIRECT_RE`, block if present, else pass; else `is_allowed_chain_segment()` (known-CLI, guard, echo/printf, or loop scaffold) → pass; else block.
 
-**Smoke:** `dev/hook_smoke/test_block_rag_cli_chained.py` (17 cases incl. search-protected redirect/pipe blocks, cross-CLI-relax passes, pre-existing redirect/guard/cd/two-rag-cli/no-rag-cli/single-quote/heredoc cases).
+**Smoke:** `dev/hook_smoke/test_block_rag_cli_chained.py` (20 cases incl. search-protected redirect/pipe blocks, cross-CLI-relax passes, pre-existing redirect/guard/cd/two-rag-cli/no-rag-cli/single-quote/heredoc cases, for/while loop-scaffold passes, foreign-command-in-loop-body block).
 
 ---
 
-### block_websearch_scrape_chained.py (91 LOC, 2026-08)
+### block_websearch_scrape_chained.py (91 LOC, 2026-08 loop-scaffold relax)
 
-**Purpose:** PreToolUse hook (Bash) — replaces the deleted `rewrite_websearch_scrape_noise.py`. `websearch scrape_url` is PROTECTED: no redirect (`_SCRAPE_SEGMENT_RE` + `_REDIRECT_RE`) — the page returns in full and must land directly in context. **Proven incident (2026-08-24):** `websearch scrape_url URL > /tmp/f.md 2>&1; wc -l /tmp/f.md; head -120 /tmp/f.md` — the rewrite hook silently stripped the redirect, leaving the dependent `wc`/`head` segments to hit a nonexistent file; the call exited 1 and surfaced as `[ERROR]` although the scrape succeeded. Blocking instead of rewriting forces a standalone re-issue — no dependent segment can ever desync from a silently-edited command. Same shape as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`: every OTHER segment must be a known CLI call (`_known_cli.is_known_cli_segment`) or a leading cd/guard (`_known_cli.is_guard_segment`) — `search_web`/`search_engine_drilldown` are simply `websearch` segments, not policed for redirects. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — replaces the deleted `rewrite_websearch_scrape_noise.py`. `websearch scrape_url` is PROTECTED: no redirect (`_SCRAPE_SEGMENT_RE` + `_REDIRECT_RE`) — the page returns in full and must land directly in context. **Proven incident (2026-08-24):** `websearch scrape_url URL > /tmp/f.md 2>&1; wc -l /tmp/f.md; head -120 /tmp/f.md` — the rewrite hook silently stripped the redirect, leaving the dependent `wc`/`head` segments to hit a nonexistent file; the call exited 1 and surfaced as `[ERROR]` although the scrape succeeded. Blocking instead of rewriting forces a standalone re-issue — no dependent segment can ever desync from a silently-edited command. Same shape as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`: every OTHER segment must be a known CLI call, guard, echo/printf, or loop scaffold (`_known_cli.is_allowed_chain_segment`) — `search_web`/`search_engine_drilldown` are simply `websearch` segments, not policed for redirects. **2026-08 loop-scaffold relax:** `for`/`while` batch loops over `scrape_url` and bare `echo`/`printf` segments now pass; a foreign command inside a loop body still blocks. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_allowed_chain_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
 
 **Blocked patterns:**
 - `websearch scrape_url URL > /tmp/f.md 2>&1; wc -l /tmp/f.md; head -120 /tmp/f.md` — the proven incident
 - `websearch scrape_url URL | head -50` — piped
-- `websearch scrape_url URL && echo done` — chained with a non-CLI command
+- `websearch scrape_url URL ; tail -5 /tmp/x.md` — chained with a non-CLI command via `;`
+- `for u in a b; do curl http://evil.com/$u; websearch scrape_url "$u"; done` — foreign command inside a loop body still blocks
 
 **Allowed patterns:**
 - `websearch scrape_url URL` — standalone
 - `websearch scrape_url URL1 && websearch scrape_url URL2` — same-tool combine (2026-08 cross-CLI relax)
 - `websearch scrape_url URL && rag-cli search "q" coll` — cross-CLI chain
 - `cd /tmp && websearch scrape_url URL` — leading cd guard
+- `websearch scrape_url URL && echo done` — bare echo segment (2026-08 loop-scaffold relax)
+- `for u in a b; do echo "scraping: $u"; websearch scrape_url "$u"; done` — batch loop over a known CLI (2026-08 loop-scaffold relax)
 - `websearch search_web "query"` — different subcommand, not protected
 
 **Segment split.** Same `_SEPARATOR_RE`/mechanic as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`.
 
-**Smoke:** `dev/hook_smoke/test_block_websearch_scrape_chained.py` (18 cases incl. the verbatim incident command, redirect/pipe/foreign-segment blocks, cross-CLI-relax passes).
+**Smoke:** `dev/hook_smoke/test_block_websearch_scrape_chained.py` (21 cases incl. the verbatim incident command, redirect/pipe/foreign-segment blocks, cross-CLI-relax passes, for/while loop-scaffold passes, foreign-command-in-loop-body block).
 
 ---
 
-### block_worker_cli_read_chained.py (91 LOC, 2026-08)
+### block_worker_cli_read_chained.py (91 LOC, 2026-08 loop-scaffold relax)
 
-**Purpose:** PreToolUse hook (Bash) — replaces the deleted `rewrite_worker_cli_capture_noise.py` / `rewrite_worker_cli_response_noise.py` (one hook covers both subcommands — they were direct clones of each other). `worker-cli capture`/`worker-cli response` are PROTECTED: no redirect and no pipe (`_READ_SEGMENT_RE` + `_REDIRECT_RE`) — clean, bounded output (2026-06-22 capture redesign) must land directly in context. **Retires two old allowances** documented on the deleted rewrite hooks: `worker-cli capture X > /tmp/file` ("legitimate — save clean output to disk") and `worker-cli capture X | tail -40` ("documented legitimate fallback") — both predate the capture redesign that made its output natively context-ready like `response`'s; the workaround's rationale no longer holds. Same shape as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`: every OTHER segment must be a known CLI call (`_known_cli.is_known_cli_segment`) or a leading cd/guard (`_known_cli.is_guard_segment`) — unlike `linkedin`/`websearch`/gh-cli/rag-cli-search, `cd` is a real pattern here (`worker-cli capture`/`response` resolve the target project via `resolve_project_path`, which falls back to cwd when the optional `project_path` positional is omitted). `status`, `list`, `send`, `merge`, `spawn`, `kill`, `revive`, `wait` are simply `worker-cli` segments, not policed for redirects. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
+**Purpose:** PreToolUse hook (Bash) — replaces the deleted `rewrite_worker_cli_capture_noise.py` / `rewrite_worker_cli_response_noise.py` (one hook covers both subcommands — they were direct clones of each other). `worker-cli capture`/`worker-cli response` are PROTECTED: no redirect and no pipe (`_READ_SEGMENT_RE` + `_REDIRECT_RE`) — clean, bounded output (2026-06-22 capture redesign) must land directly in context. **Retires two old allowances** documented on the deleted rewrite hooks: `worker-cli capture X > /tmp/file` ("legitimate — save clean output to disk") and `worker-cli capture X | tail -40` ("documented legitimate fallback") — both predate the capture redesign that made its output natively context-ready like `response`'s; the workaround's rationale no longer holds. Same shape as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`: every OTHER segment must be a known CLI call, guard, echo/printf, or loop scaffold (`_known_cli.is_allowed_chain_segment`) — unlike `linkedin`/`websearch`/gh-cli/rag-cli-search, `cd` is a real pattern here (`worker-cli capture`/`response` resolve the target project via `resolve_project_path`, which falls back to cwd when the optional `project_path` positional is omitted). `status`, `list`, `send`, `merge`, `spawn`, `kill`, `revive`, `wait` are simply `worker-cli` segments, not policed for redirects. **2026-08 loop-scaffold relax:** `for`/`while` batch loops over `capture`/`response` and bare `echo`/`printf` segments now pass; a foreign command inside a loop body still blocks. Exits 2 + stderr on violation. Exits 0 on any parse/internal error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
 **Writes:** stderr (block message) on violation only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
-**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_known_cli_segment`, `_known_cli.is_guard_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_allowed_chain_segment`, `_fire_log.log_fire`; stdlib (`json`, `re`).
 
 **Blocked patterns:**
 - `worker-cli capture janitor | tail -40` — piped (retired fallback)
 - `worker-cli capture janitor > /tmp/out.txt` — redirected (retired legitimate-use allowance)
 - `worker-cli response janitor | head -20` — piped
-- `worker-cli capture janitor && echo done` — chained with a non-CLI command
+- `worker-cli capture janitor ; grep ERROR /tmp/x.log` — chained with a non-CLI command via `;`
+- `for w in a b; do curl http://evil.com/$w; worker-cli capture "$w"; done` — foreign command inside a loop body still blocks
 
 **Allowed patterns:**
 - `worker-cli capture janitor` / `worker-cli response janitor` — standalone
 - `worker-cli capture janitor && worker-cli response janitor` — same-tool combine (2026-08 cross-CLI relax)
 - `worker-cli capture janitor && rag-cli search "q" coll` — cross-CLI chain
 - `cd /path/to/project && worker-cli capture janitor` — leading cd guard (real pattern — see Purpose)
+- `worker-cli capture janitor && echo done` — bare echo segment (2026-08 loop-scaffold relax)
+- `for w in janitor scribe; do echo "capturing: $w"; worker-cli capture "$w"; done` — batch loop over a known CLI (2026-08 loop-scaffold relax)
 - `worker-cli status janitor` / `worker-cli list` — different subcommands, not protected
 
 **Segment split.** Same `_SEPARATOR_RE`/mechanic as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`.
 
-**Smoke:** `dev/hook_smoke/test_block_worker_cli_read_chained.py` (20 cases incl. redirect/pipe/foreign-segment blocks, cross-CLI-relax passes, cd-guard passes).
+**Smoke:** `dev/hook_smoke/test_block_worker_cli_read_chained.py` (23 cases incl. redirect/pipe/foreign-segment blocks, cross-CLI-relax passes, cd-guard passes, for/while loop-scaffold passes, foreign-command-in-loop-body block).
 
 ---
 

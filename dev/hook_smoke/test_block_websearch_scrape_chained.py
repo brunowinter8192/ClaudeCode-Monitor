@@ -21,12 +21,10 @@ CASES = [
      "websearch scrape_url https://x.com | head -50", 2),
     ("piped to grep BLOCK",
      "websearch scrape_url https://x.com | grep foo", 2),
-    ("chained with echo BLOCK",
-     "websearch scrape_url https://x.com && echo done", 2),
-    ("chained after unrelated command BLOCK",
-     "echo start && websearch scrape_url https://x.com", 2),
     ("chained with tail via semicolon BLOCK",
      "websearch scrape_url https://x.com ; tail -5 /tmp/x.md", 2),
+    ("for-loop body with foreign curl BLOCK",
+     "for u in a b; do curl http://evil.com/$u; websearch scrape_url \"$u\"; done", 2),
     # --- allowed: standalone ---
     ("standalone PASS",
      "websearch scrape_url https://x.com", 0),
@@ -46,6 +44,17 @@ CASES = [
      "ls -la", 0),
     ("quoted mention shell-stripped PASS",
      'echo "websearch scrape_url https://x.com | grep foo"', 0),
+    # --- 2026-08 loop relax: for/while scaffolding + echo separators alongside known-CLI
+    # segments ---
+    ("bare echo segment chained with scrape_url PASS (2026-08 loop relax)",
+     "websearch scrape_url https://x.com && echo done", 0),
+    ("echo before scrape_url PASS (2026-08 loop relax)",
+     "echo start && websearch scrape_url https://x.com", 0),
+    ("for-loop over scrape_url with echo separator PASS",
+     'for u in https://a.com https://b.com; do echo "scraping: $u"; '
+     'websearch scrape_url "$u"; done', 0),
+    ("while-loop over scrape_url with echo separator PASS",
+     'while [ -f /tmp/flag ]; do echo "scraping"; websearch scrape_url https://x.com; done', 0),
 ]
 
 
