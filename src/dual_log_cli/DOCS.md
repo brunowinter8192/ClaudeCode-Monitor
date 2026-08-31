@@ -137,9 +137,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### render.py (175 LOC)
+### render.py (199 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, then one `[idx] role type chars` line per msg, and NOTHING else: no totals, no sub-rows; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -237,14 +237,19 @@ occurrence count survives.
 
 **The recorded strip text and the displayed block can differ by whitespace, and no gate rejects that.** The accumulator is cumulative last-writer-wins per coordinate, so in principle it could describe content CC later overwrote. Measured over 741 stripped coordinates in two sessions: 670 exact matches, 19 substrings, 52 whitespace-variants (one example differs by a single `\n` in 892 chars, similarity ≥ 0.972), and **0 unrelated**. No coordinate was ever touched by more than one flow. So the overlay is shown unconditionally rather than gated on containment, which would have wrongly dropped those 52.
 
-**`msgs` prints msg lines and REQ separators, and NOTHING else.** No header, no count line, no
-block sub-rows, no previews, no per-msg time column — an agent pipes it into `grep`/`wc` or reads
-it whole, and any further decoration would have to be filtered back out. The separator became part
-of the contract on 2026-08-30 (it was absent for the command's first hours): every msg line sits
-under the `── REQ n  HH:MM:SS ──` line of the request that added it, so `grep -v '^──'` recovers
-the original separator-free listing exactly. `msgs <session>` is the whole session,
-`msgs <session> F T` an inclusive range, and `msgs <session> F` runs from F to the last msg. A bad
-bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
+**`msgs` prints msg lines, their block sub-lines, and REQ separators, and NOTHING else.** No
+header, no count line, no previews, no per-msg time column — an agent pipes it into `grep`/`wc` or
+reads it whole, and any further decoration would have to be filtered back out. A multi-block msg
+line (`3 blocks 3,862c`) is followed by one indented sub-line per block —
+`        thinking                2,451c` — carrying that block's own label and chars, so the
+aggregated count is legible instead of opaque; a single-block msg still renders exactly one line.
+Sub-lines are whitespace-indented rather than `[`-prefixed, so `grep '^\['` keeps selecting msg
+lines only and both sub-lines and separators fall to `grep -v`. The separator became part of the
+contract on 2026-08-30 (it was absent for the command's first hours): every msg line sits under the
+`── REQ n  HH:MM:SS ──` line of the request that added it, so `grep -v '^──' | grep -v '^ '`
+recovers the original separator-free, sub-line-free listing exactly. `msgs <session>` is the whole
+session, `msgs <session> F T` an inclusive range, and `msgs <session> F` runs from F to the last
+msg. A bad bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
 `TO 2 is before FROM 5`). A NEGATIVE bound needs a `--` separator (`msgs <s> -- -1`), else argparse
 reads it as a flag — the exit code is 2 either way.
 
@@ -280,6 +285,16 @@ pushes its own line out by one (12 of 1417, 2 of them overlapping the first case
 means both still read correctly, they just sit one column off their neighbours. Widening the
 columns would trade that for permanent extra padding on every short line; the narrow default was
 chosen deliberately.
+
+**A block sub-line's chars column is anchored to the PARENT line's chars column, not to a fixed
+sub-line width of its own (added 2026-08-31).** `_BLOCK_LABEL_WIDTH` is derived —
+`_MSG_PREFIX_WIDTH + _MSG_LABEL_WIDTH - len(_BLOCK_INDENT)` — so that `indent + label field` always
+sums to the same offset the parent's `prefix + label field` does, keeping the two chars columns
+lined up under an 8-space indent even though the sub-line's own prefix is 4 columns shorter than
+the parent's `[idx] role  `. A label wider than that field (a very long tool name) overflows it
+exactly like the parent's 20-wide type column does — same documented one-character-or-more jog, not
+a bug. `block["label"]` is read as-is from `timeline._block_label` (`tool_use[Bash]`,
+`tool_result!err`, …); `render.py` does not recompute it.
 
 **`expand` dumps full content and nothing else, and its bounds default to 0.** A bare
 `expand <session> <msg>` prints exactly the anchor msg with every block in full — the old
@@ -335,7 +350,8 @@ result is a finding, not an error.
 were deleted rather than reinterpreted. Replacements: `expand <s> <msg>` for a single-msg read,
 `search` for finding something across a session, and — since `msgs` arrived the same day — `msgs
 <s>` for the whole-session listing the old `timeline` and the old expand overview both used to
-serve. `msgs` is narrower than either: no block sub-rows and no previews. It DOES carry request
+serve. `msgs` is narrower than either: no previews, and its block sub-lines (added 2026-08-31) are
+label + chars only, never the block content the old `timeline` sub-rows carried. It DOES carry request
 markers — since 2026-08-30 they are its default grouping — but they are the compact
 `── REQ n  HH:MM:SS ──` form, not the old `timeline` marker with its running msgs total. Contrast
 `search`'s argument flip below, which fails silently.
