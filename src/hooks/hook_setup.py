@@ -26,6 +26,7 @@ _HOOK_SCRIPTS = [
     ("block_rag_cli_chained.py",                 "Bash"),
     ("block_rag_cli_index_isolated.py",          "Bash"),
     ("block_rag_docs_layer.py",                  "Bash"),
+    ("block_rag_corpus_read.py",                 "Bash"),
     ("block_worker_cli_read_chained.py",   "Bash"),
     ("block_websearch_scrape_chained.py",  "Bash"),
     ("block_unauthorized_background.py",   "Bash"),
