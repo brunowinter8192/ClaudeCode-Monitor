@@ -36,13 +36,26 @@ def render_sessions(sessions: list) -> str:
     return "\n".join(lines) + "\n"
 
 
+# Fixed columns of the `[idx] role type chars` msg line — reused to keep a block sub-line's chars
+# figure right-aligned to the same column the parent line uses.
+_MSG_PREFIX_WIDTH = 12  # "[idx] role  "
+_MSG_LABEL_WIDTH = 20
+_MSG_CHARS_WIDTH = 6
+_BLOCK_INDENT = "        "  # 8 spaces — never matches `^[`, so `grep '^\['` keeps selecting msg lines only
+_BLOCK_LABEL_WIDTH = _MSG_PREFIX_WIDTH + _MSG_LABEL_WIDTH - len(_BLOCK_INDENT)
+
+
 # msgs: request groups — one REQ separator, then the msgs that request added. The msg line is
-# `[idx] role type chars` and nothing else: no count line, no block sub-rows, no previews. Pane
-# grammar: role clipped to 4 chars, and a multi-block msg shows its block COUNT instead of a type,
-# because the aggregated type would name just one of the blocks it stands for. Chars carry the
-# pane's `1,234c` spelling rather than fmt_chars' `1.2k`, since this view is for locating a msg by
-# size, not for skimming magnitudes. The 6-wide chars column fits every value up to 99,999c; a
-# wider one right-aligns past it and pushes its own line out by a character rather than truncating.
+# `[idx] role type chars`, and a single-block msg gets nothing further. A multi-block msg shows its
+# block COUNT in place of a type — the aggregated type would name just one of the blocks it stands
+# for — and is followed by one indented sub-line per block: its label (already carrying the tool
+# name or the `!err` marker via `timeline._block_label`) and its own char count, right-aligned to
+# the same column the parent line's chars use. That is what makes the count legible: a 3,862c msg
+# that is 2,451c thinking and 1,129c Bash input reads very differently from one that is mostly tool
+# output. Pane grammar: role clipped to 4 chars. Chars carry the pane's `1,234c` spelling rather
+# than fmt_chars' `1.2k`, since this view is for locating a msg by size, not for skimming
+# magnitudes. The 6-wide chars column fits every value up to 99,999c; a wider one right-aligns past
+# it and pushes its own line out by a character rather than truncating.
 #
 # A separator is emitted immediately before the first msg of its group that is actually PRINTED, so
 # a group with no printed msgs (out of range, or trailing re-fires past the last msg) emits nothing.
@@ -62,8 +75,19 @@ def render_msgs(data: dict, start: int, end: int) -> str:
         blocks = msg["blocks"]
         label = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
         chars = f"{msg['chars']:,}c"
-        lines.append(f"[{msg['index']:3d}] {msg['role'][:4]:<4}  {label:<20}{chars:>6}")
+        lines.append(f"[{msg['index']:3d}] {msg['role'][:4]:<4}  {label:<{_MSG_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}")
+        if len(blocks) > 1:
+            lines.extend(_block_sub_lines(blocks))
     return "\n".join(lines) + "\n"
+
+
+# One indented sub-line per block of a multi-block msg — label and chars only, no previews
+def _block_sub_lines(blocks: list) -> list:
+    lines = []
+    for block in blocks:
+        chars = f"{block['chars']:,}c"
+        lines.append(f"{_BLOCK_INDENT}{block['label']:<{_BLOCK_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}")
+    return lines
 
 
 # The group covering a msg index — the nearest one opening at or before it. None when the msg sits

@@ -91,10 +91,11 @@ def _parse_args(argv: list) -> argparse.Namespace:
         description=(
             "Prints the session as request groups: a `── REQ n  HH:MM:SS ──` separator, then the "
             "`[idx] role type chars` line of every msg that request added. Nothing else — no "
-            "totals, no block sub-rows. A multi-block msg shows its block count in place of the "
-            "type. FROM and TO are inclusive msg indices; omit both for the whole session, or "
-            "give FROM alone to run from there to the last msg; a partially shown group keeps "
-            "its separator."
+            "totals, no previews. A multi-block msg shows its block count in place of the type, "
+            "followed by one indented sub-line per block (its own type/tool-name and chars, "
+            "right-aligned to the same column). FROM and TO are inclusive msg indices; omit both "
+            "for the whole session, or give FROM alone to run from there to the last msg; a "
+            "partially shown group keeps its separator."
         ),
     )
     # "from" is a Python keyword, so the code-side name has to differ from the user-facing one
