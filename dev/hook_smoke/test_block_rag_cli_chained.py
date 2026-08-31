@@ -46,6 +46,17 @@ CASES = [
     # --- must allow: no rag-cli at all ---
     ("no rag-cli ALLOW",
      "echo hello world", 0),
+    # --- 2026-08 path-substring FP fix: `rag-cli` appearing only as a PATH COMPONENT must not
+    # trigger the hook (real observed FPs) ---
+    ("bare ls over a path containing rag-cli as a path component ALLOW (observed FP)",
+     "ls /Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/rag-cli/data/pdf/searxng", 0),
+    ("cd into a rag-cli path then ls ALLOW (observed FP)",
+     "cd /Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/rag-cli && ls", 0),
+    ("grep over a rag-cli path component ALLOW (path substring, not an invocation)",
+     "grep -r TODO /Users/x/cli/rag-cli/src", 0),
+    ("real rag-cli invocation still triggers protection when chained with a foreign segment "
+     "BLOCK (semantics unaffected by the path-substring fix)",
+     "rag-cli index --collection x && ls /Users/x/cli/rag-cli/data/pdf/y", 2),
     # --- shell-strip: rag-cli inside single-quoted string must be blanked ---
     ("rag-cli inside single-quotes ALLOW",
      "echo 'rag-cli index --collection x ; tail /tmp/x.txt'", 0),

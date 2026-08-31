@@ -9,8 +9,16 @@ from _shell_strip import _strip_non_shell_active
 from _fire_log import log_fire
 from _known_cli import is_allowed_chain_segment
 
-# Fast-path anchor: skip commands with no rag-cli token at all
-_RAG_CLI_RE = re.compile(r'\brag-cli\b')
+# One `VAR=value` shell assignment token, and zero-or-more as an optional env-var prefix on a
+# segment (same pattern _known_cli.py uses for known-CLI segment detection).
+_ASSIGN_TOKEN = r'[A-Za-z_][A-Za-z0-9_]*=\S*'
+_ASSIGN_PREFIX = rf'(?:{_ASSIGN_TOKEN}\s+)*'
+# Trigger: a segment that STARTS WITH an actual rag-cli invocation (optionally env-var-prefixed),
+# checked per-segment AFTER splitting — not a bare `\brag-cli\b` search over the whole command.
+# 2026-08 fix: the old whole-command search matched `rag-cli` as a PATH SUBSTRING too (observed
+# FPs: `ls /Users/.../cli/rag-cli/data/pdf/searxng`, `cd <rag-cli path> && ls` both blocked with
+# the piping message although no rag-cli tool was invoked anywhere in the command).
+_RAG_CLI_SEGMENT_RE = re.compile(rf'^{_ASSIGN_PREFIX}rag-cli(?:\s|$)')
 # `rag-cli search` specifically — PROTECTED: must run with no redirect (bounded output,
 # context-destined). 2026-08: absorbed from the deleted rewrite_rag_cli_search_noise.py
 # (rewrite-and-strip-noise superseded by block). Other rag-cli subcommands (index, delete,
@@ -47,12 +55,10 @@ def block_rag_cli_chained_workflow() -> None:
     if command is None:
         sys.exit(0)
     stripped = _strip_non_shell_active(command)
-    if not _RAG_CLI_RE.search(stripped):
+    segments = [s.strip() for s in _SEPARATOR_RE.split(stripped) if s.strip()]
+    if not any(_RAG_CLI_SEGMENT_RE.match(seg) for seg in segments):
         sys.exit(0)
-    for segment in _SEPARATOR_RE.split(stripped):
-        seg = segment.strip()
-        if not seg:
-            continue
+    for seg in segments:
         if _RAG_SEARCH_SEGMENT_RE.match(seg):
             if _REDIRECT_RE.search(seg):
                 _block(_SEARCH_REDIRECT_MESSAGE, command, session_id)
