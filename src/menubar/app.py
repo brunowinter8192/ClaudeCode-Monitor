@@ -163,8 +163,20 @@ class _PanelController(NSObject):
     def cycleMainModel_(self, sender):
         self._app.models.handle_cycle_main()
 
+    def cycleMainEffort_(self, sender):
+        self._app.models.handle_cycle_main_effort()
+
+    def cycleMainMaxTokens_(self, sender):
+        self._app.models.handle_cycle_main_max_tokens()
+
     def cycleWorkerModel_(self, sender):
         self._app.models.handle_cycle_worker()
+
+    def cycleWorkerEffort_(self, sender):
+        self._app.models.handle_cycle_worker_effort()
+
+    def cycleWorkerMaxTokens_(self, sender):
+        self._app.models.handle_cycle_worker_max_tokens()
 
     def applyModelSelection_(self, sender):
         self._app.models.handle_apply()

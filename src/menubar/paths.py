@@ -11,6 +11,7 @@ PID_FILE                  = _APP_SUPPORT / "menubar.pid"
 GHOSTTY_CWD_UUID_FILE     = _APP_SUPPORT / "ghostty_cwd_uuid.json"
 ORCHESTRATOR_SIGNALS_FILE = _APP_SUPPORT / "orchestrator_signals.json"  # {tmux_session_name: send_unix_ts}; written by worker-cli send
 MODEL_SELECTION_FILE      = _SHARED_RULES / "model_selection.json"      # {main, worker} model IDs; menubar writes, a later milestone adds readers
+PROXY_RULES_FILE          = _SHARED_RULES / "proxy_rules.json"          # proxy config incl. model_params; menubar read-modify-writes effort/max_tokens on Apply, never touches other sections
 
 # FUNCTIONS
 
