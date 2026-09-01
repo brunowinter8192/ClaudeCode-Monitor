@@ -2,15 +2,17 @@
 import json
 import os
 import sys
+import threading
 
-from AppKit import (NSAttributedString, NSFontAttributeName,
+from AppKit import (NSAttributedString, NSColor, NSFontAttributeName,
+                    NSForegroundColorAttributeName,
                     NSLayoutAttributeLeading, NSStatusWindowLevel,
                     NSStackView, NSView,
                     NSUserInterfaceLayoutOrientationVertical,
                     NSWindowCollectionBehaviorCanJoinAllSpaces,
                     NSWindowCollectionBehaviorIgnoresCycle,
                     NSWindowStyleMaskNonactivatingPanel, NSWindowStyleMaskResizable)
-from Foundation import NSMakeRect, NSMakeSize
+from Foundation import NSMakeRect, NSMakeSize, NSOperationQueue
 
 # From panel.py: UI constants, factories, helpers shared across panels
 from .panel import (PANEL_WIDTH, PANEL_HEIGHT, PANEL_MIN_WIDTH, PANEL_MIN_HEIGHT,
@@ -37,6 +39,16 @@ _MAXTOK_CHOICES = (32000, 64000, 128000)
 _DEFAULT_EFFORT     = "high"
 _DEFAULT_MAX_TOKENS = 64000
 _DEFAULT_THINKING   = {"type": "adaptive", "display": "summarized"}
+
+# Apply button dimensions + success-feedback constants. Width/title are kept as separate constants
+# (not composed inline) specifically so a future fallback — a shorter title at constant width, if
+# NSStackView's intrinsic-sizing turns out to fight the widened frame in the live app — is a 2-line
+# change: just lower _APPLY_SUCCESS_W and shorten _APPLY_SUCCESS_TITLE, nothing else moves.
+_APPLY_BTN_W          = 78    # matches _make_apply_btn's original fixed width
+_APPLY_BTN_H          = 22
+_APPLY_SUCCESS_TITLE  = 'Applied successfully'
+_APPLY_SUCCESS_W      = 160   # wide enough for _APPLY_SUCCESS_TITLE at the button's default system font
+_APPLY_SUCCESS_DURATION = 1.5   # seconds before the Apply button reverts to its normal title/width
 
 # FUNCTIONS
 
@@ -96,7 +108,7 @@ def _make_model_row_btn(panel_width: int):
 
 # Bordered rounded push-button (Apply) — mirrors panel.py's Restart/Kill footer-button style exactly
 def _make_apply_btn():
-    btn = _CursorlessButton.alloc().initWithFrame_(NSMakeRect(0, 0, 78, 22))
+    btn = _CursorlessButton.alloc().initWithFrame_(NSMakeRect(0, 0, _APPLY_BTN_W, _APPLY_BTN_H))
     btn.setTitle_('Apply')
     btn.setBezelStyle_(1)   # NSBezelStyleRounded
     return btn
@@ -291,11 +303,15 @@ class ModelController:
         self._models_sv.addView_inGravity_(self._apply_btn, 1)
         self._refresh_cycle_titles()
 
-    # Update all 6 cycle-button titles from current pending state; no full rebuild
+    # Update all 6 cycle-button titles from current pending state; no full rebuild. The two MODEL
+    # rows (Main/Worker) render in NSColor.systemOrangeColor() — same established attribute pattern
+    # panel_manager.py uses for session rows (panel.py:_make_grid_cell_btn's attrs-dict shape); the
+    # 4 parameter rows keep the plain Menlo-only look.
     def _refresh_cycle_titles(self) -> None:
         self._main_cycle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'Main:    {self._pending_main}', {NSFontAttributeName: _MENLO()}))
+                f'Main:    {self._pending_main}',
+                {NSFontAttributeName: _MENLO(), NSForegroundColorAttributeName: NSColor.systemOrangeColor()}))
         self._main_effort_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
                 f'  Main effort:      {self._pending_main_effort}', {NSFontAttributeName: _MENLO()}))
@@ -304,7 +320,8 @@ class ModelController:
                 f'  Main max_tokens:  {self._pending_main_max_tokens}', {NSFontAttributeName: _MENLO()}))
         self._worker_cycle_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
-                f'Worker:  {self._pending_worker}', {NSFontAttributeName: _MENLO()}))
+                f'Worker:  {self._pending_worker}',
+                {NSFontAttributeName: _MENLO(), NSForegroundColorAttributeName: NSColor.systemOrangeColor()}))
         self._worker_effort_btn.setAttributedTitle_(
             NSAttributedString.alloc().initWithString_attributes_(
                 f'  Worker effort:    {self._pending_worker_effort}', {NSFontAttributeName: _MENLO()}))
@@ -373,15 +390,60 @@ class ModelController:
     # Persist the currently displayed pair to model_selection.json, and the currently displayed
     # effort/max_tokens for both selected models into proxy_rules.json's model_params table.
     # AppKit-safety boundary: catches + logs, never raises, so a write failure cannot propagate
-    # into the ObjC action-dispatch chain.
+    # into the ObjC action-dispatch chain. Success feedback (_show_apply_success) is the LAST
+    # statement in the try block — a write exception skips it, so a failed Apply never shows the
+    # confirmation, with no separate success flag needed.
     def handle_apply(self) -> None:
         try:
             _write_model_selection(self._pending_main, self._pending_worker)
             _write_proxy_rules_model_params(
                 self._pending_main, self._pending_main_effort, self._pending_main_max_tokens,
                 self._pending_worker, self._pending_worker_effort, self._pending_worker_max_tokens)
+            self._show_apply_success()
         except Exception as exc:
             print(f'[menubar] model selection apply failed: {exc}', file=sys.stderr)
+
+    # Flash the Apply button to a success confirmation, then schedule its revert. Runs synchronously
+    # on the main thread (called from the same ObjC action dispatch as the click), so self._apply_btn
+    # is guaranteed live here — the stale-ref concern only applies to the DELAYED revert below.
+    # Own try/except (same shape as every other handler in this file) so a pure UI-feedback hiccup
+    # here can never get mislabeled as an apply failure by the caller's try block.
+    def _show_apply_success(self) -> None:
+        try:
+            btn = self._apply_btn
+            if btn is None:
+                return
+            frame = btn.frame()
+            btn.setFrame_display_(
+                NSMakeRect(frame.origin.x, frame.origin.y, _APPLY_SUCCESS_W, frame.size.height), True)
+            btn.setTitle_(_APPLY_SUCCESS_TITLE)
+            threading.Timer(_APPLY_SUCCESS_DURATION, self._schedule_apply_revert).start()
+        except Exception as exc:
+            print(f'[menubar] apply success flash failed: {exc}', file=sys.stderr)
+
+    # Timer-thread callback (off the main thread) — hops back onto the main thread before touching
+    # any AppKit object, same pattern as app.py's _blink/_restore (the only other delayed-revert in
+    # this package).
+    def _schedule_apply_revert(self) -> None:
+        NSOperationQueue.mainQueue().addOperationWithBlock_(self._revert_apply_button)
+
+    # Revert the Apply button to its normal title/width. Looks up self._apply_btn DYNAMICALLY at
+    # fire time rather than closing over the button object captured at flash time — if a rebuild()
+    # happened in between, self._apply_btn now points at a freshly-built button whose title is
+    # already 'Apply' (_make_apply_btn's own default), so reverting it is a harmless no-op, never a
+    # crash on a detached/replaced object. Own try/except: an AppKit call failing here (or the panel
+    # having been torn down some other way) must not propagate into the timer-thread callback chain.
+    def _revert_apply_button(self) -> None:
+        try:
+            btn = self._apply_btn
+            if btn is None:
+                return
+            frame = btn.frame()
+            btn.setFrame_display_(
+                NSMakeRect(frame.origin.x, frame.origin.y, _APPLY_BTN_W, frame.size.height), True)
+            btn.setTitle_('Apply')
+        except Exception as exc:
+            print(f'[menubar] apply success revert failed: {exc}', file=sys.stderr)
 
     # Resize Models NSPanel anchored at top edge; mirrors rag_controller._resize_rag_panel pattern
     def _resize_models_panel(self, new_h: float) -> None:
