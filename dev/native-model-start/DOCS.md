@@ -28,24 +28,36 @@ with `--project` + another passthrough flag+value. Never starts the proxy or cla
 
 ---
 
-### p2_model_params_probe.py (247 LOC)
+### p2_model_params_probe.py (356 LOC)
 
 **Purpose:** Verifies `src/proxy/inject_helpers.py::_inject_model_override`'s 2026-08-06 rework —
 per-model `model_params` config path (exact model-id lookup, never writes `model`) vs the legacy
 family-bucketed `model_override`/`model_override_worker` path (byte-identical fallback when
-`model_params` is absent from config). 7 test groups, 30 checks: legacy-only config unchanged incl.
-the model rewrite (opus/sonnet/haiku); `model_params` hit for each of the 3 snippet models with the
-model field verified untouched; miss leaves payload untouched; a suffixed model-id variant
-(`claude-opus-4-8[1m]`) is a DELIBERATE miss — exact-match only, no normalization, pinned so a
-future report of this is recognized as a known boundary, not a fresh bug; `model_params` presence
-(both non-empty and empty `{}`) wins over legacy sections even when both are in the config; empty
-vs partial per-model entries; `_load_config` raising fails open. Config injected via
-`mock.patch.object(inject_helpers, "_load_config", ...)` — no prior mocking precedent for
-`rules_config` existed anywhere in this repo before this script.
+`model_params` is absent from config) — and its 2026-09 fixation extension. 12 test groups, 55
+checks. Tests 1-7 (unchanged from the 2026-08-06 rework, all still called with only 2 positional
+args): legacy-only config unchanged incl. the model rewrite (opus/sonnet/haiku); `model_params` hit
+for each of the 3 snippet models with the model field verified untouched; miss leaves payload
+untouched; a suffixed model-id variant (`claude-opus-4-8[1m]`) is a DELIBERATE miss — exact-match
+only, no normalization, pinned so a future report of this is recognized as a known boundary, not a
+fresh bug; `model_params` presence (both non-empty and empty `{}`) wins over legacy sections even
+when both are in the config; empty vs partial per-model entries; `_load_config` raising fails open
+— all proving the 2-arg call form (no fixation dict) is byte-unaffected by the rework, since the
+default `fixated_model_override=None` creates a fresh, discarded dict per call. Tests 8-12 (new,
+2026-09, model-params fixation): a caller-owned `fixated` dict pins the whole resolved unit
+(model_params entry, or the legacy section) on the first call for a given exact model id — Test 8
+proves a later config change against the SAME dict (simulated same proxy process) is ignored; Test
+9 proves a FRESH dict (simulated fresh addon instance / hot-reload) picks up the new config; Test 10
+proves the legacy path is pinned the same way and stays byte-identical to the unfixated Test 1 on
+the pinning call, even surviving the legacy section later being disabled; Test 11 proves a genuine
+miss (config loads fine, model not in the table) pins "no injection" too, not just a hit; Test 12
+proves a genuine `_load_config()` exception on the first call does NOT pin — the very next call
+retries live and pins from there. Config injected via `mock.patch.object(inject_helpers,
+"_load_config", ...)` — no prior mocking precedent for `rules_config` existed anywhere in this repo
+before this script.
 **Reads:** Nothing persistent — builds all fixtures in-process.
 **Writes:** `md/p2_model_params_probe_<timestamp>.md`.
 **Called by:** run manually — regression guard for `inject_helpers.py`; re-run after any change to
-`_inject_model_override` or its two path functions.
+`_inject_model_override`, its two path functions, or the fixation mechanics.
 **Calls out:** `src/proxy/inject_helpers.py`.
 
 ---

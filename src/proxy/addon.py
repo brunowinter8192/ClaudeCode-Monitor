@@ -59,6 +59,7 @@ class ProxyAddon:
         self.prev_stripped_hashes_by_model: dict = {}  # model_family → flat loc_key → hash dict for stripped delta
         self.prev_injected_hashes_by_model: dict = {}  # model_family → flat loc_key → hash dict for injected delta
         self.prev_error_ids_by_model: Dict[str, set] = {}  # model_family → set of tool_use_ids already written to _errors
+        self.model_params_fixated: Dict[str, dict] = {}  # exact model_id → resolved model_params/legacy-override snapshot, pinned after the first request per model id (see inject_helpers._inject_model_override)
         self._session_id = _derive_session_id()
         self._worker_context = _derive_worker_context()
 
@@ -90,7 +91,7 @@ class ProxyAddon:
                 modified_payload = _apply_fixation(modified_payload, modifications, self.fixated[model_family])
 
             modified_payload, modifications = _run_post_fixation_pipeline(
-                modified_payload, modifications, model_family, project_path
+                modified_payload, modifications, model_family, project_path, self.model_params_fixated
             )
 
             # Derive request_id and timestamp for downstream dual-log writes (replaces _build_entry)
@@ -253,7 +254,9 @@ def _log_forwarded_delta(log_file: Path, modified_payload: dict, flow, prev_delt
 
 
 # Run the 7 post-fixation modification steps; returns (modified_payload, modifications).
-def _run_post_fixation_pipeline(modified_payload: dict, modifications: list, model_family: str, project_path: str) -> tuple:
+# fixated_model_override: ProxyAddon.model_params_fixated, threaded into _inject_model_override so
+# effort/thinking/max_tokens pin to the first request's resolved value for the process lifetime.
+def _run_post_fixation_pipeline(modified_payload: dict, modifications: list, model_family: str, project_path: str, fixated_model_override: dict) -> tuple:
     modified_payload, stripped_count, _ = _strip_unused_tools(modified_payload)
     if stripped_count > 0:
         modifications.append(f"stripped_{stripped_count}_unused_tools")
@@ -269,7 +272,7 @@ def _run_post_fixation_pipeline(modified_payload: dict, modifications: list, mod
     modified_payload, cm_injected = _inject_context_management(modified_payload)
     if cm_injected:
         modifications.append("injected_context_management")
-    modified_payload, model_overridden = _inject_model_override(modified_payload, model_family)
+    modified_payload, model_overridden = _inject_model_override(modified_payload, model_family, fixated_model_override)
     if model_overridden:
         modifications.append("injected_model_override")
     return modified_payload, modifications

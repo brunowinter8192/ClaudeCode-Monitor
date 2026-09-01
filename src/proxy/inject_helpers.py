@@ -3,6 +3,14 @@ from .rules_config import _load_config
 
 # FUNCTIONS
 
+# Build the 1-entry model_params dict _inject_model_params expects for a single resolved entry —
+# shared by the fresh-lookup and fixated-replay paths in _inject_model_override so both call the
+# SAME unchanged apply logic. entry falsy (miss, or an explicitly empty {}) yields {} — matches
+# _inject_model_params's own "not params -> untouched" miss handling.
+def _model_params_dict_for(model_id: str, entry: dict) -> dict:
+    return {model_id: entry} if entry else {}
+
+
 # Dispatch to the per-model 'model_params' path or the legacy family-bucketed path, based on
 # config precedence (2026-08-06): the session's model is now chosen at start via
 # claude_proxy_start.sh's --fable/--opus flags — the proxy must never force it back, only inject
@@ -17,13 +25,49 @@ from .rules_config import _load_config
 # ABSENT, falls back unchanged to the legacy family-bucketed behavior (model_family == "opus" ->
 # model_override, "sonnet" -> model_override_worker, INCLUDING the model-field rewrite) — safe
 # rollout: an unmigrated config keeps behaving exactly as before this change.
+#
+# Fixation (2026-09): fixated_model_override is a mutable dict OWNED BY THE CALLER (production:
+# ProxyAddon.model_params_fixated, one instance per proxy process — see addon.py), keyed by the
+# EXACT model id (payload["model"]). On the first call for a given model id this resolves live
+# against _load_config() exactly as before, then snapshots the WHOLE resolved unit — the per-model
+# entry dict for the model_params path, or the resolved model_override/model_override_worker
+# section dict for the legacy path (never individual fields; thinking/effort/max_tokens/model pin
+# together) — under that key. Every SUBSEQUENT call for the SAME model id replays the snapshot by
+# calling the SAME UNCHANGED _inject_model_params/_inject_legacy_model_override with a synthesized
+# config built from it — _load_config() is not touched again — so a proxy_rules.json edit mid-
+# process cannot change an already-running session's injected params, mirroring the sys2/msg0
+# session-state fixation in fixation.py (ProxyAddon.fixated) for the same reason (see
+# process-docs/cache/cache_rebuild_cases.md Case 3). A genuine miss (successful load, model not in
+# the table, or an explicitly enabled=False legacy section) IS pinned too — consistent with "a
+# config edit only takes effect in the NEXT process," not a cosmetic difference from a hit. A
+# genuine _load_config() exception is NOT pinned — the next request retries live, so a transient
+# read failure can't permanently disable injection for the rest of the process. Omitting
+# fixated_model_override (default None -> a fresh, discarded dict) makes every call independent
+# again, preserving pre-fixation behavior for any 2-arg caller (existing dev probes included).
 # Returns (modified_payload, injected_bool).
-def _inject_model_override(payload: dict, model_family: str) -> tuple:
+def _inject_model_override(payload: dict, model_family: str, fixated_model_override: dict = None) -> tuple:
+    if fixated_model_override is None:
+        fixated_model_override = {}
+    model_id = payload.get("model", "")
+    if model_id in fixated_model_override:
+        snapshot = fixated_model_override[model_id]
+        if snapshot["kind"] == "model_params":
+            return _inject_model_params(payload, _model_params_dict_for(model_id, snapshot["entry"]))
+        return _inject_legacy_model_override(payload, model_family, snapshot["config"])
     try:
         config = _load_config()
         if "model_params" in config:
-            return _inject_model_params(payload, config["model_params"])
-        return _inject_legacy_model_override(payload, model_family, config)
+            entry = config["model_params"].get(model_id) or {}
+            fixated_model_override[model_id] = {"kind": "model_params", "entry": entry}
+            return _inject_model_params(payload, _model_params_dict_for(model_id, entry))
+        if model_family == "opus":
+            legacy_config = {"model_override": config.get("model_override", {})}
+        elif model_family == "sonnet":
+            legacy_config = {"model_override_worker": config.get("model_override_worker", {})}
+        else:
+            legacy_config = {}
+        fixated_model_override[model_id] = {"kind": "legacy", "config": legacy_config}
+        return _inject_legacy_model_override(payload, model_family, legacy_config)
     except Exception:
         return payload, False
 
