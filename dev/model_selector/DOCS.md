@@ -24,18 +24,31 @@ tempdir-isolated `_APP_SUPPORT` — asserts both status transitions and the abse
 
 ---
 
-### verify_model_cycle_and_io.py (105 LOC)
+### verify_model_cycle_and_io.py (283 LOC)
 
-**Purpose:** Milestone 2 — `src/menubar/model_controller.py`'s pure cycle logic (`_next_model`:
-all 3 values step correctly, third wraps to first, an unrecognized value starts the cycle at the
-first choice) and its config I/O (`_write_model_selection`: atomic, exactly the 2-key schema, no
+**Purpose:** Milestone 2, extended 2026-09 for the model-ID + per-model effort/max_tokens rows —
+`src/menubar/model_controller.py`'s pure cycle logic (`_next_model`: all 4 values step correctly
+incl. `claude-fable-5-1`, fourth wraps to first; `_next_effort`: `low/medium/high` step + wrap,
+`'max'` confirmed absent; `_next_max_tokens`: `32000/64000/128000` step + wrap; all 3 confirm an
+unrecognized current value starts the cycle at the first choice — shared `_next_in` mechanics),
+`model_selection.json` I/O (`_write_model_selection`: atomic, exactly the 2-key schema, no
 leftover tempfile; `_load_model_selection`: valid/missing/malformed file handling, and —
 milestone 2's review correction — an unrecognized-but-valid on-disk value is preserved verbatim,
-never silently replaced, with an Apply-without-cycling round-trip proving it). Loads the real
-module via `importlib.import_module('src.menubar.model_controller')` (package-relative imports
-require real package context, unlike `hook_writer.py`).
-**Reads:** nothing persistent — all cases use a tempdir path, never the real
-`~/.claude/shared-rules/model_selection.json`.
+never silently replaced, with an Apply-without-cycling round-trip proving it; unchanged behavior,
+re-verified after the 4-value cycle change), and the new **`proxy_rules.json` read-modify-write**:
+section 6 pins the custom serializer's format fidelity (an unmodified round-trip through
+`_dumps_proxy_rules` reproduces a fixture mirroring the real file's on-disk convention — indent=2
+everywhere except `model_params`, whose entries render compact-single-line — byte-for-byte);
+section 7 drives `_write_proxy_rules_model_params` against that fixture with one existing target
+model (effort/max_tokens updated, `thinking` block untouched) and one missing target model
+(entry created with the established `thinking` shape), asserting the full output matches an
+independently-computed expected string exactly, PLUS that a foreign top-level section, an
+untouched model entry, and a second untouched model entry are all byte-preserved; section 8
+confirms a malformed proxy_rules.json degrades to a fresh minimal file without raising. Loads the
+real module via `importlib.import_module('src.menubar.model_controller')` (package-relative
+imports require real package context, unlike `hook_writer.py`).
+**Reads:** nothing persistent — all cases use a tempdir path or an in-memory fixture string, never
+the real `~/.claude/shared-rules/model_selection.json` or `~/.claude/shared-rules/proxy_rules.json`.
 **Writes:** `md/verify_model_cycle_and_io.md`.
 **Called by:** run manually — regression guard; re-run after any `model_controller.py` I/O change.
 **Calls out:** `src/menubar/model_controller.py`.
