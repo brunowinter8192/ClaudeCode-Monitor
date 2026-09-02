@@ -41,6 +41,12 @@ Mains + workers run on pinned **CC 2.1.176** (newest stable), no auto-update. Bu
 - Deferred: deletion of the old `claude-176` wrapper + `cc-cache-fix-176` dir. The bump session itself stayed live on 2.1.176 (its binary is mmap'd and survives), so the 176 cleanup runs after that session ends, not during it.
 - Running session stayed on 2.1.176 (effect applies only to new mains/workers started via `claude_proxy_start.sh` / `tmux_spawn.sh`).
 
+## 2026-09-02: 2.1.223 → 2.1.258
+- Trigger differed from the documented Update Procedure: CC was updated on the machine via the **native installer**, not the `npm install --prefix ~/cc-cache-fix-<v>` path. The pinned wrapper `~/.local/bin/claude-258` (`DISABLE_AUTOUPDATER=1`, exec of the pinned binary, same shape as `claude-223`) already existed and was pre-verified (`claude-258 --version` → `2.1.258 (Claude Code)`) before this bump started — install + wrapper creation were done outside this task's scope, only the launcher pin was in scope.
+- Executed: `src/claude_proxy_start.sh` — `CLAUDE_BIN` default `claude-223` → `claude-258`, plus the two comment blocks documenting the pin (line ~13 module-header block, line ~410 directly above `CLAUDE_BIN`) updated to state 2.1.258 / bumped 2026-09-02.
+- Not done in this task (native-installer path means no isolated `cc-cache-fix-<v>` dir exists for this version, so nothing to clean up there): `tmux_spawn.sh` worker-pin update (iterative-dev plugin, separate repo, out of monitor-cc scope) and deletion of the old `claude-223` wrapper.
+- Verify: `bash -n src/claude_proxy_start.sh` passes; `grep claude-223 src/claude_proxy_start.sh` empty.
+
 ## Logging Gate (verified — why Monitor observation is sufficient)
 The proxy logs the **modified_payload** (= exactly what goes to the API) to `src/logs/api_requests_<id>.jsonl` as the `raw_payload` field — built in `_build_entry()` (`src/proxy/logging.py`), called with `modified_payload` in the `request()` hook of `src/proxy/addon.py` (after all strip/inject steps). Stripped content is preserved in separate fields: `stripped_msg_originals`, `original_system2_text`, `stripped_sys3_original`, `stripped_tool_descs_originals` + the `modifications` list.
 - **Consequence:** nothing is lost; "what goes to the API" is 1:1 in the Monitor. **User decision:** bulletproof pre-modification original capture is NOT needed — `raw_payload` (= API truth) is sufficient for observation.
