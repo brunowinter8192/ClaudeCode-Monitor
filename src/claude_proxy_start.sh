@@ -10,8 +10,8 @@
 # at all, byte-identical to today's no-flag behavior. A missing/unreadable file, malformed JSON,
 # or a missing/empty "main" key all fall through to (4) silently — this launcher must never fail
 # because of that file.
-# --opus requires claude-opus-5 (introduced in CC 2.1.219) — the pinned binary is CC 2.1.223
-# (bumped 2026-08-06, monitor-cc #63), so --opus is fully functional as of this pin.
+# --opus requires claude-opus-5 (introduced in CC 2.1.219) — the pinned binary is CC 2.1.258
+# (bumped 2026-09-02), so --opus is fully functional as of this pin.
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR_CC_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -407,9 +407,9 @@ trap cleanup EXIT INT TERM
 sleep 1
 echo "Proxy for $PROJECT on port $PROXY_PORT, log: api_requests_${LOG_ID}.jsonl"
 
-# Pinned to v2.1.223 via ~/.local/bin/claude-223 wrapper (bumped 2026-08-06, monitor-cc #63 —
+# Pinned to v2.1.258 via ~/.local/bin/claude-258 wrapper (bumped 2026-09-02 —
 # claude-opus-5 needs >=2.1.219). Override with CLAUDE_BIN env var if needed.
-CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude-223}"
+CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude-258}"
 if [ ! -x "$CLAUDE_BIN" ]; then
     echo "ERROR: $CLAUDE_BIN not found or not executable" >&2
     exit 1
