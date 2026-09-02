@@ -631,7 +631,7 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ---
 
-### block_worker_spawn_placement.py (94 LOC)
+### block_worker_spawn_placement.py (99 LOC)
 
 **Purpose:** PreToolUse hook (Bash) — blocks `worker-cli spawn` calls that either (a) target a different project than the current session or (b) pass `--no-worktree`. Spawns always land in a worktree of the current project; cross-project or worktree-less spawns are a mis-dispatch. Exits 2 + stderr. Exits 0 when the session itself runs from inside a worktree (worker sessions don't spawn workers) or on any parse/resolution error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`); `os.getcwd()` (session CWD for project-root resolution).
