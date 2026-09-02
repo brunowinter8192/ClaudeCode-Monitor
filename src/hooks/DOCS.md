@@ -635,12 +635,12 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 **Purpose:** PreToolUse hook (Bash) — blocks `worker-cli spawn` calls that either (a) target a different project than the current session or (b) pass `--no-worktree`. Spawns always land in a worktree of the current project; cross-project or worktree-less spawns are a mis-dispatch. Exits 2 + stderr. Exits 0 when the session itself runs from inside a worktree (worker sessions don't spawn workers) or on any parse/resolution error (fail-open).
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`); `os.getcwd()` (session CWD for project-root resolution).
-**Writes:** stderr (one-line block message) on match only.
+**Writes:** stderr (multi-line block message naming the allowed `worker-cli spawn`/`worker-cli worktree` form) on match only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
 **Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert); `_fire_log.log_fire`.
 
 **Blocked patterns:**
-- `worker-cli spawn <name> <prompt> <path> ...` where `<path>` resolves to a different git-root than the current session's project
+- `worker-cli spawn <name> <prompt> <path> ...` where `<path>` resolves to a different git-root than the current session's project — message points to `worker-cli worktree <name> <target_repo>` to create AND register the target-project worktree
 - `worker-cli spawn ... --no-worktree` — flag present anywhere after the `spawn` subcommand
 
 **Allowed patterns:** `project_path` of `c` or `.` (resolve to current project by definition); same-project absolute/relative paths; non-spawn commands; spawn from inside a worktree CWD (skipped); parse or path-resolution errors (fail-open).
