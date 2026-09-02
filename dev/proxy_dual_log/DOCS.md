@@ -42,54 +42,6 @@ status, delta indices) + PASS/FAIL summary line.
 
 ---
 
-### verify_strip_inject.py (346 LOC)
-
-**Purpose:** Completeness proof for the strip/inject diff engine (`src/proxy/diff_engine.py`).
-Simulates `_build_stripped_injected_deltas` on every request pair from a real `_original` +
-`_forwarded` log and verifies three hard checks per request:
-
-- **Check 1 (span reconstruction):** For every block where `orig_text != fwd_text`, spans
-  produced by the engine reconstruct `orig_text` from (equal + stripped) and `fwd_text` from
-  (equal + injected). Failure = `_diff_text` lost content.
-- **Check 2 (field coverage):** Every non-collection top-level field that differs between
-  original and forwarded appears in `fields_delta`. Failure = field-level modification (e.g.
-  model override) silently omitted.
-- **Check 3 (model cross-check):** `injected fields_delta["model"]` (if present) matches the
-  `model` field on the `_forwarded` delta entry for the same request.
-
-**Verified:** PASS 46/46 on `api_requests_opus_monitor_cc_1780497198` (historical log data).
-Live proxy writing `_stripped`/`_injected` during a real session: pending user test session.
-
-**BROKEN as of 2026-08-29 — two independent defects, both predating that date.** (1) Check 1 reads
-`bd["spans"]` per message block, but `_diff_messages` stopped emitting a `spans` key when the ops /
-`compose_block` architecture replaced it — the script raises `KeyError: 'spans'` on any log pair
-where at least one message block differs. (2) It calls `_build_stripped_injected_deltas` WITHOUT
-`all_ops`, so the message section produces no spans at all and its message-level delta coverage is
-vacuous even if (1) were fixed. Repairing it means feeding real ops (see `tt_delta_skip_replay.py`
-for how) and reworking Check 1's message branch, not a one-line patch.
-
-Imports `src.proxy.diff_engine` and `src.proxy.logging` via `sys.path.insert(0, parents[2])`.
-
-**Usage (from project root):**
-```bash
-./venv/bin/python dev/proxy_dual_log/verify_strip_inject.py \
-    src/logs/dual_log/api_requests_<id>_original.jsonl \
-    src/logs/dual_log/api_requests_<id>_forwarded.jsonl
-```
-
-**CLI flags:**
-
-| Flag | Description |
-|---|---|
-| `original` (positional) | Path to `_original.jsonl` |
-| `forwarded` (positional) | Path to `_forwarded.jsonl` |
-| `--original` | Named alternative for original path |
-| `--forwarded` | Named alternative for forwarded path |
-
-**Exit codes:** 0 = all 3 checks passed for all requests; 1 = at least one hard-fail.
-
----
-
 ### tt_delta_skip_replay.py (273 LOC)
 
 **Purpose:** Before/after proof for the read-side badge suppression of the per-request

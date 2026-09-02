@@ -22,36 +22,6 @@ mechanical update only, no behavior change to this script's own checks.
 (hardcoded stem/request_id — one-off verification, not parameterized).
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_messages}`.
 
-### p2_badge_words_probe.py (109 LOC)
-
-**Purpose:** Verifies the REQ-header `strip`/`inject` word badge (replacing the old numeric
-`Nstrip Ninj`) end-to-end — `accumulate_dual_log` -> pane-style entry attach ->
-`_build_req_header_line` — against 4 recorded requests, including the "."-filler injection
-case (empty `fn_map`, non-empty `messages_delta`) that must still render `inject`.
-**Reads:** `src/logs/dual_log/api_requests_{opus_monitor_cc_1785364138,opus_monitor_cc_1785347492}_{forwarded,stripped,injected}.jsonl`.
-**Writes:** `md/badge_words_probe_report.md`.
-**Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn}`.
-
-### p3_badge_inline_probe.py (244 LOC)
-
-**Purpose:** Verifies the per-flow msg-index tracking + inline out-of-window span rendering
-and the neighbor-bleed fix end-to-end — `accumulate_dual_log` -> pane-style entry attach ->
-`_build_req_header_line` + `render_messages` — against the CC 2.1.223 recorded session with
-mid-conversation system messages (deferred-tools notice, task-tools nag, bg-notification), plus
-a synthetic fields-only delta line (`fields_delta` must not badge) and a full-session
-collapsed-header sweep (`⚠S` badge must never render). `_render_body`'s `render_messages()` call
-passes `idx` as `entry_idx` as of 2026-08-28 (thinking-expander milestone signature bump),
-mechanical update only. **Two of its six cases are obsolete as of 2026-08-30** — `msg1
-deferred-tools notice below window` and `msg33 task-tools nag outside window` assert that an
-out-of-window span renders inside the touching request's own body, which is exactly the prepend
-mechanism removed that day (see `p6_no_flow_extra_prepend_probe.py`). Its neighbour-bleed,
-fields-only and `⚠S` cases are unaffected. Independently, the probe has been unrunnable since its
-recorded session (`api_requests_opus_websearch_1786052022`) left the disk, so this was not caught
-by a failing run — reviving it needs both the log restored AND those two cases rewritten.
-**Reads:** `src/logs/dual_log/api_requests_opus_websearch_1786052022_{forwarded,stripped,injected}.jsonl`.
-**Writes:** `md/badge_inline_probe_report.md`.
-**Calls out:** `src.proxy_display.{forwarded_parser,parser,render_turn,render_messages,format}`.
-
 ### p4_blocklist_223_probe.py (140 LOC)
 
 **Purpose:** Verifies the CC 2.1.223 `TOOL_BLOCKLIST` extension (Artifact, ReportFindings,
