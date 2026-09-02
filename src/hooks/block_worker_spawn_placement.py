@@ -14,12 +14,17 @@ _SPAWN_RE       = re.compile(r'\bworker-cli\s+spawn\s+(\S+)\s+(\S+)\s+(\S+)', re
 _NO_WORKTREE_RE = re.compile(r'\bworker-cli\s+spawn\b.*--no-worktree\b', re.DOTALL)
 
 _WRONG_PROJECT_MSG  = (
-    "worker spawn nur im aktuellen projekt — nutze 'c' (worktree im aktuellen projekt). "
-    "Für cross-project arbeit: mit 'c' spawnen, dann im zielprojekt selbst ein worktree bauen "
-    "(git -C <zielprojekt> worktree add .claude/worktrees/<name> -b <name>) und den worker DORT arbeiten lassen "
-    "— oder, wenn die zieldateien gitignored sind, direkt im source des zielprojekts. Nie --no-worktree.\n"
+    "BLOCKED: worker-cli spawn targets a different project than the current session.\n"
+    "Use: worker-cli spawn <name> <prompt_file> c   (worktree in the CURRENT project).\n"
+    "For cross-project work: spawn here with 'c', then set up the target project with\n"
+    "worker-cli worktree <name> <target_repo> — this creates AND registers the target\n"
+    "worktree so worker-cli kill cleans it up later — and have the worker operate there.\n"
+    "Never --no-worktree.\n"
 )
-_NO_WORKTREE_MSG    = "worker spawn immer im worktree — kein --no-worktree\n"
+_NO_WORKTREE_MSG    = (
+    "BLOCKED: worker-cli spawn with --no-worktree.\n"
+    "Use: worker-cli spawn <name> <prompt_file> <project_path>   (always spawns into a worktree).\n"
+)
 
 # ORCHESTRATOR
 
