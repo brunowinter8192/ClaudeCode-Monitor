@@ -26,6 +26,15 @@ if command -v worker-cli &>/dev/null; then
     disown
 fi
 
+# Trigger a background stale-monitor sweep on every main-session start (src/monitor_janitor.py).
+# Fully detached — never delays/blocks session start. Kills tmux sessions named monitor_cc_*
+# older than 24h (nine panes each); this is a same-repo module, no command -v guard needed.
+# cd into MONITOR_CC_ROOT first so `-m src.monitor_janitor` resolves regardless of the caller's
+# CWD (--project may point anywhere). Also runs independently once a day via a LaunchAgent
+# (see setup_monitor_sweep.py) so monitors accumulate across projects/reboots even when no
+# main session ever starts.
+( cd "$MONITOR_CC_ROOT" && nohup python3 -m src.monitor_janitor >/dev/null 2>&1 & )
+
 # Parse --project, --fable, --opus arguments; remaining args (incl. an explicit --model) passed to claude
 PROJECT=""
 CLAUDE_ARGS=()
