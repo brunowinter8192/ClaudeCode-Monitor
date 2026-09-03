@@ -113,13 +113,19 @@ def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
 # marker carries its owner's copy). Empty for a request with no such delta at all — the billing
 # header (sys[0]) excluded on every request but the first is what makes that the common case. Same
 # indent/column layout as a block sub-line, tagged "  changed"/"  new" for anything but the
-# family's first request, which carries no tag at all.
+# family's first request, which carries no tag at all. A tool item can also carry `chars is None`
+# ("removed" — the name-based tool comparison's tag for a tool no longer present at all): that item
+# skips the chars column entirely rather than printing a size for content that no longer exists.
 def _req_delta_lines(marker: dict) -> list:
     lines = []
     for item in (marker.get("sys_lines") or []) + (marker.get("tool_lines") or []):
+        label = f"{item['label']:<{_BLOCK_LABEL_WIDTH}}"
+        if item.get("chars") is None:
+            lines.append(f"{_BLOCK_INDENT}{label}  {item['tag']}")
+            continue
         chars = f"{item['chars']:,}c"
         tail = f"  {item['tag']}" if item.get("tag") else ""
-        lines.append(f"{_BLOCK_INDENT}{item['label']:<{_BLOCK_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}{tail}")
+        lines.append(f"{_BLOCK_INDENT}{label}{chars:>{_MSG_CHARS_WIDTH}}{tail}")
     return lines
 
 
