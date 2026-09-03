@@ -1,7 +1,8 @@
 """
 Regression suite for `duallog msgs`' sys/tool delta lines (src/dual_log_cli/timeline.py's
-`_delta_lines`/`request_boundaries`/`request_markers`, rendered by
-src/dual_log_cli/render.py's `_req_delta_lines`).
+`_sys_lines`/`_tool_lines`/`request_boundaries`/`request_markers`, rendered by
+src/dual_log_cli/render.py's `_req_delta_lines`). Name-based tool removal/rename coverage lives in
+test_tool_name_comparison.py — this file's tool fixtures never shift a tool's index.
 
 Covers: the family's first request lists every system block and every tool, no tag; a later
 request lists only what its `system_delta`/`tools_delta` names, tagged `changed` for an index that
