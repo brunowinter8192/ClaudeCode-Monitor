@@ -47,24 +47,25 @@ line and parses only that line → `timeline` builds turn rows via `proxy.messag
 request boundaries from `_forwarded.counts.messages`. `msgs` prints those rows for an inclusive
 index range, interleaving one REQ separator per request group (`timeline.request_markers` folds the
 boundaries into `{msg_index: {number, timestamp, refires, flow_id}}`) and, when `usage.build_usage_by_flow`
-resolves it, that group owner's prompt-cache usage; `expand` slices an anchor-centred
-window out of the same rows, re-summarizes each selected msg for its full block content, and adds
-the proxy's own transformations of those blocks via `overlay` (which accumulates the session's
-`_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log`).
-`search` selects a
+resolves it, that group owner's prompt-cache usage, then appends each transformed msg/block's
+strip/inject delta and wire size from `overlay` (which accumulates the session's
+`_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log`); `expand`
+slices an anchor-centred window out of the same rows, re-summarizes each selected msg for its full
+block content, and adds the proxy's own transformations of those blocks via the SAME `overlay`
+call. `search` selects a
 SET of sessions the same way `sessions` does (scope + date window), repeats that per-session
 reconstruction for each one and streams its blocks through the matcher, skipping any session whose
 timeline will not load → `render` emits plain terminal text to stdout.
 
 ## Modules
 
-### __main__.py (295 LOC)
+### __main__.py (301 LOC)
 
-**Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`, which also builds the CR/CC usage map via `usage.build_usage_by_flow`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
+**Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`, which also builds the CR/CC usage map via `usage.build_usage_by_flow` and, since 2026-09-04, the strip/inject overlay via `overlay.build_overlay` — the same call `_run_expand` makes, now made twice per session type instead of once), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
 **Writes:** stdout (rendered text), stderr (resolution, range and empty-term errors). Never touches the log directory.
 **Called by:** the user, via `python -m src.dual_log_cli` or `bin/duallog`.
-**Calls out:** `discovery`, `render`, `search`, `timeline`, `overlay`, `usage` (all package-local; `overlay` only from `_run_expand`, `usage` only from `_run_msgs`).
+**Calls out:** `discovery`, `render`, `search`, `timeline`, `overlay`, `usage` (all package-local; `overlay` from both `_run_expand` and `_run_msgs`; `usage` only from `_run_msgs`).
 
 ---
 
@@ -120,10 +121,10 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ### overlay.py (86 LOC, new 2026-08-30)
 
-**Purpose:** Builds `expand`'s strip/inject overlay: `{(msg_idx, blk_idx): {stripped, injected, req}}` for one session, by running the session's `_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log` — REUSED, not re-implemented, so duallog inherits both the per-coordinate accumulation and the write-side attribution-lag correction (`_lag_msg_idx_by_flow_id`) that credits a trailing-msg total_tokens strip to the request that performed it. `_owners_by_index` resolves each coordinate to its performing flow (lag set wins over the raw recorder), `timeline.request_numbers_by_flow` turns that into the REQ number a reader already sees in `msgs`, and `_texts` normalises the two recorded shapes (stripped = flat strings; injected = `(tag, text)` pairs of which only the `injected` ones are new content, the `equal` parts being the surviving original already on screen).
+**Purpose:** Builds the strip/inject overlay `expand` AND (since 2026-09-04) `msgs` both read: `{(msg_idx, blk_idx): {stripped, injected, req}}` for one session, by running the session's `_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log` — REUSED, not re-implemented, so duallog inherits both the per-coordinate accumulation and the write-side attribution-lag correction (`_lag_msg_idx_by_flow_id`) that credits a trailing-msg total_tokens strip to the request that performed it. `_owners_by_index` resolves each coordinate to its performing flow (lag set wins over the raw recorder), `timeline.request_numbers_by_flow` turns that into the REQ number a reader already sees in `msgs`, and `_texts` normalises the two recorded shapes (stripped = flat strings; injected = `(tag, text)` pairs of which only the `injected` ones are new content, the `equal` parts being the surviving original already on screen). `msgs` uses only the char LENGTHS of `stripped`/`injected` (its delta tail is a size, not a content dump), never the text itself.
 **Reads:** The session's `_stripped.jsonl` and `_injected.jsonl` (delta JSONL, 64-336 KB per session — negligible beside the `_original` stream this package deliberately never parses whole).
 **Writes:** Nothing — returns one dict.
-**Called by:** `__main__.py` (`_run_expand` only, so `sessions`/`msgs`/`search` cannot move with it).
+**Called by:** `__main__.py` (`_run_expand` and, since 2026-09-04, `_run_msgs` — `sessions`/`search` still cannot move with it).
 **Calls out:** `src/proxy_display/parser.py` (`accumulate_dual_log`), `timeline` (`request_numbers_by_flow`).
 
 ---
@@ -148,9 +149,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### render.py (213 LOC)
+### render.py (289 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, widened to `── REQ n  HH:MM:SS  CR c  CC c ──` when an optional `usage_by_flow` map (from `usage.build_usage_by_flow`, `{flow_id: (cr, cc)}`) resolves the group owner's flow_id — an unresolved or absent map renders the plain pre-feature separator, never a placeholder — then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, widened to `── REQ n  HH:MM:SS  CR c  CC c ──` when an optional `usage_by_flow` map (from `usage.build_usage_by_flow`, `{flow_id: (cr, cc)}`) resolves the group owner's flow_id — an unresolved or absent map renders the plain pre-feature separator, never a placeholder — then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator back). Since 2026-09-04 a msg or block line the proxy transformed additionally carries `  −N +M → Wc` (chars stripped, chars injected, resulting wire size — real minus sign U+2212, digit-grouped like every other chars figure) via `_delta_tail`, fed by an optional `overlay` param (`overlay.build_overlay`'s `{(msg_idx, blk_idx): {stripped, injected, req}}`, reused from `expand`): `_block_overlay_totals` sums one coordinate's stripped/injected chars (`None` when untouched, which is what keeps an untouched line byte-identical), `_msg_delta_tail` sums those over ALL of a msg's blocks for the parent line, and both add ` by REQ n` only when the transforming request differs from the msg's OWN group (`group_req`, threaded through from `render_msgs`' marker loop) — omitted on the parent line specifically when a msg's touched blocks disagree on which request touched them, since summarizing that with one REQ number would be a guess (unobserved in the corpus: 0 of 1949 transformed msgs, measured). Search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -271,6 +272,25 @@ session, `msgs <session> F T` an inclusive range, and `msgs <session> F` runs fr
 msg. A bad bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
 `TO 2 is before FROM 5`). A NEGATIVE bound needs a `--` separator (`msgs <s> -- -1`), else argparse
 reads it as a flag — the exit code is 2 either way.
+
+**`msgs`' chars column is the ORIGINAL payload's size; the delta tail is what tells you the wire
+size (added 2026-09-04).** A msg or block the proxy stripped from/injected into carries an extra
+`  −N +M → Wc` after its chars (`−` is U+2212, not a hyphen) — `N` chars removed, `M` chars added,
+`W = chars − N + M` the size that actually reached the API. Untouched lines get nothing, which is
+what keeps them byte-identical to the pre-2026-09-04 output; a session whose `_stripped`/`_injected`
+streams are missing degrades the same way (no tails at all), not an error. A multi-block msg's
+parent line sums N/M over every block the overlay touched and measures W against the PARENT's own
+chars value, not the sum of the blocks' original chars — the two coincide in every case observed,
+but the parent line's own arithmetic (chars shown minus N plus M equals W shown) is what is
+guaranteed, not a cross-check against the sub-lines. `by REQ n` — reusing `expand`'s attribution —
+is appended only when that request differs from the msg's own group, and is dropped on the PARENT
+line specifically (never the sub-lines) when a msg's touched blocks disagree on which request
+touched them; measured zero such msgs across the whole corpus (0 of 1949), so the omission has
+never actually fired, but the parent line still must not guess if it ever does. Measured fidelity of
+the arithmetic itself against the FORWARDED (wire) payload's real block chars: 2001 of 2003
+transformed coordinates matched exactly; the 2 that did not are the same known effect as the
+recorded-strip-text-vs-displayed-block whitespace/staleness gap `expand`'s overlay Gotcha already
+documents, not a new one.
 
 **A FROM landing mid-group still prints that group's separator, and it is not the group's own
 first line.** `_governing_marker` falls back to the nearest request opening at or before the first

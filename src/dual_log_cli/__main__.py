@@ -8,7 +8,8 @@ Commands:
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
     msgs <session>           request groups: a REQ separator (with CR/CC prompt-cache usage when
-                             resolvable), then the msgs that request added
+                             resolvable), then the msgs that request added, a proxy-transformed
+                             msg/block also carrying its strip/inject delta and wire size
     msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
     expand <s> <msg>         full content of that msg, plus what the proxy stripped/injected there
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
@@ -97,7 +98,11 @@ def _parse_args(argv: list) -> argparse.Namespace:
             "`[idx] role type chars` line of every msg that request added. Nothing else — no "
             "totals, no previews. A multi-block msg shows its block count in place of the type, "
             "followed by one indented sub-line per block (its own type/tool-name and chars, "
-            "right-aligned to the same column). FROM and TO are inclusive msg indices; omit both "
+            "right-aligned to the same column). A msg or block the proxy stripped from or "
+            "injected into carries an extra `−N +M → Wc` tail after its chars (chars removed, "
+            "chars added, resulting wire size), plus ` by REQ n` when a LATER request performed "
+            "the transform than the one whose separator the msg sits under; an untouched line "
+            "stays exactly as before. FROM and TO are inclusive msg indices; omit both "
             "for the whole session, or give FROM alone to run from there to the last msg; a "
             "partially shown group keeps its separator."
         ),
@@ -240,7 +245,8 @@ def _run_msgs(dual_log_dir, args: argparse.Namespace) -> int:
         print(f"TO {end} is before FROM {start}", file=sys.stderr)
         return 2
     usage_by_flow = build_usage_by_flow(data["session"], data["boundaries"])
-    sys.stdout.write(render_msgs(data, start, end, usage_by_flow))
+    overlay = build_overlay(data["session"], data["family"], data["boundaries"])
+    sys.stdout.write(render_msgs(data, start, end, usage_by_flow, overlay))
     return 0
 
 
@@ -267,8 +273,8 @@ def _run_expand(dual_log_dir, args: argparse.Namespace) -> int:
         for msg in msgs[start:end + 1]
         if matches_only(msg["role"], [b["type"] for b in msg["blocks"]], wanted)
     ]
-    # Only expand builds the overlay — sessions/msgs/search never read the _stripped/_injected
-    # streams, so their output cannot move with it
+    # msgs also builds this overlay now (for its own delta tail); sessions/search still never
+    # read the _stripped/_injected streams, so their output cannot move with either one
     overlay = build_overlay(data["session"], data["family"], data["boundaries"])
     sys.stdout.write(render_expand_full(data, args.msg, start, end, args.only, dumped, overlay))
     return 0

@@ -14,10 +14,10 @@ from .timeline import request_numbers_by_flow
 # Build the strip/inject overlay for one session -> {(msg_idx, blk_idx): {stripped, injected, req}}.
 #
 # duallog is msg-centric where the delta streams are flow-centric, and the two meet without any
-# scoping work: `expand` renders msgs of ONE payload (the last non-haiku `_original` request), so
-# there is no request header a foreign flow's span could appear under — the pane's flow-scoping has
-# no analogue here. What a msg needs is the CUMULATIVE state of its coordinate, which is exactly
-# what `accumulate_dual_log` leaves in `acc['messages'][msg][blk]`.
+# scoping work: both `expand` and `msgs` render msgs of ONE payload (the last non-haiku `_original`
+# request), so there is no request header a foreign flow's span could appear under — the pane's
+# flow-scoping has no analogue here. What a msg needs is the CUMULATIVE state of its coordinate,
+# which is exactly what `accumulate_dual_log` leaves in `acc['messages'][msg][blk]`.
 #
 # The content direction is inverted from the pane's: duallog shows the PRE-strip original, so
 # `stripped` is the part of the very text on screen that the proxy removed, and `injected` is what
