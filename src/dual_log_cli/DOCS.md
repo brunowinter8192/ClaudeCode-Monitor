@@ -44,9 +44,11 @@ in the main checkout.
 `project_map` resolving each worker stem's 8-hex project id once per run.
 `msgs` and `expand` resolve one stem, then `reader` reverse-seeks the last non-haiku `_original`
 line and parses only that line → `timeline` builds turn rows via `proxy.message_summary` plus
-request boundaries from `_forwarded.counts.messages`. `msgs` prints those rows for an inclusive
-index range, interleaving one REQ separator per request group (`timeline.request_markers` folds the
-boundaries into `{msg_index: {number, timestamp, refires, flow_id}}`) and, when `usage.build_usage_by_flow`
+request boundaries from `_forwarded.counts.messages`, `system_delta` and `tools_delta`. `msgs`
+prints those rows for an inclusive index range, interleaving one REQ separator per request group
+(`timeline.request_markers` folds the boundaries into `{msg_index: {number, timestamp, refires,
+flow_id, sys_lines, tool_lines}}`, the last carrying the system/tool blocks that request's own
+delta named) and, when `usage.build_usage_by_flow`
 resolves it, that group owner's prompt-cache usage, then appends each transformed msg/block's
 strip/inject delta and wire size from `overlay` (which accumulates the session's
 `_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log`); `expand`
@@ -59,7 +61,7 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ## Modules
 
-### __main__.py (301 LOC)
+### __main__.py (306 LOC)
 
 **Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`, which also builds the CR/CC usage map via `usage.build_usage_by_flow` and, since 2026-09-03, the strip/inject overlay via `overlay.build_overlay` — the same call `_run_expand` makes, now made twice per session type instead of once), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
@@ -109,9 +111,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### timeline.py (260 LOC)
+### timeline.py (322 LOC)
 
-**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires, flow_id}}`, what `msgs` draws its REQ separators from — `flow_id` is what `usage.build_usage_by_flow` keys its CR/CC map by), `request_numbers_by_flow` (boundaries → `{flow_id: REQ number}`, what `overlay` uses to name the request behind a strip), and `load_timeline` as the one call that assembles everything a render needs. Both numbering consumers share `_running_request_numbers`, so the overlay can never drift from the number `msgs` prints. `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed. Its `number` deliberately counts only msg-adding requests, which is what aligns it with the proxy pane's `#N` (see Gotchas). `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
+**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires, flow_id, sys_lines, tool_lines}}`, what `msgs` draws its REQ separators AND their sys/tool delta lines from — `flow_id` is what `usage.build_usage_by_flow` keys its CR/CC map by), `request_numbers_by_flow` (boundaries → `{flow_id: REQ number}`, what `overlay` uses to name the request behind a strip), and `load_timeline` as the one call that assembles everything a render needs. Both numbering consumers share `_running_request_numbers`, so the overlay can never drift from the number `msgs` prints. `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed — and it is also the ONLY member whose `sys_lines`/`tool_lines` a re-fire group shows. `request_boundaries` (since 2026-09-05) additionally computes, per boundary, `sys_lines`/`tool_lines` — `[{label, chars, tag}]` for that request's own `system_delta`/`tools_delta`, via `_delta_lines`: the family's first request (`is_first`) gets every block with `tag=None`; a later request gets only the delta's own indices, tagged `"changed"` (index below the previous request's count of the same family) or `"new"` (at or beyond it), with system index 0 — the per-request billing header, `_BILLING_HEADER_SYS_INDEX` — dropped on every request but the first (see `process-docs/cache/`: it changes by construction and never invalidates the cache). Chars are the FORWARDED wire size: `_system_block_chars` reads a system block's `text` length, `_tool_chars` is `len(json.dumps(tool))` (default separators) — the tool's actual wire serialisation. `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
 **Writes:** Nothing — returns row lists, a generator, and one data dict.
 **Called by:** `__main__.py`, `search.py`.
@@ -149,9 +151,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### render.py (289 LOC)
+### render.py (315 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, widened to `── REQ n  HH:MM:SS  CR c  CC c ──` when an optional `usage_by_flow` map (from `usage.build_usage_by_flow`, `{flow_id: (cr, cc)}`) resolves the group owner's flow_id — an unresolved or absent map renders the plain pre-feature separator, never a placeholder — then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator back). Since 2026-09-03 a msg or block line the proxy transformed additionally carries `  −N +M → Wc` (chars stripped, chars injected, resulting wire size — real minus sign U+2212, digit-grouped like every other chars figure) via `_delta_tail`, fed by an optional `overlay` param (`overlay.build_overlay`'s `{(msg_idx, blk_idx): {stripped, injected, req}}`, reused from `expand`): `_block_overlay_totals` sums one coordinate's stripped/injected chars (`None` when untouched, which is what keeps an untouched line byte-identical), `_msg_delta_tail` sums those over ALL of a msg's blocks for the parent line, and both add ` by REQ n` only when the transforming request differs from the msg's OWN group (`group_req`, threaded through from `render_msgs`' marker loop) — omitted on the parent line specifically when a msg's touched blocks disagree on which request touched them, since summarizing that with one REQ number would be a guess (unobserved in the corpus: 0 of 1949 transformed msgs, measured). Search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, widened to `── REQ n  HH:MM:SS  CR c  CC c ──` when an optional `usage_by_flow` map (from `usage.build_usage_by_flow`, `{flow_id: (cr, cc)}`) resolves the group owner's flow_id — an unresolved or absent map renders the plain pre-feature separator, never a placeholder — then, since 2026-09-05, `_req_delta_lines`: one indented `sys[i]`/`tool[name]` line per entry in that request's `system_delta`/`tools_delta` (the marker's own `sys_lines`/`tool_lines` from `timeline.request_markers`), same indent/column layout as a block sub-line, tagged `  changed`/`  new` for a later request and untagged for the family's first — a marker with neither carries no such lines at all, which is what keeps a delta-free separator byte-identical to the pre-2026-09-05 output — then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator, and its sys/tool lines, back). Since 2026-09-03 a msg or block line the proxy transformed additionally carries `  −N +M → Wc` (chars stripped, chars injected, resulting wire size — real minus sign U+2212, digit-grouped like every other chars figure) via `_delta_tail`, fed by an optional `overlay` param (`overlay.build_overlay`'s `{(msg_idx, blk_idx): {stripped, injected, req}}`, reused from `expand`): `_block_overlay_totals` sums one coordinate's stripped/injected chars (`None` when untouched, which is what keeps an untouched line byte-identical), `_msg_delta_tail` sums those over ALL of a msg's blocks for the parent line, and both add ` by REQ n` only when the transforming request differs from the msg's OWN group (`group_req`, threaded through from `render_msgs`' marker loop) — omitted on the parent line specifically when a msg's touched blocks disagree on which request touched them, since summarizing that with one REQ number would be a guess (unobserved in the corpus: 0 of 1949 transformed msgs, measured). Search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -249,17 +251,22 @@ occurrence count survives.
 
 **The recorded strip text and the displayed block can differ by whitespace, and no gate rejects that.** The accumulator is cumulative last-writer-wins per coordinate, so in principle it could describe content CC later overwrote. Measured over 741 stripped coordinates in two sessions: 670 exact matches, 19 substrings, 52 whitespace-variants (one example differs by a single `\n` in 892 chars, similarity ≥ 0.972), and **0 unrelated**. No coordinate was ever touched by more than one flow. So the overlay is shown unconditionally rather than gated on containment, which would have wrongly dropped those 52.
 
-**`msgs` prints msg lines, their block sub-lines, and REQ separators, and NOTHING else.** No
-header, no count line, no previews, no per-msg time column — an agent pipes it into `grep`/`wc` or
-reads it whole, and any further decoration would have to be filtered back out. A multi-block msg
-line (`3 blocks 3,862c`) is followed by one indented sub-line per block —
-`        thinking                2,451c` — carrying that block's own label and chars, so the
-aggregated count is legible instead of opaque; a single-block msg still renders exactly one line.
-Sub-lines are whitespace-indented rather than `[`-prefixed, so `grep '^\['` keeps selecting msg
-lines only and both sub-lines and separators fall to `grep -v`. The separator became part of the
-contract on 2026-08-30 (it was absent for the command's first hours): every msg line sits under the
-`── REQ n  HH:MM:SS ──` line of the request that added it, so `grep -v '^──' | grep -v '^ '`
-recovers the original separator-free, sub-line-free listing exactly. Since 2026-09-03 a separator
+**`msgs` prints msg lines, their block sub-lines, REQ separators and — since 2026-09-05 — a
+separator's sys/tool delta lines, and NOTHING else.** No header, no count line, no previews, no
+per-msg time column — an agent pipes it into `grep`/`wc` or reads it whole, and any further
+decoration would have to be filtered back out. A multi-block msg line (`3 blocks 3,862c`) is
+followed by one indented sub-line per block — `        thinking                2,451c` — carrying
+that block's own label and chars, so the aggregated count is legible instead of opaque; a
+single-block msg still renders exactly one line. A REQ separator is, since 2026-09-05, itself
+sometimes followed by indented `sys[i]`/`tool[name]` lines in the SAME layout — see the delta-line
+Gotchas above — so the sub-line indent now belongs to two different things (a msg's blocks, a
+separator's delta), distinguished only by which line precedes them; both still fall under
+`grep -v '^\['`. Sub-lines are whitespace-indented rather than `[`-prefixed, so `grep '^\['` keeps
+selecting msg lines only and both sub-lines and separators fall to `grep -v`. The separator became
+part of the contract on 2026-08-30 (it was absent for the command's first hours): every msg line
+sits under the `── REQ n  HH:MM:SS ──` line of the request that added it, so
+`grep -v '^──' | grep -v '^ '` recovers the original separator-free, sub-line-free listing exactly
+— now also delta-line-free, since those are indented the same way. Since 2026-09-03 a separator
 additionally carries `CR c  CC c` (the group owner's `cache_read_input_tokens` /
 `cache_creation_input_tokens`, joined from CC's own transcript via `usage.build_usage_by_flow`,
 scoped to the one or few project directories the session's STEM can resolve to rather than a
@@ -309,13 +316,48 @@ requests. Two divergences are possible but unexercised by any recorded session: 
 (`sys_chars == 0 and tools_chars == 0`, which the pane labels `S` and does not count, while these
 boundaries would) and a session mixing model families (these boundaries keep only the last
 request's family). Both measured at zero occurrences; if either appears, the numbers drift from
-there on.
+there on. A close relative NOW IS exercised, though it does not flip a number: `rag-chunking_1788333660`
+interleaves a second, structurally distinct sonnet call every few requests (system prompt "You are
+a security monitor…", `tools == 0`, always exactly 1 message) — not the sidecar shape above
+(system is non-empty), so `request_boundaries` still buckets it into the SAME `sonnet` family and
+its `message_count == 1` regression trips the EXISTING restart flag. The practical effect lands on
+the sys/tool delta lines (added 2026-09-05, see below): the request right after one of these calls
+compares against ITS reduced `tools`/`system` count, so every tool index shows `new` even for a
+tool byte-identical to what the real conversation sent two requests earlier — measured on that
+session's REQ following such an interleave: all 6 tools tagged `new`, though hashing them against
+the true previous REAL request shows all 6 unchanged. `_delta_lines` does not special-case this; it
+compares strictly to the immediately preceding request of the family, per spec. Do not "fix" this
+by threading in a smarter denominator without first deciding, session-wide, whether these
+interleaved calls belong in the family sequence at all — that is the boundary-detection question
+above, not a delta-tagging one.
 
 **A re-fire leaves its only trace on the separator.** A request that re-sent the same message list
 added no msg, so it opens no group of its own; it is folded into the next separator as
 `(+1 re-fire)`. Measured: 3 in 1417 msgs on the gh_cli session, 0 in the other two. Drop that
 suffix and a re-fire becomes completely invisible in this view — the pane still shows it as a
 `#N.M` row.
+
+**A separator's sys/tool lines name the OWNER boundary's delta, never the group's — a re-fire's own
+delta is discarded.** `request_markers` already picks the LAST boundary of a group as the owner for
+timestamp/usage; since 2026-09-05 its `sys_lines`/`tool_lines` come from that same boundary. If an
+earlier member of the group changed a system block or tool that the owner did not touch again,
+that change never surfaces in `msgs` — only in the raw `_forwarded` stream. This mirrors the
+existing re-fire trace-loss above, not a new gap.
+
+**System block 0 — the per-request billing header — is excluded from the changed/new comparison on
+every request but the first, by design (see `process-docs/cache/`).** It is a hash plus the
+previous request id, so it differs on literally every request and would otherwise show `sys[0]
+… changed` on every single separator, drowning the signal a prompt-cache rebuild actually needs:
+a change in a REAL system block or the tool list. `timeline._delta_lines` drops it unconditionally
+for a non-first request regardless of what `system_delta` says; the first request still lists it
+(untagged, like every other block) because that request has nothing to compare against yet.
+
+**A request with no sys/tool change prints no delta lines at all — this is the common case.** Once
+system block 0 is excluded, most requests in a session carry an EMPTY `system_delta`/`tools_delta`
+(the system prompt and tool list are set once, near session start, and rarely change again), so
+`_req_delta_lines` returns nothing and the separator looks exactly like the pre-2026-09-05 output.
+A change here is therefore worth noticing — it is the single most common cause of a prompt-cache
+prefix break, which is the reason this feature exists.
 
 **`msgs`' columns are fixed-width, and two real cases exceed them by one character.** The line is
 `[{idx:3d}] {role:.4} {type:<20}{chars:>6}`. An index of 1000+ widens the whole line by one

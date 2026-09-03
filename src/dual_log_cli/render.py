@@ -64,6 +64,16 @@ _BLOCK_LABEL_WIDTH = _MSG_PREFIX_WIDTH + _MSG_LABEL_WIDTH - len(_BLOCK_INDENT)
 # before it. A session whose _forwarded stream is missing or yields no boundaries prints no
 # separators at all, which is exactly the pre-separator output.
 #
+# Directly under a separator, `_req_delta_lines` lists the system blocks and tools that request's
+# `system_delta`/`tools_delta` named (`timeline.request_boundaries`, computed against the previous
+# request of the same model family) — the prompt-cache prefix a rebuild most often traces back to.
+# The family's first request lists every sys/tool block, no tag; a later request lists only what
+# changed or is new, tagged accordingly, and prints no sys/tool lines at all when nothing did. The
+# per-request billing header (system index 0) is excluded from that comparison on every request but
+# the first — it changes on every request by construction and never invalidates the cache (see
+# process-docs/cache/). A re-fire group shows only the OWNER boundary's lines, matching the
+# timestamp and usage the separator itself carries.
+#
 # usage_by_flow is {flow_id: (cache_read, cache_creation)} from usage.build_usage_by_flow, keyed
 # on the group owner's flow_id; a group whose flow_id is absent (usage unresolved, or no usage
 # joined for the session at all) prints the separator without CR/CC — never a placeholder.
@@ -85,6 +95,7 @@ def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
             marker = _governing_marker(markers, msg["index"])
         if marker is not None:
             lines.append(_req_separator(marker, usage_by_flow))
+            lines.extend(_req_delta_lines(marker))
             group_req = marker["number"]
         blocks = msg["blocks"]
         label = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
@@ -95,6 +106,21 @@ def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
         if len(blocks) > 1:
             lines.extend(_block_sub_lines(msg["index"], blocks, overlay, group_req))
     return "\n".join(lines) + "\n"
+
+
+# The separator's sys/tool lines — one indented line per system block / tool the OWNING request's
+# system_delta/tools_delta named (timeline.request_boundaries computes these per boundary; a
+# marker carries its owner's copy). Empty for a request with no such delta at all — the billing
+# header (sys[0]) excluded on every request but the first is what makes that the common case. Same
+# indent/column layout as a block sub-line, tagged "  changed"/"  new" for anything but the
+# family's first request, which carries no tag at all.
+def _req_delta_lines(marker: dict) -> list:
+    lines = []
+    for item in (marker.get("sys_lines") or []) + (marker.get("tool_lines") or []):
+        chars = f"{item['chars']:,}c"
+        tail = f"  {item['tag']}" if item.get("tag") else ""
+        lines.append(f"{_BLOCK_INDENT}{item['label']:<{_BLOCK_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}{tail}")
+    return lines
 
 
 # One indented sub-line per block of a multi-block msg — label and chars, plus the block's own
