@@ -167,10 +167,26 @@ def _delta_lines(delta: dict, prev_count: int, is_first: bool, kind: str) -> lis
     return lines
 
 
+# A conversation request always carries tools; a zero-tool non-haiku forwarded line is a sidecar
+# call multiplexed into the same model family — observed as a recurring "security monitor" review
+# call (own short message list, own system prompt, no tools) that `infer_family` cannot tell apart
+# from the real conversation since both share a plain model name. It is not a conversation turn and
+# never appears in CC's own transcript, so it must never seed a REQ, a restart, a turn time or a
+# sys/tool delta comparison.
+def _is_sidecar(counts: dict) -> bool:
+    return counts.get("tools", 0) == 0
+
+
 # Request boundaries for the conversation family, read from the _forwarded delta log
 # (counts.messages per request). Each boundary marks the message index at which that request's
 # new messages start. A restart flag is set when the message count regressed — CC was restarted
 # mid-log-id, so boundaries before that point do not align with the final message list.
+#
+# A sidecar entry (see `_is_sidecar`) is skipped entirely, before anything reads or updates
+# `prev_count`/`prev_sys_count`/`prev_tools_count` — it never becomes a boundary, so it can neither
+# fake a restart (its own tiny message count would otherwise regress against the real
+# conversation's) nor pollute the sys/tool delta comparison the NEXT real request is tagged
+# against.
 #
 # Each boundary also carries `sys_lines`/`tool_lines` — the system/tool blocks that request's
 # `system_delta`/`tools_delta` names, relative to the PREVIOUS request of the same family (see
@@ -187,8 +203,10 @@ def request_boundaries(forwarded_path: Path, family: str) -> list:
             continue
         if infer_family(entry.get("model", "")) != family:
             continue
-        request_no += 1
         counts = entry.get("counts", {}) or {}
+        if _is_sidecar(counts):
+            continue
+        request_no += 1
         count = counts.get("messages", 0)
         restart = count < prev_count
         is_first = bool(entry.get("is_first", False))

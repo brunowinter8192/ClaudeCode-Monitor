@@ -67,9 +67,16 @@ def read_json_line(path: Path, offset: int, length: int) -> dict:
     return json.loads(raw)
 
 
-# Locate the last _original line whose model family is NOT haiku — the conversation-carrying
-# request. Haiku lines are CC's 1-message title/quota calls and are interleaved into every
-# session file. Returns (entry, line_bytes, lines_skipped) or (None, 0, n) if none exists.
+# Locate the last _original line whose model family is NOT haiku AND that carries at least one
+# tool — the conversation-carrying request. Haiku lines are CC's 1-message title/quota calls,
+# skipped cheaply from the model sniff alone. A zero-tool non-haiku line is the OTHER sidecar shape
+# `timeline._is_sidecar` excludes from request boundaries (measured: a recurring "security
+# monitor" review call, own system prompt, no tools) — a real conversation request always carries
+# tools, so this line is never "the conversation" either, but telling the two apart needs the
+# parsed payload (tools can sit well past the cheap model-sniff window behind a large system
+# block), so it is checked right after the parse this function already does for its return value,
+# not via a second cheap sniff. Returns (entry, line_bytes, lines_skipped) or (None, 0, n) if none
+# exists. `lines_skipped` now counts both shapes — see `load_timeline`'s Gotcha.
 def load_last_request(original_path: Path) -> tuple:
     skipped = 0
     with open(original_path, "rb") as fh:
@@ -81,10 +88,15 @@ def load_last_request(original_path: Path) -> tuple:
             fh.seek(offset)
             raw = fh.read(length)
             try:
-                return json.loads(raw), length, skipped
+                entry = json.loads(raw)
             except json.JSONDecodeError:
                 skipped += 1
                 continue
+            tools = (entry.get("payload") or {}).get("tools") or []
+            if not tools:
+                skipped += 1
+                continue
+            return entry, length, skipped
     return None, 0, skipped
 
 

@@ -98,6 +98,12 @@ def group_streams(dual_log_dir: Path) -> dict:
 # Build the inventory row for one stem. Reads _forwarded only — it is line-for-line aligned
 # with _original (verified: identical line count and per-line model/message_count) and two
 # orders of magnitude smaller.
+#
+# A zero-tool non-haiku line (the sidecar `timeline._is_sidecar` also excludes — a recurring
+# "security monitor" review call, not a conversation turn) is skipped from `requests`,
+# `requests_main` and `last_message_count` the same way, so this inventory's request count means
+# the same thing `timeline.request_boundaries` counts. Its timestamp still extends `start`/`end`,
+# since those describe the file's real wall-clock span, unrelated to what counts as a request.
 def build_session(stem: str, streams: dict, project_map: dict = None) -> dict:
     total_bytes = sum(p.stat().st_size for p in streams.values())
     requests = 0
@@ -110,15 +116,18 @@ def build_session(stem: str, streams: dict, project_map: dict = None) -> dict:
         for entry in iter_jsonl(forwarded):
             if entry.get("type") != "forwarded_delta":
                 continue
-            requests += 1
             timestamp = entry.get("timestamp", "")
             if not start_ts:
                 start_ts = timestamp
             end_ts = timestamp
             family = infer_family(entry.get("model", ""))
+            counts = entry.get("counts", {}) or {}
+            if family != "haiku" and counts.get("tools", 0) == 0:
+                continue
+            requests += 1
             families[family] = families.get(family, 0) + 1
             if family != "haiku":
-                last_message_count = entry.get("counts", {}).get("messages", 0)
+                last_message_count = counts.get("messages", 0)
     main_family = _main_family(families)
     return {
         "stem": stem,

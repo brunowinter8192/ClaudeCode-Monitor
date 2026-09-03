@@ -132,12 +132,14 @@ def test_later_request_excludes_billing_header_and_tags_changed_new() -> None:
 
 
 # A request whose delta is ONLY the billing header prints no sys/tool line at all — the common
-# case, since the header changes on every request.
+# case, since the header changes on every request. tools=1 (not 0) throughout — a zero-tool entry
+# is the UNRELATED sidecar shape `timeline._is_sidecar` excludes entirely (see
+# test_sidecar_exclusion.py), which would swallow both boundaries here and defeat this fixture.
 def test_billing_header_only_delta_yields_no_lines() -> None:
     entries = [
-        _delta_entry("f0", "2026-09-05T10:00:00Z", {"system": 2, "tools": 0}, True,
+        _delta_entry("f0", "2026-09-05T10:00:00Z", {"system": 2, "tools": 1}, True,
                      system_delta={"0": _sys_block("a"), "1": _sys_block("b")}, messages=1),
-        _delta_entry("f1", "2026-09-05T10:00:05Z", {"system": 2, "tools": 0}, False,
+        _delta_entry("f1", "2026-09-05T10:00:05Z", {"system": 2, "tools": 1}, False,
                      system_delta={"0": _sys_block("a2")}, messages=3),
     ]
     boundaries = _boundaries(entries)
