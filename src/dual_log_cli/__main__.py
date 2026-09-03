@@ -8,8 +8,13 @@ Commands:
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
     msgs <session>           request groups: a REQ separator (with CR/CC prompt-cache usage when
-                             resolvable), then the msgs that request added, a proxy-transformed
-                             msg/block also carrying its strip/inject delta and wire size
+                             resolvable) listing the system blocks and tools that request sent —
+                             in full for the family's first request, else only what changed or is
+                             new since the previous one of the same model (the billing header,
+                             system block 0, is excluded from that comparison — it changes on
+                             every request by construction) — then the msgs that request added, a
+                             proxy-transformed msg/block also carrying its strip/inject delta and
+                             wire size
     msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
     expand <s> <msg>         full content of that msg, plus what the proxy stripped/injected there
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it

@@ -1,10 +1,15 @@
 # INFRASTRUCTURE
+import json
 from pathlib import Path
 
 from ..proxy.message_summary import _summarize_message
 from .reader import infer_family, iter_jsonl, load_last_request
 
 PREVIEW_CHARS = 100
+# The per-request billing header: a hash plus the previous request id, changing on every request
+# by construction. It never invalidates the prompt cache, so it is excluded from the changed/new
+# delta lines on every request but the first (see process-docs/cache/).
+_BILLING_HEADER_SYS_INDEX = 0
 
 # FUNCTIONS
 
@@ -122,22 +127,71 @@ def full_turn(payload: dict, turn_index: int) -> list:
     return [(_block_label(b), b.get("chars", 0), b.get("full_text", "") or "") for b in blocks]
 
 
+# Wire chars of one system block in the forwarded payload — the text length. System blocks are
+# {"type": "text", "text": ..., possibly "cache_control": ...} dicts in every observed case; a
+# non-dict entry falls back to str() rather than raising, since this is a display measurement,
+# not a schema check.
+def _system_block_chars(block) -> int:
+    if isinstance(block, dict):
+        return len(block.get("text", "") or "")
+    return len(str(block))
+
+
+# Wire chars of one tool definition in the forwarded payload — its JSON serialisation
+# (json.dumps, default separators), matching what the API actually receives on the wire.
+def _tool_chars(tool) -> int:
+    return len(json.dumps(tool))
+
+
+# One request's sys/tool delta lines, in index order — {"label", "chars", "tag"}. `tag` is None
+# for the family's first request (every block is listed, nothing "changed" or "new" yet), else
+# "new" for an index beyond the previous request's count and "changed" for one inside it. System
+# index 0 (the billing header, see _BILLING_HEADER_SYS_INDEX) is dropped on every request but the
+# first — it changes by construction and never invalidates the cache.
+def _delta_lines(delta: dict, prev_count: int, is_first: bool, kind: str) -> list:
+    lines = []
+    for key in sorted(delta, key=int):
+        index = int(key)
+        if kind == "sys" and index == _BILLING_HEADER_SYS_INDEX and not is_first:
+            continue
+        element = delta[key]
+        if kind == "sys":
+            label = f"sys[{index}]"
+            chars = _system_block_chars(element)
+        else:
+            name = element.get("name", "?") if isinstance(element, dict) else "?"
+            label = f"tool[{name}]"
+            chars = _tool_chars(element)
+        tag = None if is_first else ("new" if index >= prev_count else "changed")
+        lines.append({"label": label, "chars": chars, "tag": tag})
+    return lines
+
+
 # Request boundaries for the conversation family, read from the _forwarded delta log
 # (counts.messages per request). Each boundary marks the message index at which that request's
 # new messages start. A restart flag is set when the message count regressed — CC was restarted
 # mid-log-id, so boundaries before that point do not align with the final message list.
+#
+# Each boundary also carries `sys_lines`/`tool_lines` — the system/tool blocks that request's
+# `system_delta`/`tools_delta` names, relative to the PREVIOUS request of the same family (see
+# `_delta_lines`). Computed here rather than re-derived later, since the previous request's
+# counts are only available while walking the stream forward.
 def request_boundaries(forwarded_path: Path, family: str) -> list:
     boundaries = []
     request_no = 0
     prev_count = 0
+    prev_sys_count = 0
+    prev_tools_count = 0
     for entry in iter_jsonl(forwarded_path):
         if entry.get("type") != "forwarded_delta":
             continue
         if infer_family(entry.get("model", "")) != family:
             continue
         request_no += 1
-        count = entry.get("counts", {}).get("messages", 0)
+        counts = entry.get("counts", {}) or {}
+        count = counts.get("messages", 0)
         restart = count < prev_count
+        is_first = bool(entry.get("is_first", False))
         boundaries.append({
             "request_no": request_no,
             "flow_id": entry.get("flow_id", ""),
@@ -146,8 +200,12 @@ def request_boundaries(forwarded_path: Path, family: str) -> list:
             "start_index": 0 if restart else prev_count,
             "message_count": count,
             "restart": restart,
+            "sys_lines": _delta_lines(entry.get("system_delta") or {}, prev_sys_count, is_first, "sys"),
+            "tool_lines": _delta_lines(entry.get("tools_delta") or {}, prev_tools_count, is_first, "tool"),
         })
         prev_count = count
+        prev_sys_count = counts.get("system", prev_sys_count)
+        prev_tools_count = counts.get("tools", prev_tools_count)
     return boundaries
 
 
@@ -178,9 +236,11 @@ def build_turn_times(boundaries: list) -> dict:
     return times
 
 
-# Which request opened each msg index -> {msg_index: {number, timestamp, refires, flow_id}}.
-# flow_id is the owner's — what `usage.build_usage_by_flow` keys its {flow_id: (cr, cc)} map by,
-# so a separator can look up its own request's prompt-cache usage without a second index.
+# Which request opened each msg index -> {msg_index: {number, timestamp, refires, flow_id,
+# sys_lines, tool_lines}}. flow_id is the owner's — what `usage.build_usage_by_flow` keys its
+# {flow_id: (cr, cc)} map by, so a separator can look up its own request's prompt-cache usage
+# without a second index. sys_lines/tool_lines are the OWNER boundary's own — a re-fire group
+# shows only the owner's delta, matching the timestamp and usage the separator already carries.
 #
 # Boundaries are grouped by the index they open. Several land on one index when a request re-fired
 # without adding a msg (a retry/abort re-send) or when a restart reset the index to 0. At most ONE
@@ -205,6 +265,8 @@ def request_markers(boundaries: list) -> dict:
             "timestamp": boundaries[owner]["timestamp"],
             "refires": len(positions) - 1,
             "flow_id": boundaries[owner].get("flow_id", ""),
+            "sys_lines": boundaries[owner].get("sys_lines", []),
+            "tool_lines": boundaries[owner].get("tool_lines", []),
         }
     return markers
 
