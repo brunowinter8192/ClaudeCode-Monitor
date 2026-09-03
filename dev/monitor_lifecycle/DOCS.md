@@ -5,8 +5,10 @@
 Load visibility and regression coverage for the monitor's tmux-session lifecycle: each project's
 `monitor_cc_<hash>` session runs nine panes indefinitely until something kills it (see
 `src/monitor_janitor.py`). This directory holds the load probe used to establish a CPU/age
-baseline before the next overload, and the regression test for the sweep that ends stale
-sessions.
+baseline before the next overload, the regression test for the sweep that ends stale sessions,
+and the gate test for the daily-tick trigger that now runs that sweep (`src/menubar/monitor_sweep_scheduler.py`
+— the sweep's own dedicated LaunchAgent was removed 2026-09, blocked by a TCC Full Disk Access
+wall under launchd; see `process-docs/monitor_lifecycle/`).
 
 ## Modules
 
@@ -42,6 +44,28 @@ is set in the environment).
 **Called by:** run manually — regression guard for `monitor_janitor.py`.
 **Calls out:** `src.monitor_janitor` (`/tests/` + `test_*.py` naming exempts this file from the
 `block_dev_imports_src` hook).
+
+---
+
+### tests/test_monitor_sweep_scheduler.py (177 LOC) — new 2026-09
+
+**Purpose:** Gate-only regression test for `src/menubar/monitor_sweep_scheduler.py`'s
+at-most-once-per-24h check (the daily sweep's dedicated LaunchAgent was removed the same
+milestone — see `process-docs/monitor_lifecycle/`). Covers the pure `_is_sweep_due(last_ts, now)`
+boundary cases (fresh state, 1h ago, 25h ago, exactly-24h) AND the full
+`maybe_run_sweep_workflow(now)` integration against an isolated temp state file — never the real
+`MONITOR_SWEEP_STATE_FILE` under `APP_SUPPORT`. `_run_sweep` (the real tmux/subprocess work,
+already covered by `test_monitor_sweep.py`) is stubbed for every case, so this file touches no
+real tmux state. Also covers the re-entry guard (a concurrent tick while a sweep is already
+in-progress must not double-trigger) and that the attempt timestamp lands on disk BEFORE a slow
+sweep finishes (so a hung/crashed sweep can't cause the very next tick to re-fire it) — both via
+a blocking stub + `threading.Event` released at teardown.
+**Reads:** nothing outside its own isolated temp state files (`tempfile.mkdtemp`).
+**Writes:** isolated temp state files (own tempdir per case, never cleaned up explicitly — OS
+temp dir, low volume, matches this directory's other throwaway-fixture tests).
+**Called by:** run manually — regression guard for `monitor_sweep_scheduler.py`.
+**Calls out:** `src.menubar.monitor_sweep_scheduler` (`/tests/` + `test_*.py` naming exempts this
+file from the `block_dev_imports_src` hook).
 
 ## reports/
 

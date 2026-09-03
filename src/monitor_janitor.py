@@ -58,11 +58,17 @@ def sweep_one_session(name: str, created: int, now: float, max_age_seconds: int)
     log_sweep_line(name, age_seconds, killed)
     return {"name": name, "age_seconds": age_seconds, "killed": killed}
 
-# The checkout this process's logs belong to: $MONITOR_CC_ROOT if set (the plists set it
-# explicitly, same substitution as WorkingDirectory/PYTHONPATH), else derived from wherever
-# monitor_janitor.py itself is physically executing from (a worktree, if run from one) — no
-# main-checkout fallback like dual_log_cli's, since this path is a WRITE target that must follow
-# whichever checkout's code produced the entry, not a read source to prefer aggregating in one place.
+# The checkout this process's logs belong to: $MONITOR_CC_ROOT if set, else derived from
+# wherever monitor_janitor.py itself is physically executing from (a worktree, if run from one)
+# — no main-checkout fallback like dual_log_cli's, since this path is a WRITE target that must
+# follow whichever checkout's code produced the entry, not a read source to prefer aggregating
+# in one place. Two callers, two ways this resolves correctly: `claude_proxy_start.sh`'s bash
+# trigger `cd`'s into $MONITOR_CC_ROOT before invoking `-m`, so __file__ already matches by
+# construction (no env var needed there). The menubar's daily tick-triggered sweep (2026-09,
+# `src/menubar/monitor_sweep_scheduler.py` — replaced this module's own LaunchAgent, blocked by
+# a TCC Full Disk Access wall under launchd, see `process-docs/monitor_lifecycle/`) sets
+# $MONITOR_CC_ROOT explicitly before calling `sweep_workflow()`, since a frozen py2app bundle's
+# own __file__ resolves inside the bundle copy, not the real checkout.
 def _resolve_monitor_cc_root() -> Path:
     env_root = os.environ.get("MONITOR_CC_ROOT")
     if env_root:

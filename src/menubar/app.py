@@ -33,6 +33,8 @@ from .panel_manager import PanelManager
 from .rag_controller import RagController
 # From model_controller.py: ModelController — per-concern Models panel controller
 from .model_controller import ModelController
+# From monitor_sweep_scheduler.py: at-most-once-per-24h daily monitor_cc_* tmux sweep, tick-driven
+from .monitor_sweep_scheduler import maybe_run_sweep_workflow
 # From system.py: Ghostty terminal focus + per-project monitor launch/focus
 from .system import _focus_session, _focus_worker, _open_or_focus_monitor
 # From sessions_controller.py: session snapshot cache
@@ -269,6 +271,12 @@ class CCMenuBarApp(rumps.App):
         _tick_t0 = time.monotonic()
         phases: Dict[str, float] = {}
         now = time.time()
+        # 2026-09: daily monitor_cc_* tmux sweep, migrated off its own LaunchAgent (blocked by a
+        # TCC Full Disk Access wall under launchd — see process-docs/monitor_lifecycle/) onto this
+        # tick, which already runs under launchd WITH the grant. Cheap in-memory gate check every
+        # cycle; the real sweep (tmux/subprocess I/O) runs on its own daemon thread at most once
+        # per 24h, never inline on the tick.
+        maybe_run_sweep_workflow(now)
         # 2026-08 (hotkey_latency M3): consume the background discovery snapshot (cheap in-memory
         # read, no subprocess/AppleScript I/O) instead of running list_alive_sessions() +
         # _scan_bg_sleep_timers() synchronously on the main thread. Their own per-cycle cost is
