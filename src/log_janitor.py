@@ -16,8 +16,8 @@ class LogSpec:
     writer: str          # "module.py:symbol"
     purpose: str         # one-liner
     fmt: str             # "jsonl" | "log" | "bin+ansi"
-    retention: str       # "7d-ts-records" | "count-30" | "7d-timed-rotation" | "count-10-pairs"
-    janitor_trigger: str # "monitor-24h" | "proxy-start-bash" | "live-handler" | "ccwrap-caller"
+    retention: str       # "7d-ts-records" | "count-30" | "7d-timed-rotation" | "count-10-pairs" | "unbounded-plain-text-low-volume"
+    janitor_trigger: str # "monitor-24h" | "proxy-start-bash" | "live-handler" | "ccwrap-caller" | "monitor-janitor-self"
     sweep_eligible: bool # True = cleanup_old_jsonl applies via monitor-24h tick
 
 
@@ -122,6 +122,16 @@ _LOG_REGISTRY: tuple = (
         retention="count-10-pairs",
         janitor_trigger="ccwrap-caller",
         sweep_eligible=False,
+    ),
+    LogSpec(
+        name="monitor_sweep",
+        path_pattern="monitor_sweep.log",
+        writer="monitor_janitor.py:log_sweep_line",
+        purpose="Daily tmux-session sweep decisions (session, age, KILLED/SPARED) for monitor_cc_* sessions",
+        fmt="log",
+        retention="unbounded-plain-text-low-volume",  # a few lines/day (one per live monitor_cc_* session); no rotation built yet
+        janitor_trigger="monitor-janitor-self",
+        sweep_eligible=False,  # plain text, not JSONL — cleanup_old_jsonl's 'ts'-field parse doesn't apply
     ),
 )
 
