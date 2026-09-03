@@ -33,14 +33,19 @@ _MENLO         = lambda: NSFont.fontWithName_size_('Menlo', 13.0)
 _BADGE_WORKING = '[*]'   # green — ASCII fixed-width, no emoji drift
 _BADGE_IDLE    = '[ ]'   # red
 
-# Grid column widths (pts) — 5-column main-panel layout, measured from Menlo 13pt char widths
+# Grid column widths (pts) — 6-column main-panel layout, measured from Menlo 13pt char widths
 _GRID_COL0_W  = 40   # slot "[N]"/conflict "[!N]" (up to 4 chars × 7.8pt + buffer)
 _GRID_COL1_W  = 17   # star "* " (2 chars × 7.8pt + buffer)
 _GRID_COL3_W  = 25   # dot "[ ]"/"[*]" (3 chars × 7.8pt + buffer)
 _GRID_COL4_W  = 72   # badge "[B M:SS]" max 9 chars × 7.8pt + buffer
+_GRID_COL5_W  = 40   # monitor "mon" button, main rows only (3 chars × 7.8pt + buffer, same budget as col0)
 _GRID_COL_SPC = 2    # column spacing (pts between adjacent columns)
 
-PANEL_WIDTH      = 380   # pts
+# PANEL_WIDTH = old 380 + (_GRID_COL5_W + _GRID_COL_SPC) = 422 — the monitor column's own width
+# plus the one extra inter-column gap it introduces, so the flexible name column (col2) keeps
+# the exact same effective width it had before the column was added (verified: fixed-column +
+# spacing budget grows by precisely 42pt on both sides of the subtraction).
+PANEL_WIDTH      = 422   # pts
 PANEL_HEIGHT     = 460   # pts — initial height; floor for first-run (no settings)
 PANEL_MIN_WIDTH  = 250   # pts — minimum width enforced by setContentMinSize_
 PANEL_MIN_HEIGHT = 120   # pts — minimum height enforced by setContentMinSize_

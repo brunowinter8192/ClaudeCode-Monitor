@@ -1,4 +1,5 @@
 # INFRASTRUCTURE
+import os
 from pathlib import Path
 
 _APP_SUPPORT  = Path("~/Library/Application Support/com.brunowinter.monitor-cc-menubar").expanduser()
@@ -12,6 +13,18 @@ GHOSTTY_CWD_UUID_FILE     = _APP_SUPPORT / "ghostty_cwd_uuid.json"
 ORCHESTRATOR_SIGNALS_FILE = _APP_SUPPORT / "orchestrator_signals.json"  # {tmux_session_name: send_unix_ts}; written by worker-cli send
 MODEL_SELECTION_FILE      = _SHARED_RULES / "model_selection.json"      # {main, worker} model IDs; menubar writes, a later milestone adds readers
 PROXY_RULES_FILE          = _SHARED_RULES / "proxy_rules.json"          # proxy config incl. model_params; menubar read-modify-writes effort/max_tokens on Apply, never touches other sections
+
+# Monitor_CC checkout root — used by system.py to build the "cd <root> && python3 workflow.py
+# --project <cwd>" launch command for the per-project monitor button. `PROJECT_ROOT` env var
+# (set by launchd from the plist's EnvironmentVariables, baked in at build/install time by
+# setup_py2app.py:_install_bundle — always run from the real checkout, so always correct there;
+# setup_menubar.py's write_plist()/write_plist_py2app() re-propagate the already-set value on
+# every Restart rather than recomputing it, since recomputing from a FROZEN bundle's own
+# __file__ would resolve inside the bundle copy, not the checkout) is authoritative when
+# present. Falls back to this module's own file location — correct only for dev/venv runs
+# launched directly from the checkout (not through the installed plist).
+MONITOR_CC_ROOT = (Path(os.environ["PROJECT_ROOT"]) if os.environ.get("PROJECT_ROOT")
+                   else Path(__file__).resolve().parents[2])
 
 # FUNCTIONS
 

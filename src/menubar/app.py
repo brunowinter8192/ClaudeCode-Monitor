@@ -33,8 +33,8 @@ from .panel_manager import PanelManager
 from .rag_controller import RagController
 # From model_controller.py: ModelController — per-concern Models panel controller
 from .model_controller import ModelController
-# From system.py: Ghostty terminal focus
-from .system import _focus_session, _focus_worker
+# From system.py: Ghostty terminal focus + per-project monitor launch/focus
+from .system import _focus_session, _focus_worker, _open_or_focus_monitor
 # From sessions_controller.py: session snapshot cache
 from .sessions_controller import SessionsController
 # From app_settings.py: Settings load/save
@@ -95,6 +95,11 @@ class _PanelController(NSObject):
         tmux_session_name = self._app.panel._worker_tag_map.get(sender.tag())
         if tmux_session_name:
             _focus_worker(tmux_session_name)
+
+    def openMonitor_(self, sender):
+        cwd = self._app.panel._cwd_map.get(sender.tag())
+        if cwd:
+            _open_or_focus_monitor(cwd)
 
     def toggleAutoJump_(self, sender):
         app = self._app

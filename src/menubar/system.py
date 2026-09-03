@@ -1,16 +1,25 @@
 # INFRASTRUCTURE
 import fcntl
 import os
+import re
+import shlex
+import shutil
 import subprocess
 import sys
-from typing import Optional
+from pathlib import Path
+from typing import Optional, Tuple
 
 # From ghostty.py: Ghostty terminal UUID lookup for click-to-focus
 from .ghostty import get_ghostty_terminal_id, get_ghostty_terminal_id_for_tty
-# From paths.py: APP_SUPPORT-relative PID lock file
-from .paths import PID_FILE as _LOCK_PATH
+# From paths.py: APP_SUPPORT-relative PID lock file + Monitor_CC checkout root
+from .paths import PID_FILE as _LOCK_PATH, MONITOR_CC_ROOT
+# From tmux_launcher.py: canonical tmux session-name derivation for a project cwd — the
+# per-project monitor button must resolve the SAME session a manually-run
+# 'python3 workflow.py --project <cwd>' would create; never re-derive the hash locally.
+from ..tmux_launcher import generate_session_name, check_session_exists
 
 _LAUNCHD_LABEL = 'com.brunowinter.monitor-cc-menubar'
+_PLIST_PATH = Path(__file__).resolve().parent / f'{_LAUNCHD_LABEL}.plist'   # PATH source for _resolve_launch_python3
 
 # ORCHESTRATOR
 
@@ -151,3 +160,120 @@ def _focus_worker(tmux_session_name: str) -> None:
     osascript_ms = (time.monotonic() - _t1) * 1000
     log_menubar('latency', f'focus_worker session={tmux_session_name} lookup_ms={lookup_ms:.1f} '
                             f'osascript_ms={osascript_ms:.1f} id={term_id}')
+
+# Resolve the python3 binary the same way the launchd-managed menubar's shell would: read
+# EnvironmentVariables/PATH from the plist TEMPLATE (com.brunowinter.monitor-cc-menubar.plist —
+# the Homebrew-first PATH launchd installs, not this process's own os.environ, which under
+# launchd lacks Homebrew — see paths.py/DOCS.md "launchd PATH inheritance") and resolve 'python3'
+# against it. The template is NOT valid XML on its own (it carries unsubstituted <BUNDLE_LAUNCHER>/
+# <PROJECT_ROOT> placeholder tags — real values are only filled in by setup_menubar.py's plain-text
+# .replace() at install time, into a COPY under ~/Library/LaunchAgents/) — plistlib.load would
+# raise on the template every time, so PATH is pulled out with a plain regex on the raw text
+# instead. Falls back to the running process's own PATH, then the bare command name, if the
+# template is unreadable/PATH-less — never raises.
+_PLIST_PATH_KEY_RE = re.compile(
+    r'<key>\s*PATH\s*</key>\s*<string>([^<]*)</string>', re.DOTALL)
+
+def _resolve_launch_python3() -> str:
+    try:
+        content = _PLIST_PATH.read_text(encoding='utf-8')
+        m = _PLIST_PATH_KEY_RE.search(content)
+        path_value = m.group(1).strip() if m else None
+    except Exception:
+        path_value = None
+    if not path_value:
+        path_value = os.environ.get('PATH', '')
+    return shutil.which('python3', path=path_value) or 'python3'
+
+# Detect the installed Ghostty major.minor version via 'ghostty +version'. (0, 0) on any
+# failure (not installed, unparsable output, timeout) — callers treat that as "use the pre-1.3
+# fallback", the same conservative default the bash reference (tmux_spawn.sh:open_tmux_viewer)
+# uses for its "0.0" sentinel.
+def _ghostty_version() -> Tuple[int, int]:
+    try:
+        r = subprocess.run(['ghostty', '+version'], capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=3)
+    except Exception:
+        return (0, 0)
+    m = re.search(r'(\d+)\.(\d+)', r.stdout)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return (0, 0)
+
+# Build the fixed shell command line for the monitor launch window: 'cd <root> && <python3>
+# workflow.py --project <cwd>' — the same command the user runs by hand today. root and cwd are
+# individually shell-quoted (shlex.quote) so a cwd containing spaces or shell metacharacters
+# cannot break the command or inject anything; python3_path is quoted for the same reason
+# (Homebrew prefixes are safe today, but the resolution is dynamic).
+def _build_monitor_launch_cmd(root: Path, python3_path: str, cwd: str) -> str:
+    return (f'cd {shlex.quote(str(root))} && '
+            f'{shlex.quote(python3_path)} workflow.py --project {shlex.quote(cwd)}')
+
+# Escape a string for embedding inside a double-quoted AppleScript string literal
+def _applescript_quote(s: str) -> str:
+    return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+
+# Open a NEW Ghostty window running shell_cmd in the foreground, Ghostty 1.3+ native path (PR
+# #11208) — ported from the iterative-dev plugin's tmux_spawn.sh:open_tmux_viewer. '; exit'
+# after shell_cmd: once the launched process returns (tmux session detached/killed), the shell
+# exits and the window closes — same shape as the worker-viewer window, and the mechanism that
+# keeps 'closing the window detaches the tmux session' true for this button too.
+def _launch_monitor_ghostty_native(shell_cmd: str):
+    script = (
+        'tell application "Ghostty"\n'
+        '  activate\n'
+        '  set win to new window\n'
+        '  set t to terminal 1 of selected tab of win\n'
+        f'  input text {_applescript_quote(shell_cmd + "; exit")} to t\n'
+        '  send key "enter" to t\n'
+        'end tell'
+    )
+    return subprocess.run(['osascript', '-e', script], capture_output=True, text=True,
+                          encoding='utf-8', errors='replace', timeout=10)
+
+# Open a NEW Ghostty window running shell_cmd, Ghostty 1.2.x fallback — ported from
+# tmux_spawn.sh:open_tmux_viewer's 'open -na' branch. Runs shell_cmd through '/bin/sh -c' (a
+# fixed argv list — shell_cmd itself is the one already-quoted string built by
+# _build_monitor_launch_cmd) so 'cd X && python3 ...' works without native AppleScript;
+# '--quit-after-last-window-closed=true' closes the window once that shell exits.
+def _launch_monitor_ghostty_fallback(shell_cmd: str):
+    return subprocess.run(
+        ['open', '-na', 'Ghostty.app', '--args',
+         '--quit-after-last-window-closed=true', '--window-save-state=never',
+         '-e', '/bin/sh', '-c', shell_cmd],
+        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
+
+# Open a new Ghostty window that launches the monitor for cwd ('cd <root> && python3
+# workflow.py --project <cwd>', the exact command a user runs by hand — see
+# _build_monitor_launch_cmd). Version-gates between the two Ghostty AppleScript paths, same
+# gate tmux_spawn.sh:open_tmux_viewer uses (>=1.3 native, else 'open -na' fallback).
+def _launch_monitor(cwd: str) -> None:
+    from .menubar_log import log_menubar
+    python3_path = _resolve_launch_python3()
+    shell_cmd = _build_monitor_launch_cmd(MONITOR_CC_ROOT, python3_path, cwd)
+    major, minor = _ghostty_version()
+    if (major, minor) >= (1, 3):
+        r = _launch_monitor_ghostty_native(shell_cmd)
+    else:
+        r = _launch_monitor_ghostty_fallback(shell_cmd)
+    if r.returncode != 0:
+        log_menubar('monitor', f'launch FAILED cwd={cwd} rc={r.returncode} '
+                                f'stderr={r.stderr.strip()}')
+    else:
+        log_menubar('monitor', f'launch OK cwd={cwd}')
+
+# Click handler for the panel's per-project monitor button (app.py:_PanelController.openMonitor_).
+# Session name comes from tmux_launcher.py:generate_session_name — the SAME derivation
+# 'python3 workflow.py --project <cwd>' uses internally, never re-derived here. Already running
+# → focus its Ghostty window exactly like a worker-viewer row (_focus_worker finds the window by
+# the 'tmux attach'/'attach-session' client's tty; the monitor's own launch command ends by
+# running 'tmux attach-session -t <session>' in its own foreground, so the same tty-scan finds
+# it). Not running → open a new window that launches it fresh.
+def _open_or_focus_monitor(cwd: str) -> None:
+    if not cwd:
+        return
+    session_name = generate_session_name(cwd)
+    if check_session_exists(session_name):
+        _focus_worker(session_name)
+    else:
+        _launch_monitor(cwd)
