@@ -1,6 +1,6 @@
 # Excluding the Interleaved Sidecar Call From REQ Boundaries, and Its Write-Side Half, 2026-09-03
 
-Continues this area's `msgs` sys/tool delta line work (`2026-09-03_msgs_sys_tool_delta_lines.md`).
+Continues this area's `msgs` sys/tool delta line work of the same day.
 That entry's own Measurement 2 found `rag-chunking_1788333660`'s "restarts" were not restarts at
 all: a second, structurally distinct sonnet call — system prompt "You are a security monitor for
 autonomous AI coding agents…", `tools == 0`, always exactly 1 message — interleaved into the same
