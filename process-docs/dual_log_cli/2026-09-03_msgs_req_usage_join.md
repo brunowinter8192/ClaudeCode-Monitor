@@ -1,7 +1,7 @@
-# `msgs` REQ Separators Carry Prompt-Cache Usage, 2026-09-02
+# `msgs` REQ Separators Carry Prompt-Cache Usage, 2026-09-03
 
-Continues the `msgs` REQ-separator line (`2026-08-30_msgs_request_groups.md`,
-`2026-08-31_msgs_block_sublines_variant.md`): the separator now shows the group owner's
+Continues this area's `msgs` REQ-separator line (request groups, then block sub-lines): the
+separator now shows the group owner's
 `cache_read_input_tokens` / `cache_creation_input_tokens`, so a reader can follow prompt-cache
 behaviour request by request without leaving the CLI.
 

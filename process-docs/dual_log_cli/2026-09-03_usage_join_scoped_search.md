@@ -1,10 +1,10 @@
-# CR/CC Transcript Search Scoped to the Session's Own Project, 2026-09-02
+# CR/CC Transcript Search Scoped to the Session's Own Project, 2026-09-03
 
-Follows `2026-09-02_msgs_req_usage_join.md` directly: same feature, same join, but the transcript
-lookup changed completely after review. The first version shelled out to `grep -rlF` over the
-WHOLE `~/.claude/projects/` store (316 files, 1.3 GB at the time) for every `msgs` invocation. That
-cost 6.97 s on the largest session and 0.104 s→dropped-to before the change — a measured loss on
-every call, not a hypothetical one, and the review correctly identified the CAUSE as scanning the
+Follows this area's usage-join entry of the same day directly: same feature, same join, but the
+transcript lookup changed completely after review. The first version shelled out to `grep -rlF`
+over the WHOLE `~/.claude/projects/` store (316 files, 1.3 GB at the time) for every `msgs`
+invocation. That cost 6.97 s on the largest session, against 0.113 s before the feature — a
+measured loss on every call, not a hypothetical one, and the review identified the CAUSE as scanning the
 whole store rather than the `grep` binary itself. The fix scopes the search to the one or few
 directories the session's own stem can possibly resolve to, in Python, no subprocess.
 
@@ -37,8 +37,8 @@ match wins, no subprocess.
 ## The dropped ambiguity branch
 
 The first version treated 2+ matching transcript files as unresolvable (`None`, same as zero
-matches) — a defensive branch built without ever observing the case. The 2026-09-02 sweep of the
-whole corpus (`2026-09-02_msgs_req_usage_join.md`) found **zero** sessions where the anchor
+matches) — a defensive branch built without ever observing the case. The same-day sweep of the
+whole corpus (this area's usage-join entry) found **zero** sessions where the anchor
 request id appeared in more than one transcript, in the WHOLE store, not just within scope. There
 is no observed failure to defend against, so the branch is gone: `_find_transcript` now takes the
 first candidate (name order) that contains the fragment and stops. Scoping directories per stem
