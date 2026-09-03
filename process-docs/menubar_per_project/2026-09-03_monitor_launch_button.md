@@ -64,7 +64,7 @@ subprocess with a bare launchd-shaped PATH (`/usr/bin:/bin:/usr/sbin:/sbin`, no 
 asserts the resolved `python3` is still under `/opt/homebrew/` or `/usr/local/` — this failed
 immediately under the `plistlib` implementation. Fixed by reading the template as plain text and
 extracting the `PATH` string value with a regex, never invoking `plistlib` on the template at
-all. Regression guard: `dev/menubar_monitor_button/test_open_or_focus_monitor.py`'s
+all. Regression guard: `dev/menubar_per_project/test_open_or_focus_monitor.py`'s
 `_test_resolve_python3_uses_plist_path_under_bare_environ`.
 
 **`PROJECT_ROOT` plist env var — completed a half-wired existing mechanism, not new plumbing.**
@@ -91,11 +91,11 @@ by hand from the actual checkout, so it was already correct.
 **Command built via `shlex.quote`, never raw interpolation.** `_build_monitor_launch_cmd`
 quotes both the checkout root and the row's cwd independently. Verified with a cwd containing a
 shell metacharacter (`/tmp/my project; rm -rf /`) — the whole path round-trips through
-`shlex.split` as exactly one argument (see `dev/menubar_monitor_button/test_open_or_focus_monitor.py`).
+`shlex.split` as exactly one argument (see `dev/menubar_per_project/test_open_or_focus_monitor.py`).
 
 ## Verification
 
-Unit tests (`dev/menubar_monitor_button/test_open_or_focus_monitor.py`, run via the worktree
+Unit tests (`dev/menubar_per_project/test_open_or_focus_monitor.py`, run via the worktree
 venv): session-name identity with `tmux_launcher.generate_session_name` (not re-derived),
 quoting safety for a cwd with a space + shell metacharacter, the focus-vs-launch branch under
 both `check_session_exists` outcomes, the empty-cwd no-op guard, and the bare-PATH python3-
