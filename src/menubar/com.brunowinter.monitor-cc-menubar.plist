@@ -30,6 +30,11 @@
          Belt-and-suspenders: per-call encoding='utf-8',errors='replace' is the primary fix. -->
     <key>PYTHONUTF8</key>
     <string>1</string>
+    <!-- Replaced at setup time (setup_py2app.py:_install_bundle / setup_menubar.py:write_plist*):
+         the Monitor_CC checkout root, for the per-project monitor button's launch command
+         ("cd $PROJECT_ROOT && python3 workflow.py --project <cwd>", src/menubar/system.py). -->
+    <key>PROJECT_ROOT</key>
+    <string><PROJECT_ROOT></string>
   </dict>
 
   <key>StandardOutPath</key>

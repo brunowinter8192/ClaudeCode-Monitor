@@ -11,7 +11,7 @@ from Foundation import NSMakeRect, NSRange
 from .panel import (
     _make_nspanel,
     _MENLO, _BADGE_WORKING, _BADGE_IDLE,
-    _GRID_COL0_W, _GRID_COL1_W, _GRID_COL3_W, _GRID_COL4_W, _GRID_COL_SPC,
+    _GRID_COL0_W, _GRID_COL1_W, _GRID_COL3_W, _GRID_COL4_W, _GRID_COL5_W, _GRID_COL_SPC,
     _ROW_H, _LABEL_H,
     _project_desktop_no, _compute_required_height,
     _make_line_separator, _make_header_label, _make_separator_view,
@@ -47,7 +47,8 @@ class PanelManager:
     # ONE NSGridView holds all project-separator + session/worker rows added to _panel_sv.
     # Populates _displayed_items, _cwd_map, _desktop_to_cwd, _abort_btns_by_project, _abort_project_for_tag.
     # bg_by_project: Dict[project_name, BgSleepInfo] from _scan_bg_sleep_timers(); None = no timers.
-    # Separator rows merged across all 5 columns; worker rows leave cols 0/1/4 empty.
+    # Separator rows merged across all 6 columns; worker rows leave cols 0/1/4/5 empty
+    # (col 5 = monitor launch/focus button, main rows only).
     def _rebuild_inner(self, sessions, bg_by_project=None) -> None:
         for sv in list(self._panel_sv.arrangedSubviews()):
             self._panel_sv.removeView_(sv)
@@ -85,15 +86,16 @@ class PanelManager:
             self._panel_sv.addView_inGravity_(_make_header_label('No active sessions', pw), 1)
             return
         empty = NSGridCell.emptyContentView()
-        grid  = NSGridView.gridViewWithNumberOfColumns_rows_(5, 0)
+        grid  = NSGridView.gridViewWithNumberOfColumns_rows_(6, 0)
         grid.setColumnSpacing_(float(_GRID_COL_SPC))
         grid.setRowSpacing_(1.0)
-        for i in range(5):
+        for i in range(6):
             grid.columnAtIndex_(i).setXPlacement_(NSGridCellPlacementLeading)
         grid.columnAtIndex_(0).setWidth_(float(_GRID_COL0_W))
         grid.columnAtIndex_(1).setWidth_(float(_GRID_COL1_W))
         grid.columnAtIndex_(3).setWidth_(float(_GRID_COL3_W))
         grid.columnAtIndex_(4).setWidth_(float(_GRID_COL4_W))
+        grid.columnAtIndex_(5).setWidth_(float(_GRID_COL5_W))
         grid.setTranslatesAutoresizingMaskIntoConstraints_(False)
         dno_counts   = Counter(s.desktop_no for s in sorted_sessions
                                if not s.is_worker and s.desktop_no is not None)
@@ -103,9 +105,9 @@ class PanelManager:
             proj_bg = (bg_by_project or {}).get(project_name)
             sep_view, abort_btn = _make_separator_view(
                 project_name, pw, proj_bg.min_remaining if proj_bg else None)
-            grid.addRowWithViews_([sep_view, empty, empty, empty, empty])
+            grid.addRowWithViews_([sep_view, empty, empty, empty, empty, empty])
             grid.rowAtIndex_(row_idx).setHeight_(float(_LABEL_H - 1))
-            grid.mergeCellsInHorizontalRange_verticalRange_(NSRange(0, 5), NSRange(row_idx, 1))
+            grid.mergeCellsInHorizontalRange_verticalRange_(NSRange(0, 6), NSRange(row_idx, 1))
             row_idx += 1
             if abort_btn is not None:
                 abort_btn.setTag_(abort_tag)
@@ -146,10 +148,19 @@ class PanelManager:
                         badge_btn.setTag_(tag)
                         badge_btn.setTarget_(self.app._panel_controller)
                         badge_btn.setAction_(b'focusSession:')
-                        views = [slot_btn, star_btn, name_btn, dot_btn, badge_btn]
                     else:
                         badge_btn = None
-                        views     = [slot_btn, star_btn, name_btn, dot_btn, empty]
+                    # Monitor column: launches/focuses 'python3 workflow.py --project <cwd>'
+                    # for this row's project (system.py:_open_or_focus_monitor). Own column
+                    # (not the badge slot) — badge already carries bg-task-remaining state and
+                    # is absent on most rows; overloading it would mix two unrelated meanings
+                    # and hide the launch control whenever a badge is showing.
+                    monitor_btn = _make_grid_cell_btn('mon', NSColor.systemBlueColor())
+                    monitor_btn.setTag_(tag)
+                    monitor_btn.setTarget_(self.app._panel_controller)
+                    monitor_btn.setAction_(b'openMonitor:')
+                    views = [slot_btn, star_btn, name_btn, dot_btn,
+                             badge_btn if badge_btn is not None else empty, monitor_btn]
                     grid.addRowWithViews_(views)
                     grid.rowAtIndex_(row_idx).setHeight_(float(_ROW_H - 1))
                     row_idx += 1
@@ -165,7 +176,7 @@ class PanelManager:
                         btn.setTarget_(self.app._panel_controller)
                         btn.setAction_(b'focusWorker:')
                     self._worker_tag_map[tag] = s.tmux_session_name
-                    grid.addRowWithViews_([empty, empty, name_btn, dot_btn, empty])
+                    grid.addRowWithViews_([empty, empty, name_btn, dot_btn, empty, empty])
                     grid.rowAtIndex_(row_idx).setHeight_(float(_ROW_H - 1))
                     row_idx += 1
                     self._displayed_items[s.name] = (dot_btn, None)
