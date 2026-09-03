@@ -1,4 +1,4 @@
-# `msgs` Shows the System Blocks and Tools Each Request Sent, 2026-09-05
+# `msgs` Shows the System Blocks and Tools Each Request Sent, 2026-09-03
 
 Continues this area's command line. The stated motivation: the most frequent cause of a
 prompt-cache rebuild is a change in the system blocks or the tool list that precede the messages,
@@ -55,7 +55,7 @@ the literal, spec-stated rule (compare to the immediately preceding request of t
 than inventing an unstated heuristic to chase one example. `DOCS.md` documents the wrinkle inline,
 tied to the existing Gotcha.
 
-## Measurements (as of 2026-09-05, 24 non-haiku sessions on disk)
+## Measurements (as of 2026-09-03, 24 non-haiku sessions on disk)
 
 **Incidence.** 69 non-first requests carry a sys/tool change once system block 0 is excluded — 68
 in `rag-chunking_1788333660` (the interleave above; every restart round-trips one system block
@@ -67,7 +67,7 @@ touched again, so a delta line is genuinely rare, which is what makes one worth 
 drop: `skill-help_1788343931`, where `tool[Skill]`/`tool[Write]` change and `CR` falls from
 456,637 (plus `CC` 1,048) to 0 — a real, full rebuild, and a real example of the causal link this
 feature exists to surface. The other 68 (all in `rag-chunking`) never coincide with a CR drop,
-consistent with `process-docs/cache/2026-09-02_worker_start_double_rebuild_closed.md`'s finding that
+consistent with the `process-docs/cache/` area's finding that
 a growing cache_read against the previous total is incremental caching, not a rebuild — these round
 trips read the same prefix back every time.
 
