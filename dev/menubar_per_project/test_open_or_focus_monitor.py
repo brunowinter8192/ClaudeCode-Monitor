@@ -6,14 +6,14 @@ the focus-vs-launch branch given check_session_exists, the launch command built 
 containing a space (quoting safety — a fixed shell string built via shlex.quote, not raw
 interpolation), and python3 resolution actually reading the plist's Homebrew-first PATH instead
 of falling back to a bare launchd-shaped os.environ. Does not exercise the actual Ghostty/
-osascript I/O (see process-docs/menubar_monitor_button/ for the live launch verification this
+osascript I/O (see process-docs/menubar_per_project/ for the live launch verification this
 was paired with).
 
 No AppKit/rumps import needed — src/menubar/system.py has no AppKit dependency (see its DOCS.md
 Purpose line). importlib.import_module used for the src.menubar import, not `from src.` — see
 src/hooks/block_dev_imports_src.py.
 
-Run: python3 dev/menubar_monitor_button/test_open_or_focus_monitor.py
+Run: python3 dev/menubar_per_project/test_open_or_focus_monitor.py
 """
 
 # INFRASTRUCTURE

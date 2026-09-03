@@ -11,6 +11,7 @@ HOOKS_LOCK                = _APP_SUPPORT / "hooks.lock"
 PID_FILE                  = _APP_SUPPORT / "menubar.pid"
 GHOSTTY_CWD_UUID_FILE     = _APP_SUPPORT / "ghostty_cwd_uuid.json"
 ORCHESTRATOR_SIGNALS_FILE = _APP_SUPPORT / "orchestrator_signals.json"  # {tmux_session_name: send_unix_ts}; written by worker-cli send
+MONITOR_SWEEP_STATE_FILE  = _APP_SUPPORT / "monitor_sweep_state.json"   # {last_run_ts}; menubar's tick-triggered daily monitor_cc_* sweep gate — see monitor_sweep_scheduler.py
 MODEL_SELECTION_FILE      = _SHARED_RULES / "model_selection.json"      # {main, worker} model IDs; menubar writes, a later milestone adds readers
 PROXY_RULES_FILE          = _SHARED_RULES / "proxy_rules.json"          # proxy config incl. model_params; menubar read-modify-writes effort/max_tokens on Apply, never touches other sections
 

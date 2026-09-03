@@ -48,9 +48,14 @@ OPTIONS = {
     # rumps: explicit inclusion guards against modulegraph missing it via transitive paths.
     'packages': ['src.menubar', 'rumps'],
 
-    # session_finder + constants are outside src.menubar (imported via ..)
-    # so packages=['src.menubar'] alone won't pull them in.
-    'includes': ['src.session_finder', 'src.constants'],
+    # session_finder + constants + tmux_launcher + monitor_janitor are outside src.menubar
+    # (imported via ..) — 'packages': ['src.menubar'] copies that whole subpackage's source
+    # wholesale without running modulegraph's import scanner over its contents (that's WHY it
+    # needs 'packages' at all — see the comment above), so nothing imported from inside it is
+    # auto-discovered; each cross-package target needs its own explicit include.
+    # tmux_launcher: system.py's per-project monitor button (generate_session_name,
+    # check_session_exists). monitor_janitor: monitor_sweep_scheduler.py's daily tmux sweep.
+    'includes': ['src.session_finder', 'src.constants', 'src.tmux_launcher', 'src.monitor_janitor'],
 
     # Exclude heavy non-menubar packages present in the venv.
     # modulegraph won't trace them from our entry chain, but belt-and-suspenders.
@@ -87,8 +92,14 @@ OPTIONS = {
 # Whitelist: every src.X the menubar imports directly or transitively outside src.menubar.
 # discover.py: from ..session_finder → session_finder.py
 # session_finder.py: from .constants → constants.py
-# NO other cross-package src imports exist (verified via grep).
-_BUNDLE_SRC_KEEP = {'menubar', 'session_finder.py', 'constants.py', '__init__.py', '__pycache__'}
+# system.py: from ..tmux_launcher → tmux_launcher.py
+# monitor_sweep_scheduler.py: from ..monitor_janitor → monitor_janitor.py
+# monitor_janitor.py: from .tmux_launcher → tmux_launcher.py (already kept above)
+# Independent of OPTIONS['includes'] above — this prunes by name regardless of how a file
+# landed under the bundle's src/, so a module missing here gets deleted post-build even if
+# modulegraph did trace it.
+_BUNDLE_SRC_KEEP = {'menubar', 'session_finder.py', 'constants.py', 'tmux_launcher.py',
+                    'monitor_janitor.py', '__init__.py', '__pycache__'}
 
 
 # Prune the bundle's src/ to whitelist only — prevents copy_package_data() from
