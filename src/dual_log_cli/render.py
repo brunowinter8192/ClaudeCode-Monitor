@@ -67,31 +67,107 @@ _BLOCK_LABEL_WIDTH = _MSG_PREFIX_WIDTH + _MSG_LABEL_WIDTH - len(_BLOCK_INDENT)
 # usage_by_flow is {flow_id: (cache_read, cache_creation)} from usage.build_usage_by_flow, keyed
 # on the group owner's flow_id; a group whose flow_id is absent (usage unresolved, or no usage
 # joined for the session at all) prints the separator without CR/CC — never a placeholder.
-def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None) -> str:
+#
+# overlay is {(msg_idx, blk_idx): {stripped, injected, req}} from overlay.build_overlay — the SAME
+# dict `expand` uses, now also read here. A block with neither stripped nor injected text appends
+# nothing, which is what keeps an untouched line byte-identical to the pre-overlay output; a
+# transformed one appends "  −N +M → Wc" (chars stripped, chars injected, resulting wire size),
+# plus " by REQ n" when the request that performed the transform differs from the group's own —
+# the `expand` case where a msg arrives under one REQ and is overwritten by a later one.
+def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
+                overlay: dict = None) -> str:
     markers = request_markers(data.get("boundaries") or [])
     lines = []
+    group_req = None
     for offset, msg in enumerate(data["turns"][start:end + 1]):
         marker = markers.get(msg["index"])
         if marker is None and offset == 0:
             marker = _governing_marker(markers, msg["index"])
         if marker is not None:
             lines.append(_req_separator(marker, usage_by_flow))
+            group_req = marker["number"]
         blocks = msg["blocks"]
         label = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
-        chars = f"{msg['chars']:,}c"
-        lines.append(f"[{msg['index']:3d}] {msg['role'][:4]:<4}  {label:<{_MSG_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}")
+        chars_value = msg["chars"]
+        chars = f"{chars_value:,}c"
+        tail = _msg_delta_tail(msg["index"], blocks, chars_value, overlay, group_req)
+        lines.append(f"[{msg['index']:3d}] {msg['role'][:4]:<4}  {label:<{_MSG_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}{tail}")
         if len(blocks) > 1:
-            lines.extend(_block_sub_lines(blocks))
+            lines.extend(_block_sub_lines(msg["index"], blocks, overlay, group_req))
     return "\n".join(lines) + "\n"
 
 
-# One indented sub-line per block of a multi-block msg — label and chars only, no previews
-def _block_sub_lines(blocks: list) -> list:
+# One indented sub-line per block of a multi-block msg — label and chars, plus the block's own
+# strip/inject delta when the overlay touched it, no previews
+def _block_sub_lines(msg_index: int, blocks: list, overlay: dict, group_req) -> list:
     lines = []
-    for block in blocks:
-        chars = f"{block['chars']:,}c"
-        lines.append(f"{_BLOCK_INDENT}{block['label']:<{_BLOCK_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}")
+    for blk_index, block in enumerate(blocks):
+        chars_value = block["chars"]
+        chars = f"{chars_value:,}c"
+        totals = _block_overlay_totals(overlay, msg_index, blk_index)
+        if totals:
+            stripped_chars, injected_chars, req = totals
+            tail = _delta_tail(stripped_chars, injected_chars, chars_value, req, group_req)
+        else:
+            tail = ""
+        lines.append(f"{_BLOCK_INDENT}{block['label']:<{_BLOCK_LABEL_WIDTH}}{chars:>{_MSG_CHARS_WIDTH}}{tail}")
     return lines
+
+
+# The msg-level delta tail: the SUM of stripped/injected chars over every block the overlay
+# touched, measured against the msg's own printed chars value (so the arithmetic on that one line
+# is self-consistent regardless of how msg-level chars relate to the sum of block chars
+# elsewhere). "" when no block of this msg was touched at all.
+#
+# "by REQ" is added only when every touched block shares the SAME request — a msg split across
+# two transforming requests has never been observed in the corpus (measured: 0 of 1949 transformed
+# msgs), and summarizing an ambiguous case with one REQ number would be a guess, so it is omitted
+# instead; the per-block sub-lines still carry it individually.
+def _msg_delta_tail(msg_index: int, blocks: list, chars_value: int, overlay: dict, group_req) -> str:
+    total_stripped = 0
+    total_injected = 0
+    reqs = set()
+    touched = False
+    for blk_index in range(len(blocks)):
+        totals = _block_overlay_totals(overlay, msg_index, blk_index)
+        if totals is None:
+            continue
+        touched = True
+        stripped_chars, injected_chars, req = totals
+        total_stripped += stripped_chars
+        total_injected += injected_chars
+        if req is not None:
+            reqs.add(req)
+    if not touched:
+        return ""
+    req = next(iter(reqs)) if len(reqs) == 1 else None
+    return _delta_tail(total_stripped, total_injected, chars_value, req, group_req)
+
+
+# One block's overlay totals as (stripped_chars, injected_chars, req), or None when the overlay
+# has nothing for this coordinate or recorded zero chars on both sides (a strip/inject slot with
+# only empty strings, which build_overlay's own _texts already filters out, but zero is treated as
+# untouched here too rather than trusted blindly).
+def _block_overlay_totals(overlay: dict, msg_index: int, blk_index: int):
+    slot = (overlay or {}).get((msg_index, blk_index))
+    if not slot:
+        return None
+    stripped_chars = sum(len(t) for t in slot.get("stripped") or [])
+    injected_chars = sum(len(t) for t in slot.get("injected") or [])
+    if not stripped_chars and not injected_chars:
+        return None
+    return stripped_chars, injected_chars, slot.get("req")
+
+
+# "  −N +M → Wc" appended after a chars column — N/M/W digit-grouped like every other chars figure
+# in `msgs`, the real minus sign (U+2212) rather than a hyphen, and W computed as
+# chars − stripped + injected. " by REQ n" only when that request differs from the group's own.
+def _delta_tail(stripped_chars: int, injected_chars: int, chars_value: int, req, group_req) -> str:
+    wire_chars = chars_value - stripped_chars + injected_chars
+    tail = f"  −{stripped_chars:,} +{injected_chars:,} → {wire_chars:,}c"
+    if req is not None and req != group_req:
+        tail += f" by REQ {req}"
+    return tail
 
 
 # The group covering a msg index — the nearest one opening at or before it. None when the msg sits
