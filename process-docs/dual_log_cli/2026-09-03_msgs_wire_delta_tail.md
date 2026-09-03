@@ -1,7 +1,6 @@
-# `msgs` Shows the Proxy's Strip/Inject Delta and Wire Size, 2026-09-04
+# `msgs` Shows the Proxy's Strip/Inject Delta and Wire Size, 2026-09-03
 
-Continues this area's command line, and specifically the `expand` overlay work
-(`2026-08-30_expand_strip_inject_overlay.md`): `msgs` prints the ORIGINAL payload's chars, so a msg
+Continues this area's command line, and specifically the `expand` overlay work: `msgs` prints the ORIGINAL payload's chars, so a msg
 the proxy stripped down to almost nothing looked exactly as big as one that reached the API intact.
 `overlay.build_overlay` already had everything needed to fix that — it was just `expand`-only until
 now.
@@ -35,7 +34,7 @@ transformed msgs** across the whole corpus. The parent line still omits `by REQ`
 than picking one arbitrarily, and a regression test pins the behavior even though it has never
 fired; the sub-lines are unaffected either way since each already carries its own single `req`.
 
-## Measurements (as of 2026-09-04, corpus on disk)
+## Measurements (as of 2026-09-03, corpus on disk)
 
 **Wire-figure fidelity.** For every transformed coordinate in every session, `chars − stripped +
 injected` was compared against the block's REAL chars in the FORWARDED (wire) payload — reconstructed
