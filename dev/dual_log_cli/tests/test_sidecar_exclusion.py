@@ -79,9 +79,9 @@ def _write_jsonl(entries: list) -> Path:
 # threshold is under test).
 def test_sidecar_seeds_no_boundary_and_does_not_pollute_prev_counts() -> None:
     entries = [
-        _delta_entry("f0", "2026-09-05T10:00:00Z", tools=6, messages=2, is_first=True),
-        _delta_entry("sidecar", "2026-09-05T10:00:02Z", tools=0, messages=1, system=3),
-        _delta_entry("f1", "2026-09-05T10:00:04Z", tools=6, messages=5, system=4),
+        _delta_entry("f0", "2026-09-03T10:00:00Z", tools=6, messages=2, is_first=True),
+        _delta_entry("sidecar", "2026-09-03T10:00:02Z", tools=0, messages=1, system=3),
+        _delta_entry("f1", "2026-09-03T10:00:04Z", tools=6, messages=5, system=4),
     ]
     path = _write_jsonl(entries)
     try:
@@ -104,10 +104,10 @@ def test_sidecar_seeds_no_boundary_and_does_not_pollute_prev_counts() -> None:
 # timeline.request_boundaries does, so the inventory's request count means the same thing.
 def test_build_session_excludes_sidecar_from_request_count() -> None:
     entries = [
-        _delta_entry("h0", "2026-09-05T09:59:00Z", tools=0, messages=1, model="claude-haiku-4-5-20251001", system=0),
-        _delta_entry("f0", "2026-09-05T10:00:00Z", tools=6, messages=2, is_first=True),
-        _delta_entry("sidecar", "2026-09-05T10:00:02Z", tools=0, messages=1, system=3),
-        _delta_entry("f1", "2026-09-05T10:00:04Z", tools=6, messages=5, system=4),
+        _delta_entry("h0", "2026-09-03T09:59:00Z", tools=0, messages=1, model="claude-haiku-4-5-20251001", system=0),
+        _delta_entry("f0", "2026-09-03T10:00:00Z", tools=6, messages=2, is_first=True),
+        _delta_entry("sidecar", "2026-09-03T10:00:02Z", tools=0, messages=1, system=3),
+        _delta_entry("f1", "2026-09-03T10:00:04Z", tools=6, messages=5, system=4),
     ]
     path = _write_jsonl(entries)
     try:
@@ -118,14 +118,14 @@ def test_build_session_excludes_sidecar_from_request_count() -> None:
     check("requests_main excludes the sidecar (2, not 3)", session["requests_main"] == 2, session)
     check("messages reflects the last REAL request, not the sidecar's 1", session["messages"] == 5, session)
     check("end timestamp still reflects the sidecar's own wall-clock time",
-          session["end"] == "2026-09-05T10:00:04Z", session)
+          session["end"] == "2026-09-03T10:00:04Z", session)
 
 
 # One _original-shaped line, as addon.py writes it: top-level model plus a nested payload carrying
 # the real "tools" list load_last_request checks after parsing.
 def _original_line(flow_id: str, model: str, tools: list, messages: list) -> dict:
     return {
-        "timestamp": "2026-09-05T10:00:00.000+00:00Z",
+        "timestamp": "2026-09-03T10:00:00.000+00:00Z",
         "flow_id": flow_id,
         "request_id": "",
         "model": model,

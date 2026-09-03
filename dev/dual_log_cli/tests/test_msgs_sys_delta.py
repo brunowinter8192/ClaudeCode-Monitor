@@ -87,7 +87,7 @@ def _boundaries(entries: list) -> list:
 # the billing header (system index 0), which is excluded only on LATER requests.
 def test_first_request_lists_everything_no_tag() -> None:
     entries = [_delta_entry(
-        "f0", "2026-09-05T10:00:00Z", {"system": 4, "tools": 2}, True,
+        "f0", "2026-09-03T10:00:00Z", {"system": 4, "tools": 2}, True,
         system_delta={"0": _sys_block("x" * 81), "1": _sys_block("y"), "2": _sys_block("z" * 21829), "3": _sys_block("w")},
         tools_delta={"0": _tool("Bash"), "1": _tool("Edit")},
         messages=2,
@@ -106,29 +106,32 @@ def test_first_request_lists_everything_no_tag() -> None:
 
 
 # A later request: system index 0 is excluded even though it is present in system_delta (it
-# changes on every request by construction and never invalidates the cache); a changed index below
-# the previous count is tagged "changed", one at or beyond it is tagged "new"; an untouched index
-# is simply absent.
+# changes on every request by construction and never invalidates the cache); an index seen before
+# whose CONTENT actually differs is tagged "changed", an index never seen before is tagged "new",
+# and an index seen before whose content is IDENTICAL (Edit here — carried in the delta but never
+# actually touched, the write-side artifact this fix targets) is dropped, not tagged, not shown.
 def test_later_request_excludes_billing_header_and_tags_changed_new() -> None:
     entries = [
-        _delta_entry("f0", "2026-09-05T10:00:00Z", {"system": 4, "tools": 2}, True,
+        _delta_entry("f0", "2026-09-03T10:00:00Z", {"system": 4, "tools": 2}, True,
                      system_delta={"0": _sys_block("a"), "1": _sys_block("b"), "2": _sys_block("c"), "3": _sys_block("d")},
                      tools_delta={"0": _tool("Bash"), "1": _tool("Edit")}, messages=2),
-        _delta_entry("f1", "2026-09-05T10:00:05Z", {"system": 5, "tools": 3}, False,
+        _delta_entry("f1", "2026-09-03T10:00:05Z", {"system": 5, "tools": 3}, False,
                      system_delta={"0": _sys_block("a2"), "1": _sys_block("b2"), "4": _sys_block("new-sys")},
-                     tools_delta={"0": _tool("Bash"), "2": _tool("Grep")}, messages=5),
+                     tools_delta={"0": _tool("Bash", "v2"), "1": _tool("Edit"), "2": _tool("Grep")}, messages=5),
     ]
     boundaries = _boundaries(entries)
     second = boundaries[1]
     labels = [l["label"] for l in second["sys_lines"]]
     check("system index 0 dropped on the later request", "sys[0]" not in labels, labels)
-    check("sys[1] (index below previous sys count 4) present and changed",
+    check("sys[1] (content differs: 'b' vs 'b2') present and changed",
           any(l["label"] == "sys[1]" and l["tag"] == "changed" for l in second["sys_lines"]), second["sys_lines"])
-    check("sys[4] (index at previous sys count 4) present and new",
+    check("sys[4] (index never seen before) present and new",
           any(l["label"] == "sys[4]" and l["tag"] == "new" for l in second["sys_lines"]), second["sys_lines"])
     tool_labels = {l["label"]: l["tag"] for l in second["tool_lines"]}
-    check("tool[Bash] (index below previous tools count 2) changed", tool_labels.get("tool[Bash]") == "changed", tool_labels)
-    check("tool[Grep] (index at previous tools count 2) new", tool_labels.get("tool[Grep]") == "new", tool_labels)
+    check("tool[Bash] (content genuinely differs) changed", tool_labels.get("tool[Bash]") == "changed", tool_labels)
+    check("tool[Grep] (index never seen before) new", tool_labels.get("tool[Grep]") == "new", tool_labels)
+    check("tool[Edit] (index seen before, IDENTICAL content) dropped entirely, not just untagged",
+          "tool[Edit]" not in tool_labels, tool_labels)
 
 
 # A request whose delta is ONLY the billing header prints no sys/tool line at all — the common
@@ -137,9 +140,9 @@ def test_later_request_excludes_billing_header_and_tags_changed_new() -> None:
 # test_sidecar_exclusion.py), which would swallow both boundaries here and defeat this fixture.
 def test_billing_header_only_delta_yields_no_lines() -> None:
     entries = [
-        _delta_entry("f0", "2026-09-05T10:00:00Z", {"system": 2, "tools": 1}, True,
+        _delta_entry("f0", "2026-09-03T10:00:00Z", {"system": 2, "tools": 1}, True,
                      system_delta={"0": _sys_block("a"), "1": _sys_block("b")}, messages=1),
-        _delta_entry("f1", "2026-09-05T10:00:05Z", {"system": 2, "tools": 1}, False,
+        _delta_entry("f1", "2026-09-03T10:00:05Z", {"system": 2, "tools": 1}, False,
                      system_delta={"0": _sys_block("a2")}, messages=3),
     ]
     boundaries = _boundaries(entries)
@@ -153,7 +156,7 @@ def test_billing_header_only_delta_yields_no_lines() -> None:
 # separator, before the first msg line, in the block sub-line's indent/column layout.
 def test_render_msgs_prints_delta_lines_under_separator() -> None:
     marker_boundary = {
-        "start_index": 0, "message_count": 1, "timestamp": "2026-09-05T10:00:00Z",
+        "start_index": 0, "message_count": 1, "timestamp": "2026-09-03T10:00:00Z",
         "flow_id": "f0", "restart": False,
         "sys_lines": [{"label": "sys[0]", "chars": 81, "tag": None}, {"label": "sys[2]", "chars": 21829, "tag": None}],
         "tool_lines": [{"label": "tool[Bash]", "chars": 517, "tag": None}],
@@ -187,11 +190,11 @@ def test_render_msgs_prints_delta_lines_under_separator() -> None:
 # member's.
 def test_refire_group_shows_owner_lines_only() -> None:
     entries = [
-        _delta_entry("f0", "2026-09-05T10:00:00Z", {"system": 3, "tools": 1}, True,
+        _delta_entry("f0", "2026-09-03T10:00:00Z", {"system": 3, "tools": 1}, True,
                      system_delta={"0": _sys_block("a"), "1": _sys_block("b"), "2": _sys_block("c")},
                      tools_delta={"0": _tool("Bash")}, messages=2),
         # re-fire: same start_index (0 messages added), OWNS index 0 because it is last in the group
-        _delta_entry("f1", "2026-09-05T10:00:02Z", {"system": 3, "tools": 1}, False,
+        _delta_entry("f1", "2026-09-03T10:00:02Z", {"system": 3, "tools": 1}, False,
                      system_delta={"1": _sys_block("b2")}, messages=0),
     ]
     boundaries = _boundaries(entries)

@@ -95,7 +95,7 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ### discovery.py (217 LOC)
 
-**Purpose:** Log-directory resolution, stem grouping, context rendering (`context_for_stem`, pure — the project map is injected, not looked up), `stem_identity` (added 2026-09-02: the same worker/main split as `context_for_stem`, returned as raw parts — `("worker", sid8, name)` or `("main", family_head, label)` — for a caller that needs the pieces rather than the rendered string; `usage.py` is the only one so far), the session inventory (`build_session`'s `requests`/`requests_main`/`messages` figures skip a zero-tool non-haiku line the same way `timeline._is_sidecar` does, since 2026-09-05 — see Gotchas), all session selection in one place (`filter_sessions` — a `context` substring for `sessions`, a broader `scope` substring matching context OR stem for `search`, plus an inclusive start-day window, all ANDed), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
+**Purpose:** Log-directory resolution, stem grouping, context rendering (`context_for_stem`, pure — the project map is injected, not looked up), `stem_identity` (added 2026-09-02: the same worker/main split as `context_for_stem`, returned as raw parts — `("worker", sid8, name)` or `("main", family_head, label)` — for a caller that needs the pieces rather than the rendered string; `usage.py` is the only one so far), the session inventory (`build_session`'s `requests`/`requests_main`/`messages` figures skip a zero-tool non-haiku line the same way `timeline._is_sidecar` does, since 2026-09-03 — see Gotchas), all session selection in one place (`filter_sessions` — a `context` substring for `sessions`, a broader `scope` substring matching context OR stem for `search`, plus an inclusive start-day window, all ANDed), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
 **Reads:** `MONITOR_CC_ROOT`; the dual_log directory listing; each stem's `_forwarded.jsonl` in full; `stat().st_size` of all six streams.
 **Writes:** Nothing — returns dicts.
 **Called by:** `__main__.py`, and indirectly by `timeline.load_timeline` through the session dict it is handed; `usage.py` (`stem_identity` only).
@@ -105,7 +105,7 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ### reader.py (114 LOC)
 
-**Purpose:** The read-only file primitives. Reverse chunked line-offset scanner, cheap model sniff, last-conversation-request loader, small-file JSONL iterator, and `infer_family` (the haiku/sonnet/else→opus rule shared with `addon.py` and `dev/proxy_dual_log/`). `load_last_request` (since 2026-09-05) also skips a zero-tool non-haiku line — the same sidecar shape `timeline._is_sidecar` excludes — after parsing it, since telling it apart from a real conversation line needs the parsed payload (see Gotchas).
+**Purpose:** The read-only file primitives. Reverse chunked line-offset scanner, cheap model sniff, last-conversation-request loader, small-file JSONL iterator, and `infer_family` (the haiku/sonnet/else→opus rule shared with `addon.py` and `dev/proxy_dual_log/`). `load_last_request` (since 2026-09-03) also skips a zero-tool non-haiku line — the same sidecar shape `timeline._is_sidecar` excludes — after parsing it, since telling it apart from a real conversation line needs the parsed payload (see Gotchas).
 **Reads:** `_original` (byte ranges only, never whole-file) and any small stream line by line.
 **Writes:** Nothing.
 **Called by:** `discovery.py`, `timeline.py`.
@@ -115,11 +115,11 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ### timeline.py (340 LOC)
 
-**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires, flow_id, sys_lines, tool_lines}}`, what `msgs` draws its REQ separators AND their sys/tool delta lines from — `flow_id` is what `usage.build_usage_by_flow` keys its CR/CC map by), `request_numbers_by_flow` (boundaries → `{flow_id: REQ number}`, what `overlay` uses to name the request behind a strip), and `load_timeline` as the one call that assembles everything a render needs. Both numbering consumers share `_running_request_numbers`, so the overlay can never drift from the number `msgs` prints. `request_boundaries` (since 2026-09-05) skips a `_is_sidecar` entry — `counts.tools == 0` on a `forwarded_delta` line — entirely, before touching `prev_count`/`prev_sys_count`/`prev_tools_count`, so a sidecar call multiplexed into the family bucket seeds no REQ, no restart and no sys/tool delta comparison (see Gotchas for what this fixed). `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed — and it is also the ONLY member whose `sys_lines`/`tool_lines` a re-fire group shows. `request_boundaries` also computes, per boundary, `sys_lines`/`tool_lines` — `[{label, chars, tag}]` for that request's own `system_delta`/`tools_delta`, via `_delta_lines`: the family's first request (`is_first`) gets every block with `tag=None`; a later request gets only the delta's own indices, tagged `"changed"` (index below the previous request's count of the same family) or `"new"` (at or beyond it), with system index 0 — the per-request billing header, `_BILLING_HEADER_SYS_INDEX` — dropped on every request but the first (see `process-docs/cache/`: it changes by construction and never invalidates the cache). Chars are the FORWARDED wire size: `_system_block_chars` reads a system block's `text` length, `_tool_chars` is `len(json.dumps(tool))` (default separators) — the tool's actual wire serialisation. `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
+**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires, flow_id, sys_lines, tool_lines}}`, what `msgs` draws its REQ separators AND their sys/tool delta lines from — `flow_id` is what `usage.build_usage_by_flow` keys its CR/CC map by), `request_numbers_by_flow` (boundaries → `{flow_id: REQ number}`, what `overlay` uses to name the request behind a strip), and `load_timeline` as the one call that assembles everything a render needs. Both numbering consumers share `_running_request_numbers`, so the overlay can never drift from the number `msgs` prints. `request_boundaries` (since 2026-09-03) skips a `_is_sidecar` entry — `counts.tools == 0` on a `forwarded_delta` line — entirely, before touching `prev_count` or the sys/tool hash maps, so a sidecar call multiplexed into the family bucket seeds no REQ, no restart and no sys/tool delta comparison (see Gotchas for what this fixed). `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed — and it is also the ONLY member whose `sys_lines`/`tool_lines` a re-fire group shows. `request_boundaries` also computes, per boundary, `sys_lines`/`tool_lines` — `[{label, chars, tag}]` for that request's own `system_delta`/`tools_delta`, via `_delta_lines`: the family's first request (`is_first`) gets every block with `tag=None`; a later request compares each delta index's CONTENT (`_delta_hash`, imported from `src/proxy/logging.py` — the exact normalisation the proxy itself uses, cache_control stripped, so a cache_control move never counts) against a running `sys_hash_by_index`/`tools_hash_by_index` map threaded through the whole walk (since 2026-09-03, revised from a plain index/count comparison — see Gotchas for why: a raw delta entry is written whenever the PROXY's own comparison differs, which is not always a real change), tagging `"changed"` when the index was seen before with a DIFFERENT hash, `"new"` when the index was never seen before, and — new this revision — DROPPING the line entirely when the hash is unchanged, rather than tagging it `"changed"` regardless. System index 0 — the per-request billing header, `_BILLING_HEADER_SYS_INDEX` — is dropped on every request but the first regardless of its hash (see `process-docs/cache/`: it changes by construction and never invalidates the cache). Chars are the FORWARDED wire size: `_system_block_chars` reads a system block's `text` length, `_tool_chars` is `len(json.dumps(tool))` (default separators) — the tool's actual wire serialisation. `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
 **Writes:** Nothing — returns row lists, a generator, and one data dict.
 **Called by:** `__main__.py`, `search.py`.
-**Calls out:** `src/proxy/message_summary.py` (`_summarize_message` — imported, not copied), `reader`.
+**Calls out:** `src/proxy/message_summary.py` (`_summarize_message` — imported, not copied), `src/proxy/logging.py` (`_delta_hash`, since 2026-09-03 — the exact content-hash normalisation the proxy itself uses, reused rather than re-implemented so a read-side "changed" decision can never disagree with what the proxy considers a real change), `reader`.
 
 ---
 
@@ -135,7 +135,7 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ### usage.py (178 LOC, new 2026-09-03)
 
-**Purpose:** Builds `msgs`' `{flow_id: (cache_read_input_tokens, cache_creation_input_tokens)}` map — the CR/CC figures a REQ separator shows for the group owner. The dual log never carries the response body, so the join runs through THREE stores, the middle one SCOPED rather than store-wide: the session's `_response` stream gives `{flow_id: (request_id, status_code)}`; the first non-haiku boundary whose flow resolves there is the anchor — `boundaries` already excludes a sidecar call (`timeline._is_sidecar`, since 2026-09-05), so the anchor can no longer land on one and search CC's transcript store for an id that was never a conversation turn (see `timeline.py`'s Gotchas: this was the root cause of the "200 status, no transcript record" shortfall three sessions used to show). `_candidate_dirs` resolves the session's STEM alone (via `discovery.stem_identity` and `project_map.build_project_index`) to the one or few `~/.claude/projects/` directories that could possibly hold its transcript — a worker stem's sid8 gives its project's cwd, to which `/.claude/worktrees/<name>` is appended for the worker's OWN cwd; a main stem's label is matched against every known cwd's label (plural on purpose — two projects can share a basename). `_find_transcript` then reads, in Python, only the `.jsonl` files in those directories whose mtime is at or after the session's start, stopping at the first one containing the literal fragment `"requestId":"<id>"` (never a bare id — a tool_result can quote one, which would silently resolve to the wrong transcript). That transcript's `type == "assistant"` records give `{request_id: (cr, cc)}`, keeping only the first record per id since one API request produces several identical-usage streaming chunks. `build_usage_by_flow` then keeps only flows whose `_response` status is 200, so an errored owner degrades to no figures rather than a wrong pair.
+**Purpose:** Builds `msgs`' `{flow_id: (cache_read_input_tokens, cache_creation_input_tokens)}` map — the CR/CC figures a REQ separator shows for the group owner. The dual log never carries the response body, so the join runs through THREE stores, the middle one SCOPED rather than store-wide: the session's `_response` stream gives `{flow_id: (request_id, status_code)}`; the first non-haiku boundary whose flow resolves there is the anchor — `boundaries` already excludes a sidecar call (`timeline._is_sidecar`, since 2026-09-03), so the anchor can no longer land on one and search CC's transcript store for an id that was never a conversation turn (see `timeline.py`'s Gotchas: this was the root cause of the "200 status, no transcript record" shortfall three sessions used to show). `_candidate_dirs` resolves the session's STEM alone (via `discovery.stem_identity` and `project_map.build_project_index`) to the one or few `~/.claude/projects/` directories that could possibly hold its transcript — a worker stem's sid8 gives its project's cwd, to which `/.claude/worktrees/<name>` is appended for the worker's OWN cwd; a main stem's label is matched against every known cwd's label (plural on purpose — two projects can share a basename). `_find_transcript` then reads, in Python, only the `.jsonl` files in those directories whose mtime is at or after the session's start, stopping at the first one containing the literal fragment `"requestId":"<id>"` (never a bare id — a tool_result can quote one, which would silently resolve to the wrong transcript). That transcript's `type == "assistant"` records give `{request_id: (cr, cc)}`, keeping only the first record per id since one API request produces several identical-usage streaming chunks. `build_usage_by_flow` then keeps only flows whose `_response` status is 200, so an errored owner degrades to no figures rather than a wrong pair.
 **Reads:** The session's `_response.jsonl`; a small, stem-derived subset of `~/.claude/projects/*/*.jsonl` — the project-index walk (delegated to `project_map`) plus, typically, one candidate transcript actually read for content.
 **Writes:** Nothing — returns one `{flow_id: (cr, cc)}` dict; `{}` on any missing stream, unresolved anchor, a stem that resolves to no known project directory, no candidate file matching, or an unreadable transcript, which degrades every separator to the value-less pre-feature form.
 **Called by:** `__main__.py` (`_run_msgs` only, so `sessions`/`search`/`expand` never read `~/.claude/projects/`).
@@ -179,10 +179,10 @@ all. On a live session the output additionally tracks whatever the proxy has app
 **The last line of `_original` is usually NOT the conversation.** Every session file interleaves
 haiku sidecar requests (1 message, ~0.5–2 KB) with the real family. `reader.load_last_request`
 walks backwards past them via a 512-byte model sniff and only parses the first non-haiku line. Since
-2026-09-05 it also walks past a zero-tool non-haiku line — the OTHER sidecar shape (see below) — but
+2026-09-03 it also walks past a zero-tool non-haiku line — the OTHER sidecar shape (see below) — but
 that check happens AFTER the parse, not via a cheap sniff: `tools` can sit well past the 512-byte
 window behind a large system block (measured up to 110 KB ahead of it), so there is no cheap way to
-sniff it the way `model` is sniffed. Measured across the whole corpus (2026-09-05): the last
+sniff it the way `model` is sniffed. Measured across the whole corpus (2026-09-03): the last
 non-haiku line was never a sidecar of either shape in any of the 24 sessions on disk, so this is a
 guard against a case that has not happened yet, not a fix for one that has — `skipped` in
 `load_last_request`'s return now counts both shapes, though only haiku ever contributes to it today.
@@ -325,34 +325,56 @@ every forwarded line MINUS sidecars, so the 3 re-fires in the gh_cli session pus
 mixing model families (these boundaries keep only the last request's family). Measured at zero
 occurrences; if it appears, the numbers drift from there on. The sibling divergence this Gotcha used
 to name — a zero-tool non-haiku sidecar landing in the SAME family bucket as the real conversation —
-IS exercised (see the `_is_sidecar` Gotcha below) and was fixed 2026-09-05, not merely documented:
+IS exercised (see the `_is_sidecar` Gotcha below) and was fixed 2026-09-03, not merely documented:
 `request_boundaries` now excludes it, the same way it always excluded haiku.
 
 **A zero-tool non-haiku line is a sidecar, not a conversation turn, and `_is_sidecar` excludes it
-everywhere a REQ is derived (2026-09-05).** `rag-chunking_1788333660` interleaves a second,
+everywhere a REQ is derived (2026-09-03).** `rag-chunking_1788333660` interleaves a second,
 structurally distinct sonnet call every few requests — system prompt "You are a security monitor
 for autonomous AI coding agents…", `tools == 0`, always exactly 1 message — that `infer_family`
 cannot tell apart from the real conversation, since both share the plain model name
 `claude-sonnet-5`. Before the fix this fabricated 58 spurious restarts in that session alone (its
-own `message_count == 1` regressing against the real conversation's growing count), corrupted the
-sys/tool delta comparison for the request right after each one (compared against the sidecar's
-reduced `tools`/`system` count instead of the real previous request's, so already-unchanged tools
-showed `new`), and was the root cause — confirmed by content hash, not merely correlated — of the
-"200 status, no transcript record" `_response` join shortfall three sessions showed in the
-2026-09-03 usage-join work (`rag-chunking_1788333660`, `opus_jobscraper_1788347399`,
-`opus_monitor_cc_1788342698`): the sidecar's own request id genuinely never appears in CC's
-transcript, because it is not a conversation turn, so `usage.build_usage_by_flow`'s anchor search
-could land on it and fail to find ANY transcript for the whole session. `request_boundaries` now
-skips a sidecar entry entirely, before it can touch `prev_count`/`prev_sys_count`/`prev_tools_count`
-— it seeds no REQ, no restart, no turn time and no sys/tool delta comparison, in EITHER direction
-(it neither becomes a boundary itself nor pollutes the one after it). `discovery.build_session`
-applies the identical exclusion to `requests`/`requests_main`/`messages`, so the inventory's request
-count means the same thing. In the two opus sessions above the sidecar's model (`claude-sonnet-5`)
-was already a DIFFERENT family from the real conversation's (`claude-fable-5-1` → `opus`), so the
-family filter alone already dropped it there — `rag-chunking` was the one session where both shared
-`sonnet` and the sidecar actually reached the boundary list. `_is_sidecar` is applied regardless, in
-both sessions, since relying on family divergence would silently break the moment a sidecar and its
-conversation ever DO share a family — which is exactly what `rag-chunking` already does.
+own `message_count == 1` regressing against the real conversation's growing count), and was the
+root cause — confirmed by content hash, not merely correlated — of the "200 status, no transcript
+record" `_response` join shortfall three sessions showed in the 2026-09-03 usage-join work
+(`rag-chunking_1788333660`, `opus_jobscraper_1788347399`, `opus_monitor_cc_1788342698`): the
+sidecar's own request id genuinely never appears in CC's transcript, because it is not a
+conversation turn, so `usage.build_usage_by_flow`'s anchor search could land on it and fail to find
+ANY transcript for the whole session. `request_boundaries` now skips a sidecar entry entirely,
+before it can touch `prev_count` or the sys/tool hash maps — it seeds no REQ, no restart, no turn
+time and no sys/tool delta comparison, in EITHER direction (it neither becomes a boundary itself nor
+pollutes the one after it). `discovery.build_session` applies the identical exclusion to
+`requests`/`requests_main`/`messages`, so the inventory's request count means the same thing. In the
+two opus sessions above the sidecar's model (`claude-sonnet-5`) was already a DIFFERENT family from
+the real conversation's (`claude-fable-5-1` → `opus`), so the family filter alone already dropped it
+there — `rag-chunking` was the one session where both shared `sonnet` and the sidecar actually
+reached the boundary list. `_is_sidecar` is applied regardless, in both sessions, since relying on
+family divergence would silently break the moment a sidecar and its conversation ever DO share a
+family — which is exactly what `rag-chunking` already does.
+
+**Excluding the sidecar from `request_boundaries` was necessary but not sufficient — the sys/tool
+delta STILL showed spurious `changed`/`new` tags for content that never moved, and the real cause
+lives in `src/proxy` (2026-09-03, second pass).** `src/proxy/addon.py` keeps one
+`prev_delta_hashes_by_model` state dict, keyed by `model_family` — the SAME family bucket
+`infer_family` reproduces read-side — and passes the matching entry into
+`src/proxy/logging.py`'s `_build_forwarded_delta` to compute `system_delta`/`tools_delta`. Keyed by
+model family, not by "is this a conversation turn", so after each interleaved sidecar call, the NEXT real
+conversation request gets diffed on the WRITE side against the sidecar's own system/tools, and every
+real block comes back looking changed even though its content never moved (verified: hashed
+`rag-chunking_1788333660`'s REQ 2 tools against REQ 1's — all 6 byte-identical, yet the raw
+`tools_delta` still names all 6). Excluding the sidecar from the boundary WALK (first pass) fixed
+which request a delta gets attributed to, but the delta dict itself still carried that write-side
+noise. `_delta_lines` now closes the other half read-side: `sys_hash_by_index`/`tools_hash_by_index`
+(threaded through `request_boundaries`, one dict per kind) hold the CONTENT hash last seen at each
+index across REAL requests only, via `_delta_hash` — imported from `src/proxy/logging.py`, the exact
+same normalisation the write side uses (cache_control stripped), so a hash match here is not a
+coincidence, it is the same equality test the proxy itself would apply if it were diffing against
+the right previous request. An index present in the raw delta whose hash MATCHES what is stored is
+dropped — no line, no tag — rather than shown as `changed`; only a genuine content difference (or an
+index never seen before) produces a line. This is a read-side workaround for a write-side bug in
+`src/proxy` (`prev_delta_hashes_by_model` should key on conversation identity, not bare model name);
+fixing it there is out of this package's scope and stays a follow-up for the `proxy` area — do not
+"fix" it here a second time by touching `src/proxy`.
 
 **A re-fire leaves its only trace on the separator.** A request that re-sent the same message list
 added no msg, so it opens no group of its own; it is folded into the next separator as

@@ -2,6 +2,7 @@
 import json
 from pathlib import Path
 
+from ..proxy.logging import _delta_hash
 from ..proxy.message_summary import _summarize_message
 from .reader import infer_family, iter_jsonl, load_last_request
 
@@ -145,16 +146,40 @@ def _tool_chars(tool) -> int:
 
 # One request's sys/tool delta lines, in index order — {"label", "chars", "tag"}. `tag` is None
 # for the family's first request (every block is listed, nothing "changed" or "new" yet), else
-# "new" for an index beyond the previous request's count and "changed" for one inside it. System
-# index 0 (the billing header, see _BILLING_HEADER_SYS_INDEX) is dropped on every request but the
-# first — it changes by construction and never invalidates the cache.
-def _delta_lines(delta: dict, prev_count: int, is_first: bool, kind: str) -> list:
+# "new" for an index never before seen in `hash_by_index` and "changed" for one whose CONTENT hash
+# now differs from what is stored there. System index 0 (the billing header, see
+# _BILLING_HEADER_SYS_INDEX) is dropped on every request but the first — it changes by construction
+# and never invalidates the cache.
+#
+# `hash_by_index` is the per-kind (system or tools) content-hash map `request_boundaries` threads
+# across the whole walk, MUTATED here — the caller's dict is the state, not a snapshot. Content is
+# hashed with `_delta_hash`, the exact same normalisation `src/proxy/logging.py` uses to decide
+# what belongs in `system_delta`/`tools_delta` in the first place (cache_control stripped), so a
+# cache_control move alone never reads as a change here either.
+#
+# An index present in the raw delta but whose hash is UNCHANGED from what is stored is dropped
+# entirely — no line, no tag. This is deliberate, not an edge case: the proxy's own delta chain is
+# keyed by model family, so the request right after an interleaved sidecar call (see `_is_sidecar`)
+# gets diffed against the SIDECAR's system/tools on the write side, and every real block comes back
+# "changed" even though its content never moved. `request_boundaries` already excludes the sidecar
+# from becoming a boundary; this closes the matching write-side half of the same bug — a raw delta
+# entry is not proof of a real change, only a hash comparison against OUR OWN last-seen content is.
+def _delta_lines(delta: dict, hash_by_index: dict, is_first: bool, kind: str) -> list:
     lines = []
     for key in sorted(delta, key=int):
         index = int(key)
         if kind == "sys" and index == _BILLING_HEADER_SYS_INDEX and not is_first:
             continue
         element = delta[key]
+        content_hash = _delta_hash(element)
+        if is_first:
+            tag = None
+        else:
+            prev_hash = hash_by_index.get(index)
+            if prev_hash == content_hash:
+                continue  # write-side artifact — content unchanged since we last saw this index
+            tag = "changed" if index in hash_by_index else "new"
+        hash_by_index[index] = content_hash
         if kind == "sys":
             label = f"sys[{index}]"
             chars = _system_block_chars(element)
@@ -162,7 +187,6 @@ def _delta_lines(delta: dict, prev_count: int, is_first: bool, kind: str) -> lis
             name = element.get("name", "?") if isinstance(element, dict) else "?"
             label = f"tool[{name}]"
             chars = _tool_chars(element)
-        tag = None if is_first else ("new" if index >= prev_count else "changed")
         lines.append({"label": label, "chars": chars, "tag": tag})
     return lines
 
@@ -183,21 +207,21 @@ def _is_sidecar(counts: dict) -> bool:
 # mid-log-id, so boundaries before that point do not align with the final message list.
 #
 # A sidecar entry (see `_is_sidecar`) is skipped entirely, before anything reads or updates
-# `prev_count`/`prev_sys_count`/`prev_tools_count` — it never becomes a boundary, so it can neither
-# fake a restart (its own tiny message count would otherwise regress against the real
-# conversation's) nor pollute the sys/tool delta comparison the NEXT real request is tagged
-# against.
+# `prev_count` or the sys/tool hash maps — it never becomes a boundary, so it can neither fake a
+# restart (its own tiny message count would otherwise regress against the real conversation's) nor
+# seed a content hash the NEXT real request would be wrongly compared against.
 #
 # Each boundary also carries `sys_lines`/`tool_lines` — the system/tool blocks that request's
-# `system_delta`/`tools_delta` names, relative to the PREVIOUS request of the same family (see
-# `_delta_lines`). Computed here rather than re-derived later, since the previous request's
-# counts are only available while walking the stream forward.
+# `system_delta`/`tools_delta` names, content-compared against the LAST REAL (non-sidecar) request
+# that touched each index (see `_delta_lines`). `sys_hash_by_index`/`tools_hash_by_index` are this
+# walk's running state, one dict per kind, live across every boundary of the family — computed here
+# rather than re-derived later, since the state is only available while walking the stream forward.
 def request_boundaries(forwarded_path: Path, family: str) -> list:
     boundaries = []
     request_no = 0
     prev_count = 0
-    prev_sys_count = 0
-    prev_tools_count = 0
+    sys_hash_by_index: dict = {}
+    tools_hash_by_index: dict = {}
     for entry in iter_jsonl(forwarded_path):
         if entry.get("type") != "forwarded_delta":
             continue
@@ -218,12 +242,10 @@ def request_boundaries(forwarded_path: Path, family: str) -> list:
             "start_index": 0 if restart else prev_count,
             "message_count": count,
             "restart": restart,
-            "sys_lines": _delta_lines(entry.get("system_delta") or {}, prev_sys_count, is_first, "sys"),
-            "tool_lines": _delta_lines(entry.get("tools_delta") or {}, prev_tools_count, is_first, "tool"),
+            "sys_lines": _delta_lines(entry.get("system_delta") or {}, sys_hash_by_index, is_first, "sys"),
+            "tool_lines": _delta_lines(entry.get("tools_delta") or {}, tools_hash_by_index, is_first, "tool"),
         })
         prev_count = count
-        prev_sys_count = counts.get("system", prev_sys_count)
-        prev_tools_count = counts.get("tools", prev_tools_count)
     return boundaries
 
 
