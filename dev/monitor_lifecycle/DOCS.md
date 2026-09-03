@@ -23,7 +23,7 @@ dated report in `reports/`.
 
 ---
 
-### tests/test_monitor_sweep.py (101 LOC)
+### tests/test_monitor_sweep.py (102 LOC)
 
 **Purpose:** Regression test for `src/monitor_janitor.py`. Creates three real throwaway tmux
 sessions (`monitor_cc_testold`, `monitor_cc_testnew`, `worker-testkeep`), ages `testold` by a few
@@ -34,8 +34,11 @@ sweep `testold` is killed (session gone, its pane's real PID reaped — no orpha
 and `worker-testkeep` are untouched; the sweep log recorded both decisions. Cleans up all three
 sessions in a `finally`.
 **Reads:** Live tmux state.
-**Writes:** Three throwaway tmux sessions (removed at the end); appends to `src/logs/monitor_sweep.log`
-(the real sweep log — same file production uses).
+**Writes:** Three throwaway tmux sessions (removed at the end); appends to this checkout's real
+sweep log via `monitor_janitor._log_path()` (`$MONITOR_CC_ROOT`-or-else-`__file__`-derived — see
+`src/DOCS.md`'s `monitor_janitor.py` entry — so running this test from a worktree writes into
+that worktree's `src/logs/monitor_sweep.log`, not the main checkout's, unless `MONITOR_CC_ROOT`
+is set in the environment).
 **Called by:** run manually — regression guard for `monitor_janitor.py`.
 **Calls out:** `src.monitor_janitor` (`/tests/` + `test_*.py` naming exempts this file from the
 `block_dev_imports_src` hook).

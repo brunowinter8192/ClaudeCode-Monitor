@@ -3,6 +3,17 @@
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- REQUIRES Full Disk Access for /usr/bin/python3 (resolves to
+       /Library/Developer/CommandLineTools/usr/bin/python3 on a Command Line Tools install) if
+       the checkout lives under ~/Documents (or ~/Desktop, ~/Downloads): macOS TCC blocks a
+       plain launchd-spawned process (no Terminal/shell ancestor to inherit an approval from)
+       from even LISTING that directory (confirmed live: os.listdir() on the checkout path
+       raised PermissionError under launchd, while the identical call from an interactive shell
+       worked). `python3 -m src.monitor_janitor` then fails "ModuleNotFoundError: No module
+       named src" even with PYTHONPATH/WorkingDirectory both correct, because Python's import
+       machinery cannot read the directory it is pointed at. Grant it once: System Settings,
+       Privacy and Security, Full Disk Access, +, Cmd+Shift+G,
+       /Library/Developer/CommandLineTools/usr/bin/python3, Open, enable the toggle. -->
   <key>Label</key>
   <string>com.brunowinter.monitor-cc-sweep</string>
 
@@ -33,6 +44,18 @@
     <!-- arm64 Homebrew: /opt/homebrew/bin; Intel fallback: /usr/local/bin  -->
     <key>PATH</key>
     <string>/opt/homebrew/bin:/opt/homebrew/sbin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+
+    <!-- WorkingDirectory alone does NOT make `-m src.monitor_janitor` importable under launchd
+         (confirmed live: ModuleNotFoundError even with WorkingDirectory set correctly) — `-m`
+         needs the package root on sys.path explicitly. -->
+    <key>PYTHONPATH</key>
+    <string><PROJECT_ROOT></string>
+
+    <!-- Pins the sweep log to THIS checkout's src/logs/ (monitor_janitor.py's own
+         MONITOR_CC_ROOT-or-else-__file__ resolution), independent of any ambiguity in how
+         __file__ resolves under launchd -->
+    <key>MONITOR_CC_ROOT</key>
+    <string><PROJECT_ROOT></string>
   </dict>
 
   <key>StandardOutPath</key>

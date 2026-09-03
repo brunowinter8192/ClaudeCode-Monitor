@@ -6,7 +6,7 @@ from pathlib import Path
 
 # add project root to path so src.monitor_janitor is importable as `from src.` (see Import Convention)
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent.parent))
-from src.monitor_janitor import list_monitor_sessions, sweep_sessions, _LOG_PATH  # noqa: E402
+from src.monitor_janitor import list_monitor_sessions, sweep_sessions, _log_path  # noqa: E402
 
 _OLD_NAME    = "monitor_cc_testold"
 _NEW_NAME    = "monitor_cc_testnew"
@@ -86,9 +86,10 @@ def _pid_alive(pid: int) -> bool:
 
 # True if the sweep log's tail has a line naming this session with this status
 def _log_has(name: str, status: str) -> bool:
-    if not _LOG_PATH.exists():
+    log_path = _log_path()
+    if not log_path.exists():
         return False
-    tail = _LOG_PATH.read_text(encoding='utf-8').splitlines()[-20:]
+    tail = log_path.read_text(encoding='utf-8').splitlines()[-20:]
     return any(f"{name} " in line and status in line for line in tail)
 
 # Kill all three fixture sessions, ignoring any that are already gone

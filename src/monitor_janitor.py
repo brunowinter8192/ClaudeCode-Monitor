@@ -1,4 +1,5 @@
 # INFRASTRUCTURE
+import os
 import subprocess
 import time
 from datetime import datetime, timezone
@@ -9,7 +10,6 @@ from .tmux_launcher import kill_session
 
 _SESSION_PREFIX  = "monitor_cc_"
 _MAX_AGE_SECONDS = 24 * 3600
-_LOG_PATH        = Path(__file__).resolve().parent / "logs" / "monitor_sweep.log"
 
 # ORCHESTRATOR
 
@@ -58,12 +58,29 @@ def sweep_one_session(name: str, created: int, now: float, max_age_seconds: int)
     log_sweep_line(name, age_seconds, killed)
     return {"name": name, "age_seconds": age_seconds, "killed": killed}
 
+# The checkout this process's logs belong to: $MONITOR_CC_ROOT if set (the plists set it
+# explicitly, same substitution as WorkingDirectory/PYTHONPATH), else derived from wherever
+# monitor_janitor.py itself is physically executing from (a worktree, if run from one) — no
+# main-checkout fallback like dual_log_cli's, since this path is a WRITE target that must follow
+# whichever checkout's code produced the entry, not a read source to prefer aggregating in one place.
+def _resolve_monitor_cc_root() -> Path:
+    env_root = os.environ.get("MONITOR_CC_ROOT")
+    if env_root:
+        return Path(env_root)
+    return Path(__file__).resolve().parent.parent
+
+# Sweep log path under the resolved checkout's src/logs/ — resolved fresh on every call so a
+# test can point MONITOR_CC_ROOT elsewhere without reimporting this module
+def _log_path() -> Path:
+    return _resolve_monitor_cc_root() / "src" / "logs" / "monitor_sweep.log"
+
 # Append one line to the sweep log: UTC timestamp, session name, age in hours, KILLED/SPARED
 def log_sweep_line(name: str, age_seconds: float, killed: bool) -> None:
-    _LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    log_path = _log_path()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     status = "KILLED" if killed else "SPARED"
-    with _LOG_PATH.open('a', encoding='utf-8') as f:
+    with log_path.open('a', encoding='utf-8') as f:
         f.write(f"{ts} {name} age={age_seconds / 3600:.1f}h {status}\n")
 
 if __name__ == "__main__":
