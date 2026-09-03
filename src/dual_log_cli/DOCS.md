@@ -46,7 +46,8 @@ in the main checkout.
 line and parses only that line → `timeline` builds turn rows via `proxy.message_summary` plus
 request boundaries from `_forwarded.counts.messages`. `msgs` prints those rows for an inclusive
 index range, interleaving one REQ separator per request group (`timeline.request_markers` folds the
-boundaries into `{msg_index: {number, timestamp, refires}}`); `expand` slices an anchor-centred
+boundaries into `{msg_index: {number, timestamp, refires, flow_id}}`) and, when `usage.build_usage_by_flow`
+resolves it, that group owner's prompt-cache usage; `expand` slices an anchor-centred
 window out of the same rows, re-summarizes each selected msg for its full block content, and adds
 the proxy's own transformations of those blocks via `overlay` (which accumulates the session's
 `_stripped`/`_injected` delta streams through `proxy_display.parser.accumulate_dual_log`).
@@ -57,13 +58,13 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ## Modules
 
-### __main__.py (289 LOC)
+### __main__.py (295 LOC)
 
-**Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
+**Purpose:** argparse dispatch for the four subcommands (`sessions`, `msgs`, `expand`, `search`) plus the optional `CONTEXT` / `SCOPE` / `FROM` / `TO` positionals and the `--since` / `--until` / `--before` / `--after` / `--only` / `--case-sensitive` variants, `expand`'s window arithmetic and bound validation (`_run_expand` / `_window`), `msgs`' inclusive-range defaulting and bound validation (`_run_msgs`, which also builds the CR/CC usage map via `usage.build_usage_by_flow`), the shared `_reject_bad_days` validator, the per-session search loop with its skip-on-unloadable guard, day-flag validation via `strptime` (rejects impossible dates, not just wrong shapes), the shared `_load_for` session resolution, the process exit codes, and the broken-pipe guard.
 **Reads:** `sys.argv`; the resolved dual_log directory via `discovery`.
 **Writes:** stdout (rendered text), stderr (resolution, range and empty-term errors). Never touches the log directory.
 **Called by:** the user, via `python -m src.dual_log_cli` or `bin/duallog`.
-**Calls out:** `discovery`, `render`, `search`, `timeline`, `overlay` (all package-local; `overlay` only from `_run_expand`).
+**Calls out:** `discovery`, `render`, `search`, `timeline`, `overlay`, `usage` (all package-local; `overlay` only from `_run_expand`, `usage` only from `_run_msgs`).
 
 ---
 
@@ -107,9 +108,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### timeline.py (257 LOC)
+### timeline.py (260 LOC)
 
-**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires}}`, what `msgs` draws its REQ separators from), `request_numbers_by_flow` (boundaries → `{flow_id: REQ number}`, what `overlay` uses to name the request behind a strip), and `load_timeline` as the one call that assembles everything a render needs. Both numbering consumers share `_running_request_numbers`, so the overlay can never drift from the number `msgs` prints. Boundaries carry `flow_id` since 2026-08-30 — additive, `request_markers` ignores it. `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed. Its `number` deliberately counts only msg-adding requests, which is what aligns it with the proxy pane's `#N` (see Gotchas). `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
+**Purpose:** Turn-row construction for one payload, `iter_block_texts` (the block-text generator `search` builds on), single-turn full extraction (`full_turn`, what `expand` dumps), request-boundary derivation from the `_forwarded` delta stream, `build_turn_times` (turn → timestamp of the request that first carried it), `request_markers` (boundaries → `{msg_index: {number, timestamp, refires, flow_id}}`, what `msgs` draws its REQ separators from — `flow_id` is what `usage.build_usage_by_flow` keys its CR/CC map by), `request_numbers_by_flow` (boundaries → `{flow_id: REQ number}`, what `overlay` uses to name the request behind a strip), and `load_timeline` as the one call that assembles everything a render needs. Both numbering consumers share `_running_request_numbers`, so the overlay can never drift from the number `msgs` prints. `request_markers` groups boundaries by the msg index they open and takes the LAST of each group as the owner — within a group every member shares one `prev_count`, so only the last can have raised `message_count`, which makes it the request that actually added those msgs; the earlier members are re-fires and are counted, not listed. Its `number` deliberately counts only msg-adding requests, which is what aligns it with the proxy pane's `#N` (see Gotchas). `load_timeline` returns `entry`, `family`, `line_bytes` and `haiku_lines_skipped` without readers today; `session`, `payload`, `turns`, `turn_times` and — since `msgs` grew separators — `boundaries` all have them.
 **Reads:** The parsed last-request payload; the session's `_forwarded.jsonl`.
 **Writes:** Nothing — returns row lists, a generator, and one data dict.
 **Called by:** `__main__.py`, `search.py`.
@@ -127,6 +128,16 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
+### usage.py (117 LOC, new 2026-09-02)
+
+**Purpose:** Builds `msgs`' `{flow_id: (cache_read_input_tokens, cache_creation_input_tokens)}` map — the CR/CC figures a REQ separator shows for the group owner. The dual log never carries the response body, so the join runs through THREE stores: the session's `_response` stream gives `{flow_id: (request_id, status_code)}`; the first non-haiku boundary whose flow resolves there is the anchor whose request id locates the ONE transcript file in `~/.claude/projects/` containing the literal fragment `"requestId":"<id>"` (never a bare id — a tool_result can quote one, which would silently resolve to the wrong transcript); that transcript's `type == "assistant"` records give `{request_id: (cr, cc)}`, keeping only the first record per id since one API request produces several identical-usage streaming chunks. `build_usage_by_flow` then keeps only flows whose `_response` status is 200, so an errored owner degrades to no figures rather than a wrong pair.
+**Reads:** The session's `_response.jsonl`; `~/.claude/projects/*/*.jsonl` (one `grep -rlF` search plus one full read of the single matching transcript).
+**Writes:** Nothing — returns one `{flow_id: (cr, cc)}` dict; `{}` on any missing stream, unresolved anchor, zero/multiple transcript matches, or unreadable transcript, which degrades every separator to the value-less pre-feature form.
+**Called by:** `__main__.py` (`_run_msgs` only, so `sessions`/`search`/`expand` never read `~/.claude/projects/`).
+**Calls out:** `reader` (`iter_jsonl`); stdlib `subprocess` (fixed-string `grep -rlF`, never a shell/regex form, over the transcript store — measured 0.05 s / one match on a 316-file, 1.3 GB store when a real `rg`-class tool backs it; a slower system `grep` degrades latency, never correctness).
+
+---
+
 ### search.py (48 LOC)
 
 **Purpose:** The literal-substring matcher over one session's deduplicated timeline. Returns one hit per matching (turn, block) with an occurrence count and a whitespace-collapsed context snippet.
@@ -137,9 +148,9 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### render.py (199 LOC)
+### render.py (213 LOC)
 
-**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
+**Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, widened to `── REQ n  HH:MM:SS  CR c  CC c ──` when an optional `usage_by_flow` map (from `usage.build_usage_by_flow`, `{flow_id: (cr, cc)}`) resolves the group owner's flow_id — an unresolved or absent map renders the plain pre-feature separator, never a placeholder — then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator back), search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
@@ -247,7 +258,13 @@ Sub-lines are whitespace-indented rather than `[`-prefixed, so `grep '^\['` keep
 lines only and both sub-lines and separators fall to `grep -v`. The separator became part of the
 contract on 2026-08-30 (it was absent for the command's first hours): every msg line sits under the
 `── REQ n  HH:MM:SS ──` line of the request that added it, so `grep -v '^──' | grep -v '^ '`
-recovers the original separator-free, sub-line-free listing exactly. `msgs <session>` is the whole
+recovers the original separator-free, sub-line-free listing exactly. Since 2026-09-02 a separator
+additionally carries `CR c  CC c` (the group owner's `cache_read_input_tokens` /
+`cache_creation_input_tokens`, joined from CC's own transcript via `usage.build_usage_by_flow`)
+between the clock and the closing `──` whenever that join resolves; an unresolved owner (missing
+`_response` stream, no matching transcript, or a non-200 owner status) keeps the plain
+pre-2026-09-02 separator rather than showing a placeholder, so `grep -v '^──'` still recovers the
+exact same msg/sub-line listing either way. `msgs <session>` is the whole
 session, `msgs <session> F T` an inclusive range, and `msgs <session> F` runs from F to the last
 msg. A bad bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
 `TO 2 is before FROM 5`). A NEGATIVE bound needs a `--` separator (`msgs <s> -- -1`), else argparse

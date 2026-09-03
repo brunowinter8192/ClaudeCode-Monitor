@@ -178,7 +178,9 @@ def build_turn_times(boundaries: list) -> dict:
     return times
 
 
-# Which request opened each msg index -> {msg_index: {number, timestamp, refires}}.
+# Which request opened each msg index -> {msg_index: {number, timestamp, refires, flow_id}}.
+# flow_id is the owner's — what `usage.build_usage_by_flow` keys its {flow_id: (cr, cc)} map by,
+# so a separator can look up its own request's prompt-cache usage without a second index.
 #
 # Boundaries are grouped by the index they open. Several land on one index when a request re-fired
 # without adding a msg (a retry/abort re-send) or when a restart reset the index to 0. At most ONE
@@ -202,6 +204,7 @@ def request_markers(boundaries: list) -> dict:
             "number": numbers[owner],
             "timestamp": boundaries[owner]["timestamp"],
             "refires": len(positions) - 1,
+            "flow_id": boundaries[owner].get("flow_id", ""),
         }
     return markers
 
