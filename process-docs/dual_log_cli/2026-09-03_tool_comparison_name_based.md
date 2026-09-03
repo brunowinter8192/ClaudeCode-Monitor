@@ -1,8 +1,7 @@
 # Tool Comparison Goes Name-Based — Index Comparison Cannot Tell a Removal From Its Renumbered Neighbours, 2026-09-03
 
-Continues this area's sys/tool delta line work
-(`2026-09-03_msgs_sys_tool_delta_lines.md`, `2026-09-03_sidecar_exclusion_and_delta_hash_fix.md`).
-Review of that second entry's Measurement 3 caught a third defect in the same feature:
+Continues this area's sys/tool delta line work of the same day, the delta lines and the sidecar
+exclusion. Review of the sidecar entry's Measurement 3 caught a third defect in the same feature:
 `skill-help_1788343931` REQ 196 — the corpus's one confirmed real prompt-cache rebuild — printed
 `tool[Skill] changed` and `tool[Write] changed`, but neither tool's own definition had moved.
 
