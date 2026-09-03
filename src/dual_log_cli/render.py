@@ -63,7 +63,11 @@ _BLOCK_LABEL_WIDTH = _MSG_PREFIX_WIDTH + _MSG_LABEL_WIDTH - len(_BLOCK_INDENT)
 # separator at all, so it falls back to the group that GOVERNS it — the nearest one opening at or
 # before it. A session whose _forwarded stream is missing or yields no boundaries prints no
 # separators at all, which is exactly the pre-separator output.
-def render_msgs(data: dict, start: int, end: int) -> str:
+#
+# usage_by_flow is {flow_id: (cache_read, cache_creation)} from usage.build_usage_by_flow, keyed
+# on the group owner's flow_id; a group whose flow_id is absent (usage unresolved, or no usage
+# joined for the session at all) prints the separator without CR/CC — never a placeholder.
+def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None) -> str:
     markers = request_markers(data.get("boundaries") or [])
     lines = []
     for offset, msg in enumerate(data["turns"][start:end + 1]):
@@ -71,7 +75,7 @@ def render_msgs(data: dict, start: int, end: int) -> str:
         if marker is None and offset == 0:
             marker = _governing_marker(markers, msg["index"])
         if marker is not None:
-            lines.append(_req_separator(marker))
+            lines.append(_req_separator(marker, usage_by_flow))
         blocks = msg["blocks"]
         label = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
         chars = f"{msg['chars']:,}c"
@@ -97,13 +101,23 @@ def _governing_marker(markers: dict, index: int):
     return markers[max(starts)] if starts else None
 
 
-# One REQ separator: the request that opened this msg index, and when it was sent
-def _req_separator(marker: dict) -> str:
+# One REQ separator: the request that opened this msg index, when it was sent, and — when
+# resolved — its prompt-cache usage. The re-fire suffix stays OUTSIDE the closing "──", exactly
+# where it sat before usage was added; CR/CC sits inside, between the clock and the "──".
+def _req_separator(marker: dict, usage_by_flow: dict = None) -> str:
     refires = marker["refires"]
     extra = ""
     if refires:
         extra = f"  (+{refires} re-fire{'s' if refires != 1 else ''})"
-    return f"── REQ {marker['number']}  {_clock(marker['timestamp'])} ──{extra}"
+    usage = (usage_by_flow or {}).get(marker.get("flow_id"))
+    usage_part = f"  {_fmt_usage(*usage)}" if usage else ""
+    return f"── REQ {marker['number']}  {_clock(marker['timestamp'])}{usage_part} ──{extra}"
+
+
+# "CR 9,096  CC 1,928" — cache_read_input_tokens / cache_creation_input_tokens of the response
+# that owns the group, same 1,234 digit-grouping the msg lines use for chars
+def _fmt_usage(cache_read: int, cache_creation: int) -> str:
+    return f"CR {cache_read:,}  CC {cache_creation:,}"
 
 
 # Search result: header plus one line per matching block

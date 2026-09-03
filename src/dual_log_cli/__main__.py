@@ -7,7 +7,8 @@ Commands:
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
-    msgs <session>           request groups: a REQ separator, then the msgs that request added
+    msgs <session>           request groups: a REQ separator (with CR/CC prompt-cache usage when
+                             resolvable), then the msgs that request added
     msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
     expand <s> <msg>         full content of that msg, plus what the proxy stripped/injected there
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
@@ -48,6 +49,7 @@ from .project_map import build_project_map
 from .render import render_expand_full, render_msgs, render_search, render_sessions
 from .search import find_matches
 from .timeline import full_turn, load_timeline
+from .usage import build_usage_by_flow
 
 # ORCHESTRATOR
 
@@ -89,7 +91,9 @@ def _parse_args(argv: list) -> argparse.Namespace:
         "msgs",
         help="one classifier line per msg of a session",
         description=(
-            "Prints the session as request groups: a `── REQ n  HH:MM:SS ──` separator, then the "
+            "Prints the session as request groups: a `── REQ n  HH:MM:SS ──` separator — "
+            "`── REQ n  HH:MM:SS  CR c  CC c ──` when the owning request's prompt-cache usage "
+            "resolves against CC's own transcript, unresolved ones staying plain — then the "
             "`[idx] role type chars` line of every msg that request added. Nothing else — no "
             "totals, no previews. A multi-block msg shows its block count in place of the type, "
             "followed by one indented sub-line per block (its own type/tool-name and chars, "
@@ -235,7 +239,8 @@ def _run_msgs(dual_log_dir, args: argparse.Namespace) -> int:
     if end < start:
         print(f"TO {end} is before FROM {start}", file=sys.stderr)
         return 2
-    sys.stdout.write(render_msgs(data, start, end))
+    usage_by_flow = build_usage_by_flow(data["session"], data["boundaries"])
+    sys.stdout.write(render_msgs(data, start, end, usage_by_flow))
     return 0
 
 
