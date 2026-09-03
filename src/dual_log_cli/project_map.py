@@ -39,13 +39,15 @@ def _first_cwd(transcript: Path) -> str:
     return ""
 
 
-# Every project path CC has a transcript for
-def _project_cwds(projects_root: Path) -> set:
-    cwds = set()
+# {cwd: directory} — one entry per project CC has a transcript for. A dict rather than the set
+# an earlier version returned, so a caller can walk back from a cwd to the actual directory it
+# lives in (usage.py scopes a transcript search to it) instead of only knowing the cwd exists.
+def _project_cwd_dirs(projects_root: Path) -> dict:
+    dirs = {}
     try:
         entries = sorted(projects_root.iterdir())
     except Exception:
-        return cwds
+        return dirs
     for entry in entries:
         if not entry.is_dir():
             continue
@@ -60,9 +62,24 @@ def _project_cwds(projects_root: Path) -> set:
         for transcript in transcripts[:_TRANSCRIPTS_PER_DIR]:
             cwd = _first_cwd(transcript)
             if cwd:
-                cwds.add(cwd)
+                dirs[cwd] = entry
                 break
-    return cwds
+    return dirs
+
+
+# One walk of the transcript store, in two shapes a caller can join stem parts against without
+# re-walking: `cwd_to_dir` for a main stem's label match (`usage.py` filters every cwd whose
+# `project_label` equals the stem's label), `sid_to_cwd` for a worker stem's sid8 lookup (the same
+# md5(project_path)[:8] hash `build_project_map` uses, kept as the real path here instead of
+# collapsing it to a label, since `usage.py` needs the path to derive the worker's OWN worktree
+# cwd from it).
+def build_project_index(projects_root=None) -> dict:
+    root = Path(projects_root) if projects_root else _PROJECTS_ROOT
+    cwd_to_dir = _project_cwd_dirs(root)
+    sid_to_cwd = {}
+    for cwd in cwd_to_dir:
+        sid_to_cwd.setdefault(_proxy_session_id_for_project(cwd), cwd)
+    return {"cwd_to_dir": cwd_to_dir, "sid_to_cwd": sid_to_cwd}
 
 
 # Map the proxy's md5(project_path)[:8] session id to a project label, for every project CC knows.
@@ -70,8 +87,5 @@ def _project_cwds(projects_root: Path) -> set:
 # single source shared with addon.py's _derive_session_id — never re-derived here.
 # Returns {} on any failure; an empty map degrades rendering to the <sid8> fallback, never an error.
 def build_project_map(projects_root=None) -> dict:
-    root = Path(projects_root) if projects_root else _PROJECTS_ROOT
-    mapping = {}
-    for cwd in _project_cwds(root):
-        mapping.setdefault(_proxy_session_id_for_project(cwd), project_label(cwd))
-    return mapping
+    index = build_project_index(projects_root)
+    return {sid: project_label(cwd) for sid, cwd in index["sid_to_cwd"].items()}

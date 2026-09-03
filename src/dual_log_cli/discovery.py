@@ -66,6 +66,24 @@ def context_for_stem(stem: str, project_map: dict = None) -> str:
     return f"{head}/{tail}" if tail else head
 
 
+# Parse a stem into its raw identity, the same split context_for_stem renders into a string:
+# ("worker", sid8, name) or ("main", family_head, label). None when a "worker_" body does not
+# match the expected shape. usage.py uses this to locate a session's CC project directory from
+# the stem alone, without touching context_for_stem's own rendering path.
+def stem_identity(stem: str):
+    body = stem[len(_STEM_PREFIX):] if stem.startswith(_STEM_PREFIX) else stem
+    body = _TRAILING_EPOCH_RE.sub("", body)
+    if body.startswith("worker_"):
+        match = _WORKER_BODY_RE.match(body[len("worker_"):])
+        if not match:
+            return None
+        return ("worker", match.group("sid"), match.group("name"))
+    head, _, tail = body.partition("_")
+    if not tail:
+        return None
+    return ("main", head, tail)
+
+
 # Group every *.jsonl in the directory by session stem → {stream: Path}
 def group_streams(dual_log_dir: Path) -> dict:
     stems: dict = {}

@@ -6,10 +6,9 @@ Covers: `_req_separator`/`render_msgs` render `CR c  CC c` between the clock and
 `──` when a marker's flow_id resolves in the usage map (digit-grouped, no `c` suffix, re-fire
 suffix staying OUTSIDE the `──` exactly as before), and render the pre-feature plain separator
 when it does not — never a placeholder. `usage.build_usage_by_flow` is exercised end to end
-against FIXTURE `_response`/transcript files (a temp dir stands in for both the dual-log stream
-and `~/.claude/projects/`, via the `projects_root` parameter `_find_transcript` accepts), so the
-suite depends only on those fixtures and the system `grep` binary the production code itself
-shells out to — never on the real, live-growing dual-log or transcript store.
+against a FIXTURE `~/.claude/projects/`-shaped tree (a temp dir passed via `projects_root`, for
+both a main-stem label match and a worker-stem sid8 match), so the suite depends only on those
+fixtures — a plain Python file read, never a subprocess or the real, live-growing store.
 
 Run (from project root):
     ./venv/bin/python dev/dual_log_cli/tests/test_msgs_usage.py
@@ -29,6 +28,7 @@ sys.path.insert(0, str(_HERE.parents[2]))
 
 from src.dual_log_cli.render import render_msgs
 from src.dual_log_cli.usage import build_usage_by_flow, _find_transcript
+from src.proxy_display.forwarded_parser import _proxy_session_id_for_project
 
 PASS_LIST = []
 FAIL_LIST = []
@@ -55,6 +55,25 @@ def _block(type_: str, chars: int) -> dict:
 def _boundary(start_index: int, message_count: int, timestamp: str, flow_id: str) -> dict:
     return {"start_index": start_index, "message_count": message_count, "timestamp": timestamp,
             "flow_id": flow_id, "restart": False}
+
+
+# One fake `~/.claude/projects/<dir>/<uuid>.jsonl` transcript: a leading line carrying "cwd" (what
+# project_map._first_cwd scans for) followed by one assistant record per (request_id, cr, cc)
+# triple, all compact JSON (no space after ":") to match CC's own transcripts exactly — the
+# literal fragment `_find_transcript` searches for has none either.
+def _write_fake_transcript(projects_root: Path, dir_name: str, cwd: str, records: list) -> Path:
+    project_dir = projects_root / dir_name
+    project_dir.mkdir(parents=True)
+    transcript_path = project_dir / "11111111-1111-1111-1111-111111111111.jsonl"
+    lines = [{"cwd": cwd}]
+    for request_id, cache_read, cache_creation in records:
+        lines.append({"type": "assistant", "requestId": request_id,
+                      "message": {"usage": {"cache_read_input_tokens": cache_read,
+                                             "cache_creation_input_tokens": cache_creation}}})
+    transcript_path.write_text(
+        "\n".join(json.dumps(line, separators=(",", ":")) for line in lines) + "\n"
+    )
+    return transcript_path
 
 
 # render_msgs with a resolved usage map renders "CR 9,096  CC 1,928" between the clock and the
@@ -107,11 +126,33 @@ def test_refire_suffix_stays_outside_usage() -> None:
     check("re-fire suffix sits after usage, outside the '──'", got.startswith(expected_line), got)
 
 
-# usage.build_usage_by_flow end to end: a fixture _response stream plus a fixture transcript
-# (via the projects_root override _find_transcript accepts) resolve to the right CR/CC, an
-# owner with a non-200 status is dropped even though its request id would otherwise resolve,
-# and an id absent from the transcript store degrades to {} rather than raising.
-def test_build_usage_by_flow_end_to_end() -> None:
+# _find_transcript scans plain Python file content — a hit inside `directories`, none outside
+# them, and mtime filtering drops a file that predates the session's start.
+def test_find_transcript_scopes_to_directories_and_mtime() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        inside = _write_fake_transcript(tmp_path, "-in-scope", "/Users/fake/inscope",
+                                        [("req_AAA", 500, 25)])
+        outside = _write_fake_transcript(tmp_path, "-out-of-scope", "/Users/fake/outscope",
+                                         [("req_AAA", 999, 999)])
+
+        found = _find_transcript("req_AAA", [inside.parent])
+        check("match found within the given directory", found == inside, found)
+
+        found_excluded = _find_transcript("req_AAA", [outside.parent.parent / "nonexistent"])
+        check("no match outside the given directories", found_excluded is None, found_excluded)
+
+        far_future = 9_999_999_999.0  # an mtime cutoff no fixture file (written just now) can meet
+        found_by_mtime = _find_transcript("req_AAA", [inside.parent], since_epoch=far_future)
+        check("mtime cutoff excludes a file older than the session start",
+              found_by_mtime is None, found_by_mtime)
+
+
+# usage.build_usage_by_flow end to end for a MAIN stem: the stem's label ("fakeproject") is
+# matched against a fixture project's cwd, its transcript resolves the right CR/CC, an owner
+# with a non-200 status is dropped even though its request id would otherwise resolve, and the
+# whole thing runs through a fixture projects_root — never the real store.
+def test_build_usage_by_flow_main_stem() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
         response_path = tmp_path / "session_response.jsonl"
@@ -121,40 +162,46 @@ def test_build_usage_by_flow_end_to_end() -> None:
         ]) + "\n")
 
         projects_root = tmp_path / "projects"
-        project_dir = projects_root / "-fake-project"
-        project_dir.mkdir(parents=True)
-        transcript_path = project_dir / "11111111-1111-1111-1111-111111111111.jsonl"
-        # CC's own transcripts are compact JSON (no space after ":") — the fragment
-        # `_find_transcript` searches for has none either, so the fixture must match that shape.
-        transcript_path.write_text("\n".join(json.dumps(line, separators=(",", ":")) for line in [
-            {"type": "assistant", "requestId": "req_AAA",
-             "message": {"usage": {"cache_read_input_tokens": 500, "cache_creation_input_tokens": 25}}},
-            {"type": "assistant", "requestId": "req_BBB",
-             "message": {"usage": {"cache_read_input_tokens": 999, "cache_creation_input_tokens": 999}}},
-        ]) + "\n")
+        _write_fake_transcript(projects_root, "-Users-fake-fakeproject", "/Users/fake/fakeproject",
+                               [("req_AAA", 500, 25), ("req_BBB", 999, 999)])
 
-        # build_usage_by_flow itself hardcodes the real ~/.claude/projects root, so this test
-        # exercises _find_transcript directly against the fixture root — the seam
-        # build_usage_by_flow is built from — rather than monkeypatching a private constant.
-        found = _find_transcript("req_AAA", projects_root=projects_root)
-        check("fixture transcript found via literal requestId fragment", found == transcript_path, found)
-
-        session = {"streams": {"response": response_path}}
+        session = {"stem": "api_requests_opus_fakeproject_1788367120",
+                   "streams": {"response": response_path}}
         boundaries = [
-            _boundary(0, 1, "2026-09-02T10:00:00Z", "f0"),
-            _boundary(1, 2, "2026-09-02T10:00:05Z", "f1"),
+            _boundary(0, 1, "2026-01-01T00:00:00Z", "f0"),
+            _boundary(1, 2, "2026-01-01T00:00:05Z", "f1"),
         ]
-        # Patch the module-level search to the fixture root for this call only
-        import src.dual_log_cli.usage as usage_module
-        original_root = usage_module._PROJECTS_ROOT
-        usage_module._PROJECTS_ROOT = projects_root
-        try:
-            result = build_usage_by_flow(session, boundaries)
-        finally:
-            usage_module._PROJECTS_ROOT = original_root
+        result = build_usage_by_flow(session, boundaries, projects_root=projects_root)
 
         check("200-status flow resolves to its transcript usage", result.get("f0") == (500, 25), result)
         check("400-status flow is dropped despite a resolvable request id", "f1" not in result, result)
+
+
+# The worker-stem path: sid8 is the real md5(cwd)[:8] hash, resolved to the project's cwd, and the
+# worker's OWN transcript directory is that cwd plus the worktree layout every worker runs under.
+def test_build_usage_by_flow_worker_stem() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        response_path = tmp_path / "session_response.jsonl"
+        response_path.write_text(json.dumps({"flow_id": "f0", "request_id": "req_CCC", "status_code": 200}) + "\n")
+
+        project_cwd = "/Users/fake/monitor-cc"
+        sid = _proxy_session_id_for_project(project_cwd)
+        worktree_cwd = f"{project_cwd}/.claude/worktrees/some-worker"
+
+        projects_root = tmp_path / "projects"
+        # The MAIN project's own directory — only its cwd is needed, to resolve sid8 -> cwd
+        _write_fake_transcript(projects_root, "-Users-fake-monitor-cc", project_cwd, [])
+        # The WORKTREE's directory — this is where the worker's own transcript actually lives
+        _write_fake_transcript(projects_root, "-Users-fake-monitor-cc--claude-worktrees-some-worker",
+                               worktree_cwd, [("req_CCC", 700, 70)])
+
+        session = {"stem": f"api_requests_worker_{sid}_some-worker_1788400000",
+                   "streams": {"response": response_path}}
+        boundaries = [_boundary(0, 1, "2026-01-01T00:00:00Z", "f0")]
+        result = build_usage_by_flow(session, boundaries, projects_root=projects_root)
+
+        check("worker stem resolves through sid8 -> cwd -> worktree cwd", result.get("f0") == (700, 70), result)
 
 
 # No boundaries, or no _response stream, degrades to {} rather than raising
@@ -171,7 +218,9 @@ def test_msgs_usage_workflow() -> None:
     test_separator_omits_unresolved_usage()
     test_separator_default_unchanged()
     test_refire_suffix_stays_outside_usage()
-    test_build_usage_by_flow_end_to_end()
+    test_find_transcript_scopes_to_directories_and_mtime()
+    test_build_usage_by_flow_main_stem()
+    test_build_usage_by_flow_worker_stem()
     test_build_usage_by_flow_degrades_cleanly()
 
     total = len(PASS_LIST) + len(FAIL_LIST)

@@ -68,12 +68,12 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### project_map.py (77 LOC, 2026-08-29)
+### project_map.py (91 LOC, 2026-08-29, extended 2026-09-02)
 
-**Purpose:** Resolves the proxy's `md5(project_path)[:8]` session id — the only trace of a worker's project in its stem — to a project label. Scans `~/.claude/projects/*/`, takes the first `cwd` record out of the newest transcript per directory, and hashes those real paths with the production helper. Reads CC's transcript store, never the dual logs.
+**Purpose:** Resolves the proxy's `md5(project_path)[:8]` session id — the only trace of a worker's project in its stem — to a project label. Scans `~/.claude/projects/*/`, takes the first `cwd` record out of the newest transcript per directory, and hashes those real paths with the production helper. Reads CC's transcript store, never the dual logs. `build_project_index` (added 2026-09-02 for `usage.py`) does the SAME walk once and returns it in two raw shapes instead of collapsing straight to `{sid8: label}`: `cwd_to_dir` (a main stem's label match) and `sid_to_cwd` (a worker stem's sid8 lookup, keeping the real path `usage.py` needs to derive a worktree cwd from). `build_project_map` is now a one-line projection of that index, so both callers share one walk's worth of logic even though `discovery.list_sessions` and `usage.build_usage_by_flow` invoke it separately (once per run each — not memoized across the two, since they run in different commands).
 **Reads:** `~/.claude/projects/<encoded>/<uuid>.jsonl` (first ~40 lines of up to 3 newest transcripts per project dir).
-**Writes:** Nothing — returns `{sid8: label}`; `{}` on any failure, which degrades rendering to the `<sid8>` fallback rather than erroring.
-**Called by:** `discovery.list_sessions` (once per run, shared across all sessions), `__main__._load_for`.
+**Writes:** Nothing — returns `{sid8: label}` (`build_project_map`) or `{"cwd_to_dir": ..., "sid_to_cwd": ...}` (`build_project_index`); both degrade to an empty structure on any failure rather than erroring.
+**Called by:** `discovery.list_sessions` (once per run, shared across all sessions), `__main__._load_for`, `usage.build_usage_by_flow` (`build_project_index` only).
 **Calls out:** `src/proxy_display/forwarded_parser.py` (`_proxy_session_id_for_project` — the single source shared with `addon.py`'s `_derive_session_id`, never re-derived here); stdlib (`json`, `os`, `pathlib`).
 
 ---
@@ -88,12 +88,12 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### discovery.py (190 LOC)
+### discovery.py (208 LOC)
 
-**Purpose:** Log-directory resolution, stem grouping, context rendering (`context_for_stem`, pure — the project map is injected, not looked up), the session inventory, all session selection in one place (`filter_sessions` — a `context` substring for `sessions`, a broader `scope` substring matching context OR stem for `search`, plus an inclusive start-day window, all ANDed), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
+**Purpose:** Log-directory resolution, stem grouping, context rendering (`context_for_stem`, pure — the project map is injected, not looked up), `stem_identity` (added 2026-09-02: the same worker/main split as `context_for_stem`, returned as raw parts — `("worker", sid8, name)` or `("main", family_head, label)` — for a caller that needs the pieces rather than the rendered string; `usage.py` is the only one so far), the session inventory, all session selection in one place (`filter_sessions` — a `context` substring for `sessions`, a broader `scope` substring matching context OR stem for `search`, plus an inclusive start-day window, all ANDed), and stem/substring resolution with explicit ambiguity and unknown errors (`AmbiguousSessionError`, `UnknownSessionError`).
 **Reads:** `MONITOR_CC_ROOT`; the dual_log directory listing; each stem's `_forwarded.jsonl` in full; `stat().st_size` of all six streams.
 **Writes:** Nothing — returns dicts.
-**Called by:** `__main__.py`, and indirectly by `timeline.load_timeline` through the session dict it is handed.
+**Called by:** `__main__.py`, and indirectly by `timeline.load_timeline` through the session dict it is handed; `usage.py` (`stem_identity` only).
 **Calls out:** `reader` (`infer_family`, `iter_jsonl`).
 
 ---
@@ -128,13 +128,13 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 ---
 
-### usage.py (117 LOC, new 2026-09-02)
+### usage.py (178 LOC, new 2026-09-02)
 
-**Purpose:** Builds `msgs`' `{flow_id: (cache_read_input_tokens, cache_creation_input_tokens)}` map — the CR/CC figures a REQ separator shows for the group owner. The dual log never carries the response body, so the join runs through THREE stores: the session's `_response` stream gives `{flow_id: (request_id, status_code)}`; the first non-haiku boundary whose flow resolves there is the anchor whose request id locates the ONE transcript file in `~/.claude/projects/` containing the literal fragment `"requestId":"<id>"` (never a bare id — a tool_result can quote one, which would silently resolve to the wrong transcript); that transcript's `type == "assistant"` records give `{request_id: (cr, cc)}`, keeping only the first record per id since one API request produces several identical-usage streaming chunks. `build_usage_by_flow` then keeps only flows whose `_response` status is 200, so an errored owner degrades to no figures rather than a wrong pair.
-**Reads:** The session's `_response.jsonl`; `~/.claude/projects/*/*.jsonl` (one `grep -rlF` search plus one full read of the single matching transcript).
-**Writes:** Nothing — returns one `{flow_id: (cr, cc)}` dict; `{}` on any missing stream, unresolved anchor, zero/multiple transcript matches, or unreadable transcript, which degrades every separator to the value-less pre-feature form.
+**Purpose:** Builds `msgs`' `{flow_id: (cache_read_input_tokens, cache_creation_input_tokens)}` map — the CR/CC figures a REQ separator shows for the group owner. The dual log never carries the response body, so the join runs through THREE stores, the middle one SCOPED rather than store-wide: the session's `_response` stream gives `{flow_id: (request_id, status_code)}`; the first non-haiku boundary whose flow resolves there is the anchor. `_candidate_dirs` resolves the session's STEM alone (via `discovery.stem_identity` and `project_map.build_project_index`) to the one or few `~/.claude/projects/` directories that could possibly hold its transcript — a worker stem's sid8 gives its project's cwd, to which `/.claude/worktrees/<name>` is appended for the worker's OWN cwd; a main stem's label is matched against every known cwd's label (plural on purpose — two projects can share a basename). `_find_transcript` then reads, in Python, only the `.jsonl` files in those directories whose mtime is at or after the session's start, stopping at the first one containing the literal fragment `"requestId":"<id>"` (never a bare id — a tool_result can quote one, which would silently resolve to the wrong transcript). That transcript's `type == "assistant"` records give `{request_id: (cr, cc)}`, keeping only the first record per id since one API request produces several identical-usage streaming chunks. `build_usage_by_flow` then keeps only flows whose `_response` status is 200, so an errored owner degrades to no figures rather than a wrong pair.
+**Reads:** The session's `_response.jsonl`; a small, stem-derived subset of `~/.claude/projects/*/*.jsonl` — the project-index walk (delegated to `project_map`) plus, typically, one candidate transcript actually read for content.
+**Writes:** Nothing — returns one `{flow_id: (cr, cc)}` dict; `{}` on any missing stream, unresolved anchor, a stem that resolves to no known project directory, no candidate file matching, or an unreadable transcript, which degrades every separator to the value-less pre-feature form.
 **Called by:** `__main__.py` (`_run_msgs` only, so `sessions`/`search`/`expand` never read `~/.claude/projects/`).
-**Calls out:** `reader` (`iter_jsonl`); stdlib `subprocess` (fixed-string `grep -rlF`, never a shell/regex form, over the transcript store — measured 0.05 s / one match on a 316-file, 1.3 GB store when a real `rg`-class tool backs it; a slower system `grep` degrades latency, never correctness).
+**Calls out:** `discovery` (`stem_identity`), `project_map` (`build_project_index`, `project_label`), `reader` (`iter_jsonl`). No subprocess and no external search tool — matching is a plain Python `in` check over a handful of already-scoped files, not a store-wide scan.
 
 ---
 
@@ -260,11 +260,13 @@ contract on 2026-08-30 (it was absent for the command's first hours): every msg 
 `── REQ n  HH:MM:SS ──` line of the request that added it, so `grep -v '^──' | grep -v '^ '`
 recovers the original separator-free, sub-line-free listing exactly. Since 2026-09-02 a separator
 additionally carries `CR c  CC c` (the group owner's `cache_read_input_tokens` /
-`cache_creation_input_tokens`, joined from CC's own transcript via `usage.build_usage_by_flow`)
-between the clock and the closing `──` whenever that join resolves; an unresolved owner (missing
-`_response` stream, no matching transcript, or a non-200 owner status) keeps the plain
-pre-2026-09-02 separator rather than showing a placeholder, so `grep -v '^──'` still recovers the
-exact same msg/sub-line listing either way. `msgs <session>` is the whole
+`cache_creation_input_tokens`, joined from CC's own transcript via `usage.build_usage_by_flow`,
+scoped to the one or few project directories the session's STEM can resolve to rather than a
+store-wide search — see `usage.py`) between the clock and the closing `──` whenever that join
+resolves; an unresolved owner (missing `_response` stream, no matching project directory, no
+candidate file matching, or a non-200 owner status) keeps the plain pre-2026-09-02 separator rather
+than showing a placeholder, so `grep -v '^──'` still recovers the exact same msg/sub-line listing
+either way. `msgs <session>` is the whole
 session, `msgs <session> F T` an inclusive range, and `msgs <session> F` runs from F to the last
 msg. A bad bound exits 2 naming the offending side (`FROM 1417 out of range (0..1416)`,
 `TO 2 is before FROM 5`). A NEGATIVE bound needs a `--` separator (`msgs <s> -- -1`), else argparse
