@@ -6,9 +6,11 @@ the kill-then-relaunch branch given check_session_exists (a click always ends in
 _launch_monitor call; kill_session only fires when a stale session exists), the launch command
 built for a cwd containing a space (quoting safety — a fixed shell string built via shlex.quote,
 not raw interpolation), and python3 resolution actually reading the plist's Homebrew-first PATH
-instead of falling back to a bare launchd-shaped os.environ. Does not exercise the actual
-Ghostty/osascript I/O (see process-docs/menubar_per_project/ for the live launch verification
-this was paired with).
+instead of falling back to a bare launchd-shaped os.environ, and that _launch_monitor uses the
+native AppleScript path unconditionally — no Ghostty-version gate, no 'open -na Ghostty.app'
+fallback (removed 2026-09-04; the fallback spawned a second Ghostty process instance that broke
+click-to-focus for every other window). Does not exercise the actual Ghostty/osascript I/O (see
+process-docs/menubar_per_project/ for the live launch verification this was paired with).
 
 No AppKit/rumps import needed — src/menubar/system.py has no AppKit dependency (see its DOCS.md
 Purpose line). importlib.import_module used for the src.menubar import, not `from src.` — see
@@ -40,6 +42,7 @@ def test_open_or_focus_monitor_workflow() -> None:
     _test_branch_launches_when_session_absent(failures)
     _test_empty_cwd_is_noop(failures)
     _test_resolve_python3_uses_plist_path_under_bare_environ(failures)
+    _test_launch_monitor_uses_native_path_only(failures)
     if failures:
         print(f"FAILED: {len(failures)} case(s):")
         for f in failures:
@@ -128,6 +131,35 @@ def _test_resolve_python3_uses_plist_path_under_bare_environ(failures: list) -> 
     _check(failures, 'python3 resolved under a bare (no-Homebrew) PATH is still the Homebrew one',
           resolved.startswith('/opt/homebrew/') or resolved.startswith('/usr/local/'),
           f'resolved={resolved!r} stderr={r.stderr.strip()!r}')
+
+# Regression guard (2026-09-04): the 'ghostty +version' gate + 'open -na Ghostty.app' fallback
+# were removed — the fallback spawns a SEPARATE Ghostty process instance, which then answers every
+# 'tell application "Ghostty"' AppleScript call instead of the real one, losing click-to-focus for
+# every other window. Asserts both symbols are gone AND that _launch_monitor calls the native
+# path unconditionally (stubbed — no real osascript/Ghostty I/O).
+def _test_launch_monitor_uses_native_path_only(failures: list) -> None:
+    _check(failures, '_ghostty_version removed from system.py',
+          not hasattr(_system_mod, '_ghostty_version'),
+          f'hasattr={hasattr(_system_mod, "_ghostty_version")}')
+    _check(failures, '_launch_monitor_ghostty_fallback removed from system.py',
+          not hasattr(_system_mod, '_launch_monitor_ghostty_fallback'),
+          f'hasattr={hasattr(_system_mod, "_launch_monitor_ghostty_fallback")}')
+
+    class _FakeResult:
+        returncode = 0
+        stderr = ''
+
+    calls = {'native': None}
+    orig = _system_mod._launch_monitor_ghostty_native
+    _system_mod._launch_monitor_ghostty_native = (
+        lambda shell_cmd: calls.__setitem__('native', shell_cmd) or _FakeResult())
+    try:
+        _system_mod._launch_monitor('/tmp/native-path-project')
+    finally:
+        _system_mod._launch_monitor_ghostty_native = orig
+    _check(failures, '_launch_monitor calls _launch_monitor_ghostty_native unconditionally',
+          calls['native'] is not None and '/tmp/native-path-project' in calls['native'],
+          f'calls={calls!r}')
 
 # Monkeypatch check_session_exists/kill_session/_launch_monitor on the real module, call
 # _open_or_focus_monitor(cwd), restore originals, return what was recorded
