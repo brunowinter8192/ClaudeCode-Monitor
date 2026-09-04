@@ -383,7 +383,11 @@ _REQ_NUMBER_WIDTH = 4
 # the SAME dict, just walked here instead of interleaved with msg lines. No other columns, no
 # counts, no CR/CC — `results` is [(session, boundaries), …] in listing order (already scope/date/
 # family-filtered and skip-on-unloadable exactly like `search`), `skipped` the same trailing note.
-def render_reqs(results: list, skipped: int = 0) -> str:
+#
+# `gap_minutes` (2026-09-04, `--gap MINUTES`) is additive and `None` by default, reproducing the
+# plain listing byte-for-byte. When set, `_gap_lines` replaces the full per-session listing with
+# only the REQs bracketing a qualifying gap — see that function for the exact rule.
+def render_reqs(results: list, skipped: int = 0, gap_minutes: int = None) -> str:
     if not results:
         lines = ["no sessions found"]
         return "\n".join(lines + _skipped_lines(skipped)) + "\n"
@@ -391,11 +395,57 @@ def render_reqs(results: list, skipped: int = 0) -> str:
     for session, boundaries in results:
         lines.append(f"session {session['stem']}")
         markers = request_markers(boundaries or [])
-        for msg_index in sorted(markers):
-            marker = markers[msg_index]
-            lines.append(f"REQ {marker['number']:<{_REQ_NUMBER_WIDTH}}{_clock(marker['timestamp'])}")
+        ordered = [(msg_index, markers[msg_index]) for msg_index in sorted(markers)]
+        if gap_minutes is None:
+            lines.extend(_req_line(marker) for _msg_index, marker in ordered)
+        else:
+            lines.extend(_gap_lines(ordered, gap_minutes))
         lines.append("")
     return "\n".join(lines[:-1] + _skipped_lines(skipped)) + "\n"
+
+
+# One "REQ n   HH:MM:SS" line, plus an optional tail (the `--gap` "  +Nm" suffix).
+def _req_line(marker: dict, tail: str = "") -> str:
+    return f"REQ {marker['number']:<{_REQ_NUMBER_WIDTH}}{_clock(marker['timestamp'])}{tail}"
+
+
+# `--gap MINUTES`: only the REQs bracketing a qualifying CONSECUTIVE gap, in session order.
+# `ordered` is [(msg_index, marker), …] sorted by msg index (chronological). For every consecutive
+# pair whose elapsed time is >= gap_minutes (whole minutes, floored — `total_seconds() // 60`,
+# never rounded, so a boundary case is exact: a gap of precisely N minutes qualifies for `--gap N`,
+# one second less does not), both the BEFORE and the AFTER REQ print — the after carrying
+# `  +{elapsed}m` as its tail. `local_datetime`-produced datetimes are subtracted directly (both
+# AWARE), which gives the true real-world elapsed duration regardless of DST, without needing a
+# separate "compute in UTC" step.
+#
+# A REQ that is the AFTER of one qualifying pair and the BEFORE of the next prints EXACTLY ONCE,
+# carrying only its AFTER tail — `printed_positions` makes this fall out of the walk itself rather
+# than needing a special case: by the time a later pair would try to print it "before" (no tail),
+# its position is already marked printed from the earlier pair's "after" role.
+#
+# A session with zero qualifying pairs (including one with fewer than two requests at all, where
+# `range(len(ordered) - 1)` is simply empty) yields `[]` here — `render_reqs` still prints that
+# session's own header line, just no REQ lines beneath it, which is what lets a reader see the
+# session WAS checked rather than silently vanishing from the listing.
+def _gap_lines(ordered: list, gap_minutes: int) -> list:
+    lines = []
+    printed_positions = set()
+    for i in range(len(ordered) - 1):
+        _before_index, before = ordered[i]
+        _after_index, after = ordered[i + 1]
+        dt_before = local_datetime(before["timestamp"])
+        dt_after = local_datetime(after["timestamp"])
+        if dt_before is None or dt_after is None:
+            continue
+        elapsed = int((dt_after - dt_before).total_seconds() // 60)
+        if elapsed < gap_minutes:
+            continue
+        if i not in printed_positions:
+            lines.append(_req_line(before))
+            printed_positions.add(i)
+        lines.append(_req_line(after, tail=f"  +{elapsed}m"))
+        printed_positions.add(i + 1)
+    return lines
 
 
 # expand: the complete content of each selected msg in the window, plus the proxy's own

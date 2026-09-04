@@ -6,9 +6,13 @@ Covers: a session's REQ lines match `msgs`' own numbers/timestamps exactly (buil
 `request_boundaries`/`request_markers`, matching this area's established fixture style); multiple
 sessions blank-line separated, newest-first order preserved (listing order, unchanged by
 `render_reqs`); a session with zero requests still gets its `session <stem>` header and no REQ
-lines; the trailing skipped-sessions note, reused from `search`; an empty result set; and
-`filter_by_family` keeping only `opus/`-prefixed sessions for `--main`, only `worker/`-prefixed
-for `--worker`, and the list unchanged when neither flag is set.
+lines; the trailing skipped-sessions note, reused from `search`; an empty result set;
+`--gap MINUTES` (2026-09-04) — one qualifying pair (only its two REQs print, the after carrying
+`  +Nm`, everything else omitted), two adjacent qualifying gaps sharing a REQ (it prints exactly
+once), no qualifying gap (only the session header line), and the `>=` threshold boundary (a gap of
+precisely the threshold qualifies, one second short does not); and `filter_by_family` keeping only
+`opus/`-prefixed sessions for `--main`, only `worker/`-prefixed for `--worker`, and the list
+unchanged when neither flag is set.
 
 `request_boundaries` is exercised end to end against a real temp `_forwarded.jsonl`-shaped file —
 no dual-log directory or MONITOR_CC_ROOT required.
@@ -168,6 +172,83 @@ def test_empty_results() -> None:
         "no sessions found\n\n(1 session skipped — timeline could not be loaded)\n"), got_skipped)
 
 
+# --gap: one qualifying pair. REQ1->REQ2 is exactly the threshold (qualifies, prints both, the
+# after carrying "  +90m"); REQ2->REQ3 is a small gap (does not qualify) — REQ3 must not appear at
+# all, since it touches no qualifying gap.
+def test_gap_one_qualifying_pair() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T11:30:00Z", 5),   # +90m
+        _delta_entry("f2", "2026-09-04T11:35:00Z", 9),   # +5m
+    ])
+    session = _session("s")
+    got = render_reqs([(session, boundaries)], gap_minutes=90)
+    expected = (
+        "session s\n"
+        f"REQ 1   {_local_clock('2026-09-04T10:00:00Z')}\n"
+        f"REQ 2   {_local_clock('2026-09-04T11:30:00Z')}  +90m\n"
+    )
+    check("only the qualifying pair's REQs print, after carries the tail, REQ 3 omitted",
+          got == expected, got)
+
+
+# --gap: two adjacent qualifying gaps sharing REQ 2 — it prints exactly ONCE, carrying only its
+# OWN (after-of-gap-1) tail, never re-printed tail-less as the before of gap 2.
+def test_gap_two_adjacent_gaps_sharing_req() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T11:30:00Z", 5),   # +90m from f0 — qualifies
+        _delta_entry("f2", "2026-09-04T13:30:00Z", 9),   # +120m from f1 — qualifies
+        _delta_entry("f3", "2026-09-04T13:35:00Z", 12),  # +5m from f2 — does not qualify
+    ])
+    session = _session("s")
+    got = render_reqs([(session, boundaries)], gap_minutes=90)
+    lines = [l for l in got.split("\n") if l.startswith("REQ")]
+    check("REQ 2 appears exactly once (bracketing both qualifying gaps)",
+          sum(1 for l in lines if l.startswith("REQ 2 ")) == 1, lines)
+    expected = (
+        "session s\n"
+        f"REQ 1   {_local_clock('2026-09-04T10:00:00Z')}\n"
+        f"REQ 2   {_local_clock('2026-09-04T11:30:00Z')}  +90m\n"
+        f"REQ 3   {_local_clock('2026-09-04T13:30:00Z')}  +120m\n"
+    )
+    check("exactly 3 REQ lines, REQ 4 omitted (its own gap does not qualify)", got == expected, got)
+
+
+# --gap: no pair qualifies — the session prints ONLY its header line, no REQ lines at all, so the
+# reader can see the session WAS checked rather than it silently vanishing.
+def test_gap_no_qualifying_gap() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T10:01:00Z", 5),
+        _delta_entry("f2", "2026-09-04T10:02:00Z", 9),
+    ])
+    session = _session("s")
+    got = render_reqs([(session, boundaries)], gap_minutes=90)
+    check("no qualifying gap -> only the session header line", got == "session s\n", got)
+
+
+# --gap threshold is inclusive (>=): a gap of EXACTLY the threshold qualifies; one second short of
+# it does not — floored to whole minutes, never rounded, so the boundary is exact.
+def test_gap_threshold_boundary() -> None:
+    exact_boundary = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T11:30:00Z", 5),   # exactly +5400s = +90m
+    ])
+    just_under = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T11:29:59Z", 5),   # +5399s = 89m59s -> floors to 89m
+    ])
+    session = _session("s")
+    got_exact = render_reqs([(session, exact_boundary)], gap_minutes=90)
+    got_under = render_reqs([(session, just_under)], gap_minutes=90)
+    check("a gap of exactly the threshold QUALIFIES (>=)",
+          got_exact == f"session s\nREQ 1   {_local_clock('2026-09-04T10:00:00Z')}\n"
+                       f"REQ 2   {_local_clock('2026-09-04T11:30:00Z')}  +90m\n", got_exact)
+    check("one second short of the threshold does NOT qualify",
+          got_under == "session s\n", got_under)
+
+
 # filter_by_family: --main keeps only opus/-prefixed, --worker keeps only worker/-prefixed,
 # neither flag returns the list unchanged.
 def test_filter_by_family() -> None:
@@ -197,6 +278,10 @@ def test_reqs_workflow() -> None:
     test_session_with_zero_requests_still_gets_header()
     test_skipped_note_appended()
     test_empty_results()
+    test_gap_one_qualifying_pair()
+    test_gap_two_adjacent_gaps_sharing_req()
+    test_gap_no_qualifying_gap()
+    test_gap_threshold_boundary()
     test_filter_by_family()
 
     total = len(PASS_LIST) + len(FAIL_LIST)
