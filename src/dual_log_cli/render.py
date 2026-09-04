@@ -1,5 +1,5 @@
 # INFRASTRUCTURE
-from .timeline import request_markers
+from .timeline import request_markers, _system_block_chars, _tool_chars
 
 # FUNCTIONS
 
@@ -84,9 +84,26 @@ _BLOCK_LABEL_WIDTH = _MSG_PREFIX_WIDTH + _MSG_LABEL_WIDTH - len(_BLOCK_INDENT)
 # transformed one appends "  −N +M → Wc" (chars stripped, chars injected, resulting wire size),
 # plus " by REQ n" when the request that performed the transform differs from the group's own —
 # the `expand` case where a msg arrives under one REQ and is overwritten by a later one.
+#
+# sys_tool_overlay is (sys_overlay, tools_overlay) from overlay.build_sys_tool_overlay (2026-09-04),
+# read alongside `overlay` here. Its coordinates carry the SAME `−N +M → Wc` tail a msg/block line
+# does, and a sys/tool line's leading chars column switches meaning to match: the ORIGINAL
+# (client-sent) size, looked up by index/name in `data["payload"]`'s own system/tools lists — the
+# last request's own copy, which the whole session's tool/system content is verified stable
+# against (see `process-docs/dual_log_cli/`) — rather than the current wire size `_sys_lines`/
+# `_tool_lines` compute. A tool the proxy stripped WHOLE never appears in the wire tools_delta at
+# all (it is simply absent both before and after), so it never gets a line today; when the overlay
+# names one, `_req_delta_lines` synthesizes a standalone `tool[Name]` line for it instead, full
+# strip and wire 0 (e.g. `tool[Agent]  3,172c  −3,172 → 0c`) — attached to the marker whose OWN
+# flow_id the overlay recorded, never guessed onto the wrong separator. Absent, unresolvable, or
+# untouched coordinates fall back to exactly the pre-2026-09-04 wire-chars line, byte-identical.
 def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
-                overlay: dict = None) -> str:
+                overlay: dict = None, sys_tool_overlay: tuple = None) -> str:
     markers = request_markers(data.get("boundaries") or [])
+    payload = data.get("payload") or {}
+    orig_system = payload.get("system", []) or []
+    orig_tools = payload.get("tools", []) or []
+    sys_overlay, tools_overlay = sys_tool_overlay or ({}, {})
     lines = []
     group_req = None
     for offset, msg in enumerate(data["turns"][start:end + 1]):
@@ -95,7 +112,7 @@ def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
             marker = _governing_marker(markers, msg["index"])
         if marker is not None:
             lines.append(_req_separator(marker, usage_by_flow))
-            lines.extend(_req_delta_lines(marker))
+            lines.extend(_req_delta_lines(marker, orig_system, orig_tools, sys_overlay, tools_overlay, marker["number"]))
             group_req = marker["number"]
         blocks = msg["blocks"]
         label = blocks[0]["type"] if len(blocks) == 1 else f"{len(blocks)} blocks"
@@ -116,17 +133,72 @@ def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
 # family's first request, which carries no tag at all. A tool item can also carry `chars is None`
 # ("removed" — the name-based tool comparison's tag for a tool no longer present at all): that item
 # skips the chars column entirely rather than printing a size for content that no longer exists.
-def _req_delta_lines(marker: dict) -> list:
+#
+# Since 2026-09-04 each line's leading chars is looked up in the ORIGINAL system/tools lists
+# (`orig_system`/`orig_tools`, from `data["payload"]`) by index/name, falling back to the item's own
+# wire chars when the lookup can't resolve — which is always the case for a hand-built test fixture
+# carrying no `"payload"` key at all, keeping every existing check byte-identical. `sys_overlay`/
+# `tools_overlay` (`overlay.build_sys_tool_overlay`) attach a `_delta_tail` when they cover that
+# coordinate. A whole-stripped tool with no wire entry at all is synthesized as its own line,
+# appended after the wire-based tool lines, restricted to the overlay's OWN owning flow_id so it
+# lands under the correct separator (never guessed from a req NUMBER alone, which a re-fire could
+# make ambiguous) — skipped silently when the tool's name can't be resolved in `orig_tools` (fail
+# toward showing nothing rather than a guessed size).
+def _req_delta_lines(marker: dict, orig_system: list, orig_tools: list,
+                     sys_overlay: dict, tools_overlay: dict, group_req) -> list:
     lines = []
-    for item in (marker.get("sys_lines") or []) + (marker.get("tool_lines") or []):
-        label = f"{item['label']:<{_BLOCK_LABEL_WIDTH}}"
+    tools_by_name = {t.get("name", "?"): t for t in orig_tools if isinstance(t, dict)}
+    seen_names = set()
+    for item in marker.get("sys_lines") or []:
+        idx = _sys_index_from_label(item["label"])
+        original = _system_block_chars(orig_system[idx]) if 0 <= idx < len(orig_system) else None
+        lines.append(_delta_line(item, original, sys_overlay.get(str(idx)), group_req))
+    for item in marker.get("tool_lines") or []:
+        name = _tool_name_from_label(item["label"])
+        seen_names.add(name)
         if item.get("chars") is None:
-            lines.append(f"{_BLOCK_INDENT}{label}  {item['tag']}")
+            lines.append(f"{_BLOCK_INDENT}{item['label']:<{_BLOCK_LABEL_WIDTH}}  {item['tag']}")
             continue
-        chars = f"{item['chars']:,}c"
-        tail = f"  {item['tag']}" if item.get("tag") else ""
-        lines.append(f"{_BLOCK_INDENT}{label}{chars:>{_MSG_CHARS_WIDTH}}{tail}")
+        original = _tool_chars(tools_by_name[name]) if name in tools_by_name else None
+        lines.append(_delta_line(item, original, tools_overlay.get(name), group_req))
+    for name in sorted(tools_overlay):
+        slot = tools_overlay[name]
+        if name in seen_names or not slot.get("whole") or slot.get("flow_id") != marker.get("flow_id"):
+            continue
+        if name not in tools_by_name:
+            continue
+        original = _tool_chars(tools_by_name[name])
+        lines.append(_delta_line({"label": f"tool[{name}]", "tag": None}, original, slot, group_req))
     return lines
+
+
+# "sys[3]" -> 3
+def _sys_index_from_label(label: str) -> int:
+    return int(label[len("sys["):-1])
+
+
+# "tool[Foo]" -> "Foo" ("tool[" is 5 chars — distinct from a block's "tool_use[...]" label)
+def _tool_name_from_label(label: str) -> str:
+    return label[len("tool["):-1]
+
+
+# One sys/tool delta line: leading chars (original size when resolved, else the item's own wire
+# chars — see `_req_delta_lines`), an optional `_delta_tail` when `slot` covers this coordinate, and
+# the item's own tag suffix (changed/new), if any. `slot["whole"]` means the stripped side carries
+# no text at all (a whole-tool removal) — its stripped chars equal the ORIGINAL size itself, since
+# nothing survived; a description-level strip instead sums its own recorded text lengths.
+def _delta_line(item: dict, original_chars, slot, group_req) -> str:
+    label = f"{item['label']:<{_BLOCK_LABEL_WIDTH}}"
+    chars_value = original_chars if original_chars is not None else item["chars"]
+    chars = f"{chars_value:,}c"
+    tail = ""
+    if slot:
+        injected_chars = sum(len(t) for t in slot.get("injected") or [])
+        stripped_chars = chars_value if slot.get("whole") else sum(len(t) for t in slot.get("stripped") or [])
+        if stripped_chars or injected_chars:
+            tail = _delta_tail(stripped_chars, injected_chars, chars_value, slot.get("req"), group_req)
+    tag_suffix = f"  {item['tag']}" if item.get("tag") else ""
+    return f"{_BLOCK_INDENT}{label}{chars:>{_MSG_CHARS_WIDTH}}{tail}{tag_suffix}"
 
 
 # One indented sub-line per block of a multi-block msg — label and chars, plus the block's own
