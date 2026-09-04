@@ -21,6 +21,8 @@ CASES = [
      "cd /x && duallog search foo", 0),
     ("plain expand standalone PASS",
      "duallog expand s 5", 0),
+    ("path substring mentioning duallog PASS (2026-09-04 FP fix, iterative-dev-duallog dir name)",
+     "cat ~/Meta/iterative-dev/skills/iterative-dev-duallog/SKILL.md | grep -n msgs", 0),
 ]
 
 

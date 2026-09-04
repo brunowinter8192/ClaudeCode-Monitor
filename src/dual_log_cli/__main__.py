@@ -16,6 +16,9 @@ Commands:
                              proxy-transformed msg/block also carrying its strip/inject delta and
                              wire size
     msgs <session> F T       the same, restricted to msg indices F..T (inclusive)
+    msgs <session> --req F [T]   the same, restricted to REQ numbers F..T (T defaults to F) — the
+                             same numbers the REQ separators already print, translated into the
+                             msg-index range that covers them; mutually exclusive with F T above
     expand <s> <msg>         full content of that msg, plus what the proxy stripped/injected there
     expand <s> <msg> [--before N] [--after N] [--only X]   full content of the window around it
 
@@ -25,6 +28,8 @@ Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli search Reißleine websearch --since 2026-08-28
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 700 740
+    ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 --req 259
+    ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 --req 259 261
     ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721
     ./venv/bin/python -m src.dual_log_cli expand websearch_1787924727 721 --before 2 --after 1
 
@@ -54,7 +59,13 @@ from .overlay import build_overlay, build_sys_tool_overlay
 from .project_map import build_project_map
 from .render import render_expand_full, render_msgs, render_search, render_sessions
 from .search import find_matches
-from .timeline import full_turn, load_timeline
+from .timeline import (
+    AmbiguousRequestNumberError,
+    UnknownRequestNumberError,
+    full_turn,
+    load_timeline,
+    resolve_req_range,
+)
 from .usage import build_usage_by_flow
 
 # ORCHESTRATOR
@@ -109,7 +120,9 @@ def _parse_args(argv: list) -> argparse.Namespace:
             "the transform than the one whose separator the msg sits under; an untouched line "
             "stays exactly as before. FROM and TO are inclusive msg indices; omit both "
             "for the whole session, or give FROM alone to run from there to the last msg; a "
-            "partially shown group keeps its separator."
+            "partially shown group keeps its separator. --req F [T] selects the same output by "
+            "REQ number instead of msg index (T defaults to F) — the exact numbers the REQ "
+            "separators already print — and is mutually exclusive with the FROM/TO positionals."
         ),
     )
     # "from" is a Python keyword, so the code-side name has to differ from the user-facing one
@@ -118,6 +131,9 @@ def _parse_args(argv: list) -> argparse.Namespace:
                       help="first msg index (inclusive, default 0)")
     msgs.add_argument("to_msg", nargs="?", type=int, default=None, metavar="TO",
                       help="last msg index (inclusive, default the session's last msg)")
+    msgs.add_argument("--req", nargs="+", type=int, default=None, metavar="F [T]",
+                      help="REQ number range instead of msg indices, T defaults to F; "
+                           "mutually exclusive with FROM/TO")
     expand = sub.add_parser(
         "expand",
         help="full content of one msg, or of a window around it",
@@ -231,7 +247,9 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
     return 0
 
 
-# msgs — one classifier line per msg, optionally bounded to an inclusive FROM..TO index range
+# msgs — one classifier line per msg, optionally bounded to an inclusive FROM..TO index range, or
+# to an inclusive REQ number range (--req F [T], mutually exclusive with FROM/TO) translated into
+# the equivalent msg-index range before falling into the exact same rendering path.
 def _run_msgs(dual_log_dir, args: argparse.Namespace) -> int:
     data, code = _load_for(dual_log_dir, args.session)
     if data is None:
@@ -240,15 +258,33 @@ def _run_msgs(dual_log_dir, args: argparse.Namespace) -> int:
     if last < 0:
         print("session carries no msgs", file=sys.stderr)
         return 2
-    start = 0 if args.from_msg is None else args.from_msg
-    end = last if args.to_msg is None else args.to_msg
-    for label, value in (("FROM", start), ("TO", end)):
-        if value < 0 or value > last:
-            print(f"{label} {value} out of range (0..{last})", file=sys.stderr)
+    if args.req is not None:
+        if args.from_msg is not None or args.to_msg is not None:
+            print("--req cannot be combined with FROM/TO", file=sys.stderr)
             return 2
-    if end < start:
-        print(f"TO {end} is before FROM {start}", file=sys.stderr)
-        return 2
+        if len(args.req) not in (1, 2):
+            print("--req takes one or two REQ numbers: --req F [T]", file=sys.stderr)
+            return 2
+        req_from = args.req[0]
+        req_to = args.req[1] if len(args.req) > 1 else req_from
+        try:
+            start, end = resolve_req_range(data["boundaries"], req_from, req_to, last)
+        except (UnknownRequestNumberError, AmbiguousRequestNumberError) as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        if end < start:
+            print(f"REQ {req_to} ends before REQ {req_from} begins (msg {end} < msg {start})", file=sys.stderr)
+            return 2
+    else:
+        start = 0 if args.from_msg is None else args.from_msg
+        end = last if args.to_msg is None else args.to_msg
+        for label, value in (("FROM", start), ("TO", end)):
+            if value < 0 or value > last:
+                print(f"{label} {value} out of range (0..{last})", file=sys.stderr)
+                return 2
+        if end < start:
+            print(f"TO {end} is before FROM {start}", file=sys.stderr)
+            return 2
     usage_by_flow = build_usage_by_flow(data["session"], data["boundaries"])
     overlay = build_overlay(data["session"], data["family"], data["boundaries"])
     sys_tool_overlay = build_sys_tool_overlay(data["session"], data["family"], data["boundaries"])
