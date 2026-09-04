@@ -1,5 +1,5 @@
 # INFRASTRUCTURE
-from .timeline import request_markers, _system_block_chars, _tool_chars
+from .timeline import request_markers, _system_block_chars, _tool_chars, _BILLING_HEADER_SYS_INDEX
 
 # FUNCTIONS
 
@@ -91,12 +91,18 @@ _BLOCK_LABEL_WIDTH = _MSG_PREFIX_WIDTH + _MSG_LABEL_WIDTH - len(_BLOCK_INDENT)
 # (client-sent) size, looked up by index/name in `data["payload"]`'s own system/tools lists — the
 # last request's own copy, which the whole session's tool/system content is verified stable
 # against (see `process-docs/dual_log_cli/`) — rather than the current wire size `_sys_lines`/
-# `_tool_lines` compute. A tool the proxy stripped WHOLE never appears in the wire tools_delta at
-# all (it is simply absent both before and after), so it never gets a line today; when the overlay
-# names one, `_req_delta_lines` synthesizes a standalone `tool[Name]` line for it instead, full
-# strip and wire 0 (e.g. `tool[Agent]  3,172c  −3,172 → 0c`) — attached to the marker whose OWN
-# flow_id the overlay recorded, never guessed onto the wrong separator. Absent, unresolvable, or
-# untouched coordinates fall back to exactly the pre-2026-09-04 wire-chars line, byte-identical.
+# `_tool_lines` compute. System index 0 (the billing header) is the one exception: it changes on
+# EVERY request by construction, so it keeps its wire chars and no tail, unconditionally, exactly as
+# before this feature. The tail's own wire figure `W` is always the MEASURED wire chars (`_tool_lines`/
+# `_sys_lines`' own figure, 0 for a tool with no wire entry at all) — never derived from the
+# overlay's recorded stripped/injected text, whose units (raw description characters) do not match a
+# tool's JSON-encoded chars; see `_delta_line`. A tool the proxy stripped WHOLE never appears in the
+# wire tools_delta at all (it is simply absent both before and after), so it never gets a line today;
+# when the overlay names one, `_req_delta_lines` synthesizes a standalone `tool[Name]` line for it
+# instead, full strip and wire 0 (e.g. `tool[Agent]  3,172c  −3,172 +0 → 0c`) — attached to the
+# marker whose OWN flow_id the overlay recorded, never guessed onto the wrong separator. Absent,
+# unresolvable, or untouched coordinates fall back to exactly the pre-2026-09-04 wire-chars line,
+# byte-identical.
 def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
                 overlay: dict = None, sys_tool_overlay: tuple = None) -> str:
     markers = request_markers(data.get("boundaries") or [])
@@ -137,13 +143,23 @@ def render_msgs(data: dict, start: int, end: int, usage_by_flow: dict = None,
 # Since 2026-09-04 each line's leading chars is looked up in the ORIGINAL system/tools lists
 # (`orig_system`/`orig_tools`, from `data["payload"]`) by index/name, falling back to the item's own
 # wire chars when the lookup can't resolve — which is always the case for a hand-built test fixture
-# carrying no `"payload"` key at all, keeping every existing check byte-identical. `sys_overlay`/
-# `tools_overlay` (`overlay.build_sys_tool_overlay`) attach a `_delta_tail` when they cover that
-# coordinate. A whole-stripped tool with no wire entry at all is synthesized as its own line,
-# appended after the wire-based tool lines, restricted to the overlay's OWN owning flow_id so it
-# lands under the correct separator (never guessed from a req NUMBER alone, which a re-fire could
-# make ambiguous) — skipped silently when the tool's name can't be resolved in `orig_tools` (fail
-# toward showing nothing rather than a guessed size).
+# carrying no `"payload"` key at all, keeping every existing check byte-identical. The ONE exception
+# is system index 0, the per-request billing header (`_BILLING_HEADER_SYS_INDEX`): it changes on
+# EVERY request by construction, so the last request's own copy is not a valid "original" for any
+# OTHER request's sys[0] line — it is left completely untouched (wire chars, no tail), exactly like
+# before this feature. `sys_overlay`/`tools_overlay` (`overlay.build_sys_tool_overlay`) attach a
+# `_delta_tail` when they cover a coordinate (2026-09-04, corrected): `W` is the MEASURED wire chars
+# (`item["chars"]`, `_tool_lines`/`_sys_lines`' own JSON/text-length figure — 0 for a whole-stripped
+# tool, which never has a wire item at all) rather than a derived guess, since a tool's original
+# chars is a JSON-encoded size while its recorded stripped/injected TEXT is raw description length —
+# not commensurable, so deriving `W` from them (the first cut of this feature) printed a wrong wire
+# figure for every desc-stripped tool. `S` is instead DERIVED as `original − W + I`, which makes
+# `_delta_tail`'s own internal arithmetic reconstruct exactly the measured `W` again. A whole-stripped
+# tool with no wire entry at all is synthesized as its own line, appended after the wire-based tool
+# lines, restricted to the overlay's OWN owning flow_id so it lands under the correct separator
+# (never guessed from a req NUMBER alone, which a re-fire could make ambiguous) — skipped silently
+# when the tool's name can't be resolved in `orig_tools` (fail toward showing nothing rather than a
+# guessed size).
 def _req_delta_lines(marker: dict, orig_system: list, orig_tools: list,
                      sys_overlay: dict, tools_overlay: dict, group_req) -> list:
     lines = []
@@ -151,6 +167,9 @@ def _req_delta_lines(marker: dict, orig_system: list, orig_tools: list,
     seen_names = set()
     for item in marker.get("sys_lines") or []:
         idx = _sys_index_from_label(item["label"])
+        if idx == _BILLING_HEADER_SYS_INDEX:
+            lines.append(_delta_line(item, None, None, group_req))
+            continue
         original = _system_block_chars(orig_system[idx]) if 0 <= idx < len(orig_system) else None
         lines.append(_delta_line(item, original, sys_overlay.get(str(idx)), group_req))
     for item in marker.get("tool_lines") or []:
@@ -184,17 +203,25 @@ def _tool_name_from_label(label: str) -> str:
 
 # One sys/tool delta line: leading chars (original size when resolved, else the item's own wire
 # chars — see `_req_delta_lines`), an optional `_delta_tail` when `slot` covers this coordinate, and
-# the item's own tag suffix (changed/new), if any. `slot["whole"]` means the stripped side carries
-# no text at all (a whole-tool removal) — its stripped chars equal the ORIGINAL size itself, since
-# nothing survived; a description-level strip instead sums its own recorded text lengths.
+# the item's own tag suffix (changed/new), if any.
+#
+# `W` (the tail's wire figure) is the MEASURED value — `item["chars"]` (the existing wire chars
+# `_tool_lines`/`_sys_lines` already compute) for a wire-based line, or 0 for a whole-stripped tool
+# (`slot["whole"]`, no wire item at all) — never derived from the overlay's recorded stripped/
+# injected TEXT, whose units do not match a JSON-encoded tool's chars (a tool's chars is
+# `len(json.dumps(tool))`; its recorded stripped text is the raw description substring — the two do
+# not correspond 1:1). `S` is instead derived as `original − W + I`, so `_delta_tail`'s own internal
+# `chars − S + I` reconstructs exactly this measured `W` again — self-consistent by construction,
+# and correct because `W` itself was never guessed.
 def _delta_line(item: dict, original_chars, slot, group_req) -> str:
     label = f"{item['label']:<{_BLOCK_LABEL_WIDTH}}"
     chars_value = original_chars if original_chars is not None else item["chars"]
     chars = f"{chars_value:,}c"
     tail = ""
     if slot:
+        wire_chars = 0 if slot.get("whole") else item["chars"]
         injected_chars = sum(len(t) for t in slot.get("injected") or [])
-        stripped_chars = chars_value if slot.get("whole") else sum(len(t) for t in slot.get("stripped") or [])
+        stripped_chars = chars_value - wire_chars + injected_chars
         if stripped_chars or injected_chars:
             tail = _delta_tail(stripped_chars, injected_chars, chars_value, slot.get("req"), group_req)
     tag_suffix = f"  {item['tag']}" if item.get("tag") else ""
