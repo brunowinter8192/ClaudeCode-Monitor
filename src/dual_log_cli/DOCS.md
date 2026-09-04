@@ -159,13 +159,13 @@ timeline will not load → `render` emits plain terminal text to stdout.
 
 **Purpose:** All terminal output. Session table (START / CONTEXT / SESSION plus a count line), `msgs`' request-grouped classifier listing (`render_msgs` — a `── REQ n  HH:MM:SS ──` separator per request group via `_req_separator`, widened to `── REQ n  HH:MM:SS  CR c  CC c ──` when an optional `usage_by_flow` map (from `usage.build_usage_by_flow`, `{flow_id: (cr, cc)}`) resolves the group owner's flow_id — an unresolved or absent map renders the plain pre-feature separator, never a placeholder — then, since 2026-09-03, `_req_delta_lines`: one indented `sys[i]`/`tool[name]` line per entry in that request's `system_delta`/`tools_delta` (the marker's own `sys_lines`/`tool_lines` from `timeline.request_markers`), same indent/column layout as a block sub-line, tagged `  changed`/`  new` for a later request and untagged for the family's first — a marker with neither carries no such lines at all, which is what keeps a delta-free separator byte-identical to the pre-2026-09-03 output; a tool item can also carry `chars is None` (the name-based tool comparison's `"removed"` tag, third revision) — that item skips the numeric chars column entirely, printing `tool[Name]  removed` rather than a size for content that no longer exists — then one `[idx] role type chars` line per msg, a multi-block msg followed by one indented sub-line per block via `_block_sub_lines` (label + chars, chars right-aligned to the same column the parent line uses), and NOTHING else: no totals, no previews; `_governing_marker` gives a mid-group FROM its separator, and its sys/tool lines, back). Since 2026-09-03 a msg or block line the proxy transformed additionally carries `  −N +M → Wc` (chars stripped, chars injected, resulting wire size — real minus sign U+2212, digit-grouped like every other chars figure) via `_delta_tail`, fed by an optional `overlay` param (`overlay.build_overlay`'s `{(msg_idx, blk_idx): {stripped, injected, req}}`, reused from `expand`): `_block_overlay_totals` sums one coordinate's stripped/injected chars (`None` when untouched, which is what keeps an untouched line byte-identical), `_msg_delta_tail` sums those over ALL of a msg's blocks for the parent line, and both add ` by REQ n` only when the transforming request differs from the msg's OWN group (`group_req`, threaded through from `render_msgs`' marker loop) — omitted on the parent line specifically when a msg's touched blocks disagree on which request touched them, since summarizing that with one REQ number would be a guess (unobserved in the corpus: 0 of 1949 transformed msgs, measured).
 
-Since 2026-09-04 a sys/tool line's OWN chars semantics changed to match: `_req_delta_lines` (rewritten) now takes an optional `sys_tool_overlay` (`overlay.build_sys_tool_overlay`'s `(sys_overlay, tools_overlay)`) plus `orig_system`/`orig_tools` (`data["payload"]`'s own system/tools lists, from the last request `load_timeline` already parsed). Each line's leading chars switches from the WIRE size `timeline._sys_lines`/`_tool_lines` compute to the ORIGINAL (client-sent) size, looked up by index (`_sys_index_from_label`) or name (`_tool_name_from_label`) in those lists — falling back to the item's own wire chars whenever the lookup can't resolve, which is what keeps every hand-built test fixture (none of which carries a `"payload"` key) byte-identical to the pre-2026-09-04 output. `_delta_line` then attaches the SAME `_delta_tail` a msg/block line uses, when `sys_overlay`/`tools_overlay` covers that coordinate — a `whole: True` tool slot (the stripped side recorded no text at all, a WHOLE tool removal) contributes its stripped chars as the ORIGINAL size itself rather than a summed text length. A tool the proxy strips WHOLE never appears in the wire `tools_delta` at all (absent both before and after, so `_tool_lines` never lists it), so `_req_delta_lines` additionally synthesizes a standalone `tool[Name]` line for each such overlay entry — restricted to the marker whose OWN `flow_id` the overlay recorded (never guessed from a req NUMBER, which a re-fire could make ambiguous), and skipped silently when the name can't be resolved in `orig_tools`.
+Since 2026-09-04 a sys/tool line's OWN chars semantics changed to match: `_req_delta_lines` (rewritten) now takes an optional `sys_tool_overlay` (`overlay.build_sys_tool_overlay`'s `(sys_overlay, tools_overlay)`) plus `orig_system`/`orig_tools` (`data["payload"]`'s own system/tools lists, from the last request `load_timeline` already parsed). Each line's leading chars switches from the WIRE size `timeline._sys_lines`/`_tool_lines` compute to the ORIGINAL (client-sent) size, looked up by index (`_sys_index_from_label`) or name (`_tool_name_from_label`) in those lists — falling back to the item's own wire chars whenever the lookup can't resolve, which is what keeps every hand-built test fixture (none of which carries a `"payload"` key) byte-identical to the pre-2026-09-04 output. The ONE unconditional exception is system index 0, the per-request billing header (`_BILLING_HEADER_SYS_INDEX`): it changes on EVERY request by construction, so it is never looked up or overlaid at all — wire chars, no tail, exactly as before this feature, regardless of what the overlay carries for it. `_delta_line` then attaches the SAME `_delta_tail` a msg/block line uses, when `sys_overlay`/`tools_overlay` covers a (non-billing-header) coordinate — corrected same-day (a first cut derived the tail's wire figure `W` from the overlay's recorded stripped/injected TEXT lengths, which are raw description characters and not commensurable with a tool's JSON-encoded chars, printing a wrong wire size for every desc-stripped tool): `W` is now always the MEASURED wire chars (`item["chars"]`, `_tool_lines`/`_sys_lines`' own pre-existing figure — 0 for a whole-stripped tool, which has no wire item at all), and the stripped figure `S` is DERIVED as `original − W + I`, so `_delta_tail`'s own internal arithmetic reconstructs exactly that measured `W` again. A tool the proxy strips WHOLE never appears in the wire `tools_delta` at all (absent both before and after, so `_tool_lines` never lists it), so `_req_delta_lines` additionally synthesizes a standalone `tool[Name]` line for each such overlay entry — restricted to the marker whose OWN `flow_id` the overlay recorded (never guessed from a req NUMBER, which a re-fire could make ambiguous), and skipped silently when the name can't be resolved in `orig_tools`.
 
 Search results (one term line overall, then a `session <stem>` line plus its hit lines per matching session, blank-line separated, with an optional skipped-sessions note — since 2026-09-04 a hit line is `#msg role label  chars` (the block's original-payload chars, digit-grouped like a `msgs` block sub-line, right-aligned across the whole result set the same way `label` already was), replacing the earlier `×N` occurrence count plus a whitespace-collapsed snippet — the chars value alone is enough to tell a small genuine artifact from a large prose hit without opening either), `expand`'s full-content window dump (`▶` anchor mark and an HH:MM:SS request-time column in each msg header, then one `── block i ──` header plus the raw text per block, each block optionally followed by `── stripped by REQ n ──` / `── injected by REQ n ──` sections via `_overlay_lines`), and the char/timestamp formatters. The overlay sections are plain text with no ANSI anywhere — this output is read by agents through pipes, so the labels carry the meaning colour carries in the proxy pane. Rendering only — selection and filtering happen before a list reaches this module.
 **Reads:** The dicts produced by `discovery`, `timeline` and `search`.
 **Writes:** Nothing — returns strings; `__main__.py` does the `sys.stdout.write`.
 **Called by:** `__main__.py`.
-**Calls out:** `timeline` (`request_markers`, for `msgs`' REQ separators; `_system_block_chars`/`_tool_chars`, since 2026-09-04, for a sys/tool line's original-chars lookup).
+**Calls out:** `timeline` (`request_markers`, for `msgs`' REQ separators; `_system_block_chars`/`_tool_chars`, since 2026-09-04, for a sys/tool line's original-chars lookup; `_BILLING_HEADER_SYS_INDEX`, same date, to exempt system index 0 from that lookup).
 
 ---
 
@@ -436,7 +436,14 @@ previous request id, so it differs on literally every request and would otherwis
 … changed` on every single separator, drowning the signal a prompt-cache rebuild actually needs:
 a change in a REAL system block or the tool list. `timeline._sys_lines` drops it unconditionally
 for a non-first request regardless of what `system_delta` says; the first request still lists it
-(untagged, like every other block) because that request has nothing to compare against yet.
+(untagged, like every other block) because that request has nothing to compare against yet. The
+SAME "changes every request" fact is why `render.py`'s original-chars lookup (2026-09-04) also
+exempts index 0 unconditionally, on every request including the first: the last request's own
+`system[0]` is a DIFFERENT billing header than any other request's, so looking it up as that
+request's "original" would print a wrong number (corrected same-day after review: an earlier cut
+looked it up like every other index, printing the LAST request's billing-header size — 174c — on
+REQ 1's separator, where the wire actually carried 132c). `sys[0]` keeps its wire chars and no
+tail, unconditionally, regardless of whether the overlay happens to carry data for it.
 
 **A request with no sys/tool change prints no delta lines at all — this is the common case.** Once
 system block 0 is excluded, most requests in a session carry an EMPTY `system_delta`/`tools_delta`
@@ -456,7 +463,30 @@ content by name, 0 mismatches across 45 sessions comparing any earlier request a
 system blocks at the only indices ever stripped (1, 2, 3), 0 length/content mismatches across 44
 sessions comparing the conversation family's FIRST real request against its LAST. For an untouched
 line the number does not move at all (original == wire when nothing was stripped); only a
-transformed line's displayed figure actually changes.
+transformed line's displayed figure actually changes. **System index 0 (the billing header) is the
+one UNCONDITIONAL exception** — it changes on every request by construction (see the Gotcha below
+about `sys[0]`/`_BILLING_HEADER_SYS_INDEX`), so the last request's copy is never a valid "original"
+for any other request's billing header; `_req_delta_lines` skips the lookup AND the overlay for
+index 0 outright, leaving it wire chars with no tail, unconditionally.
+
+**The tail's wire figure is always the MEASURED wire chars, never derived from the overlay's
+recorded stripped/injected TEXT length — a same-day correction after review caught the first cut
+wrong.** The first version derived `W` as `original − (summed stripped text length) + (summed
+injected text length)`, exactly mirroring how a MSG/block line's tail works. That mirroring does
+not hold for tools: a tool's chars is `len(json.dumps(tool))` (JSON-encoded, including the `name`
+and `input_schema` keys, quoting and escaping), while its recorded stripped/injected TEXT is the
+raw description SUBSTRING the proxy removed/added — the two units are not commensurable, so the
+derived `W` was wrong for every desc-stripped tool (observed on `opus_monitor_cc_1788464543` REQ 1:
+`tool[Bash]` printed `→ 1,571c` where the real forwarded wire size was `517c`). Fixed by flipping
+which side is measured and which is derived: `W` is now `item["chars"]` — `_tool_lines`/
+`_sys_lines`' own PRE-EXISTING wire-chars figure, computed the same way it always was, never
+touched by this feature at all — and 0 for a whole-stripped tool (no wire item exists to measure).
+`S` is DERIVED as `original − W + I`, so `_delta_tail`'s own internal `chars − S + I` arithmetic
+reconstructs exactly that measured `W` again — self-consistent by construction, and correct because
+`W` was never a guess to begin with. For SYSTEM blocks the bug never actually showed a wrong number
+(a system block's chars IS raw text length, `_system_block_chars` reading `block["text"]` directly,
+so the two units happened to already coincide there) — but the measured-`W` rule was applied there
+too, uniformly, rather than leaving the coincidence in place uncorrected.
 
 **A tool the proxy strips WHOLE never appeared in `msgs` at all before 2026-09-04 — the wire
 `tools_delta` has no trace of it, ever.** 8 tools (`Agent`, `Artifact`, `AskUserQuestion`,

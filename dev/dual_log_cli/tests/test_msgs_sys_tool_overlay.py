@@ -9,11 +9,17 @@ Covers: an untouched sys/tool line stays byte-identical when a sys_tool_overlay 
 carries nothing for that coordinate; a transformed system line switches its leading chars from the
 wire size to the ORIGINAL size (looked up in `data["payload"]["system"]`) and appends the same
 `_delta_tail` a msg/block line carries; a description-stripped tool line does the same, looked up
-in `data["payload"]["tools"]` by name; a tool the proxy stripped WHOLE (absent from the wire
-tools_delta entirely, hence no line today) is synthesized as its own standalone line with full
-strip and wire 0, attached to the marker whose own flow_id the overlay recorded; a whole-stripped
-tool whose name cannot be resolved in `orig_tools` is skipped rather than guessed; and a default
-(missing) sys_tool_overlay argument renders exactly the pre-feature output.
+in `data["payload"]["tools"]` by name, with its tail's wire figure the MEASURED wire chars
+(`item["chars"]`) rather than derived from the recorded stripped TEXT length — the two are NOT
+commensurable for a tool (JSON-encoded chars vs. raw description characters), a corrected defect
+this suite pins with a fixture where they deliberately disagree; system index 0 (the per-request
+billing header) is left completely untouched — wire chars, no tail — since it changes every request
+by construction, so the last request's own copy is not a valid "original" for it; a tool the proxy
+stripped WHOLE (absent from the wire tools_delta entirely, hence no line today) is synthesized as
+its own standalone line with full strip and wire 0, attached to the marker whose own flow_id the
+overlay recorded; a whole-stripped tool whose name cannot be resolved in `orig_tools` is skipped
+rather than guessed; and a default (missing) sys_tool_overlay argument renders exactly the
+pre-feature output.
 
 All fixtures are hand-built dicts shaped like `render_msgs` expects, with `data["payload"]` added
 for the original-size lookups this feature reads — no dual-log directory or MONITOR_CC_ROOT
@@ -106,22 +112,55 @@ def test_transformed_sys_line_shows_original_chars_and_tail() -> None:
 
 
 # A description-stripped tool line: leading chars becomes the tool's FULL original size (name +
-# full description, JSON-encoded), the tail sums the recorded stripped/injected description spans.
-def test_desc_stripped_tool_shows_original_chars_and_tail() -> None:
+# full description, JSON-encoded), the tail's WIRE figure is the MEASURED wire chars
+# (`item["chars"]`, exactly what `_tool_lines` computed before this feature) — never derived from
+# the recorded stripped TEXT length, which is deliberately set here to a DIFFERENT number (raw
+# description characters removed vs. the tool's JSON-encoded size delta are not the same unit,
+# e.g. escaping) to prove the tail does not silently fall back to the wrong arithmetic. Reproduces
+# the corrected defect: `tool[Bash]` on `opus_monitor_cc_1788464543`'s REQ 1 must show wire `517c`
+# (the measured figure `_tool_lines` always computed), not a value derived from the 1,356-char raw
+# stripped description text.
+def test_desc_stripped_tool_uses_measured_wire_not_derived_from_raw_text() -> None:
     bash_full = _tool("Bash", 480)
     original_chars = _tool_chars(bash_full)
+    measured_wire = 435  # deliberately NOT original_chars - 50 (the raw stripped-text length below)
     data = {
         "boundaries": [_boundary(0, 1, "2026-09-04T00:00:00Z", "f0",
-                                  tool_lines=[{"label": "tool[Bash]", "chars": original_chars - 200, "tag": None}])],
+                                  tool_lines=[{"label": "tool[Bash]", "chars": measured_wire, "tag": None}])],
         "turns": [_msg(0, "user", 4, [_block("text", 4)])],
         "payload": {"system": [], "tools": [bash_full]},
     }
-    tools_overlay = {"Bash": {"stripped": ["x" * 200], "injected": [], "req": 1, "flow_id": "f0", "whole": False}}
+    # Raw stripped description text is 50 characters — if the tail derived S from summing this
+    # (the pre-correction bug), the displayed wire would be original_chars - 50, not measured_wire.
+    tools_overlay = {"Bash": {"stripped": ["x" * 50], "injected": [], "req": 1, "flow_id": "f0", "whole": False}}
     got = render_msgs(data, 0, 0, sys_tool_overlay=({}, tools_overlay))
     lines = got.rstrip("\n").split("\n")
-    check("leading chars is the FULL original size, not the shrunk wire size",
+    check("leading chars is the FULL original size, not the wire size",
           f"{original_chars:,}c" in lines[1], lines[1])
-    check("tail matches −200 +0 → wire", lines[1].rstrip().endswith(f"−200 +0 → {original_chars - 200:,}c"), lines[1])
+    derived_stripped = original_chars - measured_wire
+    check(f"tail shows the MEASURED wire ({measured_wire}c), not original_chars-50 ({original_chars - 50})",
+          lines[1].rstrip().endswith(f"−{derived_stripped:,} +0 → {measured_wire:,}c"), lines[1])
+    check("the buggy derived-from-raw-text wire value does NOT appear",
+          f"→ {original_chars - 50:,}c" not in lines[1], lines[1])
+
+
+# System index 0 (the billing header) changes on EVERY request by construction, so it is left
+# completely untouched — wire chars, no tail — even when the overlay carries data for it (which
+# would be wrong to apply: that data reflects THIS request's own strip, but the last request's
+# system[0] is a DIFFERENT billing header entirely, not a valid "original" for this one).
+def test_sys_billing_header_untouched() -> None:
+    data = {
+        "boundaries": [_boundary(0, 1, "2026-09-04T00:00:00Z", "f0",
+                                  sys_lines=[{"label": "sys[0]", "chars": 132, "tag": None}])],
+        "turns": [_msg(0, "user", 4, [_block("text", 4)])],
+        "payload": {"system": [{"type": "text", "text": "x" * 174}], "tools": []},  # last request's OWN sys[0]
+    }
+    sys_overlay = {"0": {"stripped": ["s" * 999], "injected": [], "req": 1, "flow_id": "f0"}}
+    got = render_msgs(data, 0, 0, sys_tool_overlay=(sys_overlay, {}))
+    lines = got.rstrip("\n").split("\n")
+    check("sys[0] keeps its OWN wire chars (132c), not the last request's system[0] (174c)",
+          lines[1].rstrip().endswith("132c"), lines[1])
+    check("sys[0] carries no tail even though the overlay has data for it", "→" not in lines[1], lines[1])
 
 
 # A tool the proxy stripped WHOLE never appears in the wire tools_delta (absent both before and
@@ -195,7 +234,8 @@ def test_default_sys_tool_overlay_unchanged() -> None:
 def test_msgs_sys_tool_overlay_workflow() -> None:
     test_untouched_sys_line_unchanged()
     test_transformed_sys_line_shows_original_chars_and_tail()
-    test_desc_stripped_tool_shows_original_chars_and_tail()
+    test_desc_stripped_tool_uses_measured_wire_not_derived_from_raw_text()
+    test_sys_billing_header_untouched()
     test_whole_stripped_tool_synthesized_as_standalone_line()
     test_whole_stripped_tool_scoped_to_owning_flow()
     test_whole_stripped_tool_unresolvable_name_skipped()
