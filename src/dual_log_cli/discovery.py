@@ -203,6 +203,17 @@ def _matches_scope(session: dict, scope_needle: str) -> bool:
             or scope_needle in session.get("stem", "").lower())
 
 
+# Keep only sessions whose context starts with "opus/" (main) or "worker/" (worker) — the
+# --main/--worker filter `reqs` uses. Mutually exclusive at the CLI level (an argparse group), so
+# at most one of the two is ever True here; neither set returns `sessions` unchanged.
+def filter_by_family(sessions: list, main: bool = False, worker: bool = False) -> list:
+    if main:
+        return [s for s in sessions if s.get("context", "").startswith("opus/")]
+    if worker:
+        return [s for s in sessions if s.get("context", "").startswith("worker/")]
+    return sessions
+
+
 # Resolve a stem or unambiguous substring to exactly one session stem
 def resolve_stem(dual_log_dir: Path, query: str) -> str:
     stems = sorted(group_streams(dual_log_dir))
