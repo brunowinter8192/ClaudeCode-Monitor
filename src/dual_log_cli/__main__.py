@@ -13,6 +13,10 @@ Commands:
     reqs [scope] --gap M     only the REQs bracketing a gap of >= M minutes between consecutive
                              requests; the after-REQ carries "  +Nm"; a session with no qualifying
                              gap prints only its "session" header line
+    reqs [scope] --merged    merge every session in scope into ONE chronological REQ chain (the
+                             prompt cache is shared across a project's workers) instead of one
+                             listing per session; each line tagged with its worker/project;
+                             combines with --gap, evaluated over the merged chain
     msgs <session>           request groups: a REQ separator (with CR/CC prompt-cache usage when
                              resolvable) listing the system blocks and tools that request sent —
                              in full for the family's first request, else only what changed or is
@@ -34,6 +38,7 @@ Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli search Reißleine websearch --since 2026-08-28
     ./venv/bin/python -m src.dual_log_cli reqs websearch --main
     ./venv/bin/python -m src.dual_log_cli reqs websearch --gap 30
+    ./venv/bin/python -m src.dual_log_cli reqs websearch --merged --gap 30
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 700 740
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 --req 259
@@ -66,7 +71,14 @@ from .discovery import (
 )
 from .overlay import build_overlay, build_sys_tool_overlay
 from .project_map import build_project_map
-from .render import render_expand_full, render_msgs, render_reqs, render_search, render_sessions
+from .render import (
+    render_expand_full,
+    render_msgs,
+    render_reqs,
+    render_reqs_merged,
+    render_search,
+    render_sessions,
+)
 from .search import find_matches
 from .timeline import (
     AmbiguousRequestNumberError,
@@ -188,7 +200,15 @@ def _parse_args(argv: list) -> argparse.Namespace:
             "minutes — the after-REQ of each qualifying gap carries `  +Nm`; a REQ that is both the "
             "end of one qualifying gap and the start of the next prints once; a session with no "
             "qualifying gap prints only its `session` header line, so the reader sees it was "
-            "checked. Omitting --gap reproduces the plain listing exactly."
+            "checked. Omitting --gap reproduces the plain listing exactly. --merged combines every "
+            "session in scope into ONE chronological REQ chain instead of one listing per session — "
+            "the prompt cache hangs on the shared system/tools prefix every worker of a project "
+            "sends, so a request from ANY session in scope keeps it warm for every other; a "
+            "`merged <N> sessions` header replaces the per-session `session <stem>` lines, and each "
+            "REQ line carries `  <tag>` (its context after the last `/` — a worker's name, or a "
+            "main session's project). --merged --gap evaluates the SAME bracketing rule over the "
+            "merged chain, so a within-session gap another session's request happens to fall "
+            "inside no longer qualifies, and a gap that only exists ACROSS sessions does."
         ),
     )
     reqs.add_argument("scope", nargs="?", default="", metavar="SCOPE",
@@ -202,6 +222,8 @@ def _parse_args(argv: list) -> argparse.Namespace:
     reqs_family.add_argument("--worker", action="store_true", help="only worker sessions (context starts with worker/)")
     reqs.add_argument("--gap", type=int, default=None, metavar="MINUTES",
                       help="show only the REQs bracketing a consecutive gap of at least this many minutes")
+    reqs.add_argument("--merged", action="store_true",
+                      help="merge every session in scope into one chronological REQ chain, each line tagged by session")
     return parser.parse_args(argv)
 
 
@@ -287,7 +309,9 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
 # reqs — scoped like `search`, same per-session last-request reconstruction (skip-on-unloadable,
 # not fatal), plus --main/--worker narrowing to sessions whose context starts with "opus/" or
 # "worker/". No matcher, no hit filtering — every session that loads contributes its own REQ list,
-# optionally reduced to only the REQs bracketing a qualifying --gap (render_reqs does the rest).
+# optionally reduced to only the REQs bracketing a qualifying --gap, optionally merged across
+# every session in scope into one chronological chain (--merged) — session SELECTION is identical
+# either way, only which render function turns `results` into text differs.
 def _run_reqs(dual_log_dir, args: argparse.Namespace) -> int:
     code = _reject_bad_days(args)
     if code:
@@ -310,7 +334,10 @@ def _run_reqs(dual_log_dir, args: argparse.Namespace) -> int:
             skipped += 1
             continue
         results.append((session, data["boundaries"]))
-    sys.stdout.write(render_reqs(results, skipped, args.gap))
+    if args.merged:
+        sys.stdout.write(render_reqs_merged(results, skipped, args.gap))
+    else:
+        sys.stdout.write(render_reqs(results, skipped, args.gap))
     return 0
 
 

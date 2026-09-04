@@ -10,7 +10,11 @@ lines; the trailing skipped-sessions note, reused from `search`; an empty result
 `--gap MINUTES` (2026-09-04) — one qualifying pair (only its two REQs print, the after carrying
 `  +Nm`, everything else omitted), two adjacent qualifying gaps sharing a REQ (it prints exactly
 once), no qualifying gap (only the session header line), and the `>=` threshold boundary (a gap of
-precisely the threshold qualifies, one second short does not); and `filter_by_family` keeping only
+precisely the threshold qualifies, one second short does not); `--merged` (2026-09-04, same day) —
+two sessions' REQs interleave in strict chronological order under one `merged <N> sessions` header,
+each tagged with its own session; combined with `--gap`, a within-session gap bridged by another
+session's request does NOT qualify (the merge only ever compares GLOBAL chronological neighbors),
+while a gap that exists only ACROSS sessions does; and `filter_by_family` keeping only
 `opus/`-prefixed sessions for `--main`, only `worker/`-prefixed for `--worker`, and the list
 unchanged when neither flag is set.
 
@@ -35,7 +39,7 @@ sys.path.insert(0, str(_HERE.parents[2]))
 
 from src.dual_log_cli.discovery import filter_by_family
 from src.dual_log_cli.reader import local_datetime
-from src.dual_log_cli.render import render_reqs
+from src.dual_log_cli.render import render_reqs, render_reqs_merged
 from src.dual_log_cli.timeline import request_boundaries
 
 PASS_LIST = []
@@ -249,6 +253,67 @@ def test_gap_threshold_boundary() -> None:
           got_under == "session s\n", got_under)
 
 
+# --merged: two sessions' REQs interleave in TIME, not in listing order — the merged output must
+# follow strict chronological order across sessions, each line carrying its own session's tag
+# (context after the last "/").
+def test_merged_order_interleaved_across_sessions() -> None:
+    boundaries_a = _boundaries([
+        _delta_entry("a0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("a1", "2026-09-04T10:20:00Z", 5),
+    ])
+    boundaries_b = _boundaries([
+        _delta_entry("b0", "2026-09-04T10:10:00Z", 2, is_first=True),
+        _delta_entry("b1", "2026-09-04T10:30:00Z", 5),
+    ])
+    session_a = _session("s_a", "opus/monitor_cc")
+    session_b = _session("s_b", "worker/monitor_cc/proxy-tn-wrap")
+    got = render_reqs_merged([(session_a, boundaries_a), (session_b, boundaries_b)])
+    expected = (
+        "merged 2 sessions\n"
+        f"REQ 1   {_local_clock('2026-09-04T10:00:00Z')}  monitor_cc\n"
+        f"REQ 1   {_local_clock('2026-09-04T10:10:00Z')}  proxy-tn-wrap\n"
+        f"REQ 2   {_local_clock('2026-09-04T10:20:00Z')}  monitor_cc\n"
+        f"REQ 2   {_local_clock('2026-09-04T10:30:00Z')}  proxy-tn-wrap\n"
+    )
+    check("merged REQs interleave in strict chronological order, each tagged with its own session",
+          got == expected, got)
+
+
+# --merged --gap: a gap that exists WITHIN one session (95m, would qualify alone at --gap 90) but
+# is BRIDGED by another session's request landing in between must NOT qualify — the merged chain
+# only ever compares GLOBAL chronological neighbors, so the 95m same-session gap is replaced by two
+# smaller cross-session gaps (30m, 65m), neither of which reaches the threshold.
+def test_merged_gap_bridged_by_another_session_does_not_qualify() -> None:
+    boundaries_a = _boundaries([
+        _delta_entry("a0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("a1", "2026-09-04T11:35:00Z", 5),   # +95m from a0 — would qualify ALONE
+    ])
+    boundaries_b = _boundaries([
+        _delta_entry("b0", "2026-09-04T10:30:00Z", 2, is_first=True),  # +30m after a0, +65m before a1
+    ])
+    session_a = _session("s_a", "opus/monitor_cc")
+    session_b = _session("s_b", "worker/monitor_cc/proxy-tn-wrap")
+    got = render_reqs_merged([(session_a, boundaries_a), (session_b, boundaries_b)], gap_minutes=90)
+    check("the within-session gap is bridged — no qualifying pair, header only",
+          got == "merged 2 sessions\n", got)
+
+
+# --merged --gap: a gap that exists ACROSS sessions (nothing bridging it) DOES qualify — both REQs
+# print, the after carrying the tail and its own session's tag.
+def test_merged_gap_across_sessions_qualifies() -> None:
+    boundaries_a = _boundaries([_delta_entry("a0", "2026-09-04T10:00:00Z", 2, is_first=True)])
+    boundaries_b = _boundaries([_delta_entry("b0", "2026-09-04T11:40:00Z", 2, is_first=True)])  # +100m
+    session_a = _session("s_a", "opus/monitor_cc")
+    session_b = _session("s_b", "worker/monitor_cc/proxy-tn-wrap")
+    got = render_reqs_merged([(session_a, boundaries_a), (session_b, boundaries_b)], gap_minutes=90)
+    expected = (
+        "merged 2 sessions\n"
+        f"REQ 1   {_local_clock('2026-09-04T10:00:00Z')}  monitor_cc\n"
+        f"REQ 1   {_local_clock('2026-09-04T11:40:00Z')}  proxy-tn-wrap  +100m\n"
+    )
+    check("a genuine cross-session gap qualifies, after-REQ carries tag AND tail", got == expected, got)
+
+
 # filter_by_family: --main keeps only opus/-prefixed, --worker keeps only worker/-prefixed,
 # neither flag returns the list unchanged.
 def test_filter_by_family() -> None:
@@ -282,6 +347,9 @@ def test_reqs_workflow() -> None:
     test_gap_two_adjacent_gaps_sharing_req()
     test_gap_no_qualifying_gap()
     test_gap_threshold_boundary()
+    test_merged_order_interleaved_across_sessions()
+    test_merged_gap_bridged_by_another_session_does_not_qualify()
+    test_merged_gap_across_sessions_qualifies()
     test_filter_by_family()
 
     total = len(PASS_LIST) + len(FAIL_LIST)

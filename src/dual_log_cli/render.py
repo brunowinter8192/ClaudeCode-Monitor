@@ -386,7 +386,7 @@ _REQ_NUMBER_WIDTH = 4
 #
 # `gap_minutes` (2026-09-04, `--gap MINUTES`) is additive and `None` by default, reproducing the
 # plain listing byte-for-byte. When set, `_gap_lines` replaces the full per-session listing with
-# only the REQs bracketing a qualifying gap — see that function for the exact rule.
+# only the REQs bracketing a qualifying gap — see `_bracket_gap_lines` for the exact rule.
 def render_reqs(results: list, skipped: int = 0, gap_minutes: int = None) -> str:
     if not results:
         lines = ["no sessions found"]
@@ -404,48 +404,123 @@ def render_reqs(results: list, skipped: int = 0, gap_minutes: int = None) -> str
     return "\n".join(lines[:-1] + _skipped_lines(skipped)) + "\n"
 
 
-# One "REQ n   HH:MM:SS" line, plus an optional tail (the `--gap` "  +Nm" suffix).
-def _req_line(marker: dict, tail: str = "") -> str:
-    return f"REQ {marker['number']:<{_REQ_NUMBER_WIDTH}}{_clock(marker['timestamp'])}{tail}"
+# reqs --merged (2026-09-04): ALL sessions in scope combined into ONE chronological REQ chain,
+# instead of one listing per session — because the prompt cache hangs on the shared prefix (system
+# blocks + tools) every worker of a project sends, so a request from ANY session in scope keeps
+# that prefix warm for every OTHER one; the gap that actually matters for cache health is between
+# consecutive requests of ANY session, not within one. "merged <N> sessions" header (N = sessions
+# that actually loaded, i.e. `len(results)` — `skipped` is reported separately, as always), then
+# either every REQ across every session as a `_req_line` tagged with its own session (plain
+# listing), or, with `gap_minutes` set, `_bracket_gap_lines` over that SAME merged, globally-sorted
+# sequence — which is what makes a within-session gap that a DIFFERENT session's request happens
+# to fall inside no longer qualify (its two new neighbors are the bridging request, not each
+# other), and a gap that only exists ACROSS sessions qualify correctly, with no special-casing
+# either way: both are just consequences of pairing GLOBAL chronological neighbors.
+def render_reqs_merged(results: list, skipped: int = 0, gap_minutes: int = None) -> str:
+    if not results:
+        lines = ["no sessions found"]
+        return "\n".join(lines + _skipped_lines(skipped)) + "\n"
+    entries = _merged_entries(results)
+    lines = [f"merged {len(results)} sessions"]
+    if gap_minutes is None:
+        lines.extend(_req_line(marker, tag=tag) for _dt, marker, tag in entries)
+    else:
+        lines.extend(_bracket_gap_lines(entries, gap_minutes))
+    return "\n".join(lines + _skipped_lines(skipped)) + "\n"
 
 
-# `--gap MINUTES`: only the REQs bracketing a qualifying CONSECUTIVE gap, in session order.
-# `ordered` is [(msg_index, marker), …] sorted by msg index (chronological). For every consecutive
-# pair whose elapsed time is >= gap_minutes (whole minutes, floored — `total_seconds() // 60`,
-# never rounded, so a boundary case is exact: a gap of precisely N minutes qualifies for `--gap N`,
-# one second less does not), both the BEFORE and the AFTER REQ print — the after carrying
-# `  +{elapsed}m` as its tail. `local_datetime`-produced datetimes are subtracted directly (both
-# AWARE), which gives the true real-world elapsed duration regardless of DST, without needing a
-# separate "compute in UTC" step.
+# One "REQ n   HH:MM:SS" line, optionally carrying "  <tag>" (--merged, e.g. a worker name) and/or
+# "  +Nm" (--gap, on the AFTER line of a qualifying pair) — clock, then tag, then gap tail, so a
+# combined `--merged --gap` line reads "REQ n   HH:MM:SS  <tag>  +Nm".
+def _req_line(marker: dict, tag: str = "", gap_tail: str = "") -> str:
+    tag_part = f"  {tag}" if tag else ""
+    return f"REQ {marker['number']:<{_REQ_NUMBER_WIDTH}}{_clock(marker['timestamp'])}{tag_part}{gap_tail}"
+
+
+# The session's own short --merged tag: its context after the LAST "/" — a worker's name
+# ("worker/monitor_cc/proxy-tn-wrap" -> "proxy-tn-wrap") or a main session's project
+# ("opus/monitor_cc" -> "monitor_cc") — no shape-specific branching needed, both contexts happen
+# to put the identifying piece last. Falls back to the stem when context is empty (never crashes
+# on a context with no "/" at all — rsplit on a slash-free string returns it unchanged).
+def _session_tag(session: dict) -> str:
+    context = session.get("context") or ""
+    return context.rsplit("/", 1)[-1] if context else session.get("stem", "")
+
+
+# --merged's flattened, chronologically SORTED [(dt, marker, tag), …] across every session in
+# `results` — the merge point every render (plain and --gap) built on top of it shares. A marker
+# whose timestamp fails to parse is dropped here rather than kept with a "?" placeholder (unlike
+# the per-session plain listing, which never drops a line): a chronological MERGE has no orderable
+# position for an unparseable instant, so there is nowhere correct to place it.
+def _merged_entries(results: list) -> list:
+    entries = []
+    for session, boundaries in results:
+        tag = _session_tag(session)
+        markers = request_markers(boundaries or [])
+        for msg_index in sorted(markers):
+            marker = markers[msg_index]
+            dt = local_datetime(marker["timestamp"])
+            if dt is None:
+                continue
+            entries.append((dt, marker, tag))
+    entries.sort(key=lambda entry: entry[0])
+    return entries
+
+
+# `--gap MINUTES`: only the REQs bracketing a qualifying CONSECUTIVE gap, in chronological order —
+# shared core for both the per-session path (`_gap_lines`, tag always "") and `--merged`
+# (`render_reqs_merged`, tag is each entry's own session). `entries` is [(dt, marker, tag), …],
+# already sorted and already stripped of unparseable timestamps by the caller. For every
+# consecutive pair whose elapsed time is >= gap_minutes (whole minutes, floored —
+# `total_seconds() // 60`, never rounded, so a boundary case is exact: a gap of precisely N minutes
+# qualifies for `--gap N`, one second less does not), both the BEFORE and the AFTER REQ print — the
+# after carrying `  +{elapsed}m` as its tail. `dt` values are subtracted directly (both AWARE),
+# which gives the true real-world elapsed duration regardless of DST, without a separate "compute
+# in UTC" step.
 #
 # A REQ that is the AFTER of one qualifying pair and the BEFORE of the next prints EXACTLY ONCE,
 # carrying only its AFTER tail — `printed_positions` makes this fall out of the walk itself rather
-# than needing a special case: by the time a later pair would try to print it "before" (no tail),
-# its position is already marked printed from the earlier pair's "after" role.
+# than needing a special case: by the time a later pair would try to print it "before" (no tag/tail
+# change), its position is already marked printed from the earlier pair's "after" role. Since
+# pairing is always between GLOBAL chronological neighbors regardless of which session an entry
+# came from, a --merged within-session gap that a DIFFERENT session's request happens to fall
+# inside is automatically evaluated as two SMALLER cross-session gaps instead of one large
+# same-session one — no bridging logic needed, it falls out of "neighbor" meaning "next in time".
 #
-# A session with zero qualifying pairs (including one with fewer than two requests at all, where
-# `range(len(ordered) - 1)` is simply empty) yields `[]` here — `render_reqs` still prints that
-# session's own header line, just no REQ lines beneath it, which is what lets a reader see the
-# session WAS checked rather than silently vanishing from the listing.
-def _gap_lines(ordered: list, gap_minutes: int) -> list:
+# Fewer than two entries (a lone session with 0-1 requests, or an empty merge) yields `[]` here —
+# the caller still prints its own header line(s), just no REQ lines beneath, which is what lets a
+# reader see a session (or the whole merge) WAS checked rather than silently vanishing.
+def _bracket_gap_lines(entries: list, gap_minutes: int) -> list:
     lines = []
     printed_positions = set()
-    for i in range(len(ordered) - 1):
-        _before_index, before = ordered[i]
-        _after_index, after = ordered[i + 1]
-        dt_before = local_datetime(before["timestamp"])
-        dt_after = local_datetime(after["timestamp"])
-        if dt_before is None or dt_after is None:
-            continue
+    for i in range(len(entries) - 1):
+        dt_before, before, tag_before = entries[i]
+        dt_after, after, tag_after = entries[i + 1]
         elapsed = int((dt_after - dt_before).total_seconds() // 60)
         if elapsed < gap_minutes:
             continue
         if i not in printed_positions:
-            lines.append(_req_line(before))
+            lines.append(_req_line(before, tag=tag_before))
             printed_positions.add(i)
-        lines.append(_req_line(after, tail=f"  +{elapsed}m"))
+        lines.append(_req_line(after, tag=tag_after, gap_tail=f"  +{elapsed}m"))
         printed_positions.add(i + 1)
     return lines
+
+
+# `--gap MINUTES`, per-session path: `ordered` is [(msg_index, marker), …] sorted by msg index
+# (chronological within one session) — normalised into `_bracket_gap_lines`' shared entry shape
+# (untagged; unparseable timestamps dropped here, same as `_merged_entries` does, rather than
+# skipping only the PAIRS touching them — the two valid neighbors either side of a bad one end up
+# compared to each other directly instead of neither being compared at all; real dual-log
+# timestamps are never malformed, so this only changes a never-observed theoretical case).
+def _gap_lines(ordered: list, gap_minutes: int) -> list:
+    entries = []
+    for _msg_index, marker in ordered:
+        dt = local_datetime(marker["timestamp"])
+        if dt is None:
+            continue
+        entries.append((dt, marker, ""))
+    return _bracket_gap_lines(entries, gap_minutes)
 
 
 # expand: the complete content of each selected msg in the window, plus the proxy's own
