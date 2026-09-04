@@ -118,28 +118,35 @@ Status: runs clean — 26/26 checks PASS on the current tree.
 
 ---
 
-### test_strip_fix.py (1222 LOC)
+### test_strip_fix.py (1326 LOC)
 
-**Purpose:** The largest suite in this directory (207 checks) for the template-based exact-match SR
-strip (Phase B). Three groups: (1) 8 core SR templates × 3 cases each — real strip at top level, FP
+**Purpose:** The largest suite in this directory (217 checks) for the template-based exact-match SR
+strip (Phase B). Four groups: (1) 8 core SR templates × 3 cases each — real strip at top level, FP
 code-literal preserved, tool_result content preserved (SR family no longer descends into
 `tool_result`) — plus 4 content-shape tests, user-interrupt partial mode, plan-mode None-return, and
 `_find_system_reminder_blocks` top-level-only extraction; (2) "w"-prefixed full-chain tests —
 task-notification, launch-ack, interrupt-marker, sn-notice and role-system strips run through the
 real per-message passes together, asserting neighbor content and exact real-corpus bodies survive;
-(3) "tt"-prefixed tests for the `<total_tokens>` badge/render delta — whether a stripped/injected
-entry lights the `strip`/`inject` word in the rendered request-header line.
-**Reads:** In-script synthetic fixtures only; no external log/fixture file.
+(3) "w31"–"w33" full-`apply_modification_rules`-chain tests (2026-09-04) for the `<system-reminder>`-
+wrapped TN wake-up shape (`_unwrap_full_sr_wrapper`, `message_passes.py`) — real corpus fixture
+(`src/logs/dual_log/api_requests_opus_wise2627_1788533758_stripped.jsonl`, request_id
+`65c964d6-90c6-46ec-81de-190487d92e55`) asserts the wire content is exactly the bare wake-up text,
+plus regression pins for the two shapes that already worked (bare role='system' str, unwrapped
+role='user' list-text); (4) "tt"-prefixed tests for the `<total_tokens>` badge/render delta — whether
+a stripped/injected entry lights the `strip`/`inject` word in the rendered request-header line.
+**Reads:** In-script synthetic fixtures only, except the W31–W33 fixture text which is copied
+verbatim from the real corpus (see above) rather than read from the log file at test time.
 **Writes:** stdout PASS/FAIL lines only.
 **Run:** `python3 dev/proxy/test_strip_fix.py`
 **Calls out:** `src/proxy/strip_sr.py`, `src/proxy/payload_helpers.py`, `src/proxy/message_passes.py`
 (`_apply_first_pass`, `_apply_bg_exit_strip`, `_apply_sn_notice_strip`, `_apply_final_sr_pass`,
-`_apply_role_system_strip`, `_apply_interrupt_marker_strip`), `src/proxy/strip_bg_completed.py`,
+`_apply_role_system_strip`), `src/proxy/rules.py` (`apply_modification_rules`, W31–W33 only, imported
+via `importlib` to satisfy `block_dev_imports_src`), `src/proxy/strip_bg_completed.py`,
 `src/proxy/strip_sn_notice.py`, `src/proxy/strip_bg_launch_ack.py`, `src/proxy/strip_interrupt_marker.py`,
 `src/proxy_display/parser.py` (`badge_flags`, `accumulate_dual_log`), `src/proxy_display/render_turn.py`
 (`_build_req_header_line`).
 
-Status: runs clean — 207/207 checks PASS on the current tree.
+Status: runs clean — 217/217 checks PASS on the current tree.
 
 ---
 

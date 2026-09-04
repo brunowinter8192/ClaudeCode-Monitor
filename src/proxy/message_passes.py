@@ -1,4 +1,5 @@
 # INFRASTRUCTURE
+import re
 from .strip_sr import (
     _strip_all_system_reminders,
     _strip_system_reminder,
@@ -168,6 +169,56 @@ def _apply_sn_notice_strip(messages: list) -> tuple:
     return result, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk
 
 
+# Anchored full-wrap detector — CC (2026-09+) sometimes delivers a background-task wake-up as a
+# SINGLE <system-reminder> block wrapping BOTH the SN-notice paragraph AND the <task-notification>
+# tag (previously always arrived as one or the other, unwrapped) — same anchored-not-substring
+# rationale as strip_sn_notice.py / strip_bg_launch_ack.py (FP-nuke class, see
+# process-docs/message_strip_fp_nuke/). Matches only when the ENTIRE str (or a single list[text]
+# block's own text) is exactly one <system-reminder>...</system-reminder> wrap — a wrap that is
+# only PART of a larger message, or a tool_result quoting this shape, never matches (list content
+# is walked per-block, tool_result blocks are skipped by construction — same non-descent as
+# strip_sn_notice.py).
+_SR_FULL_WRAP_RE = re.compile(r'\A<system-reminder>\n(.*)</system-reminder>\s*\Z', re.DOTALL)
+
+
+# Strip a top-level <system-reminder> wrapper (and any SN-notice paragraph inside it) around
+# already-TN-processed content — CC's wrapped bg-task wake-up shape (2026-09+, see
+# _SR_FULL_WRAP_RE above) hides the SN paragraph from strip_sn_notice.py's anchored
+# lstrip().startswith() check (the wrapper, not the paragraph, sits at position 0), so
+# _apply_sn_notice_strip is a no-op on it and the wrapper survives _apply_first_pass's TN-tag
+# replace untouched — left in place, _apply_final_sr_pass later full-strips the ENTIRE
+# <system-reminder> block (wrapper AND the just-injected wake-up text) because the paragraph-
+# prefixed inner text matches the 'system-notification' SR template (strip_sr.py, mode 'full').
+# Called AFTER _replace_task_notification_tags, on content that no longer carries the TN tag
+# itself — only needs to detect+remove the wrapper here; _strip_sn_notice (imported above) does
+# the paragraph removal. No-op for the unwrapped shape (content doesn't start with
+# '<system-reminder>') or any other content, str or list[text] alike — byte-identical output for
+# every case this doesn't apply to. Returns (new_content, removed_chunks).
+def _unwrap_full_sr_wrapper(content):
+    if isinstance(content, str):
+        m = _SR_FULL_WRAP_RE.match(content)
+        if not m:
+            return content, []
+        inner, sn_removed = _strip_sn_notice(m.group(1))
+        return inner, sn_removed
+    if isinstance(content, list):
+        result = []
+        removed = []
+        changed = False
+        for block in content:
+            if isinstance(block, dict) and block.get('type') == 'text':
+                m = _SR_FULL_WRAP_RE.match(block.get('text', ''))
+                if m:
+                    inner, sn_removed = _strip_sn_notice(m.group(1))
+                    result.append({**block, 'text': inner})
+                    removed.extend(sn_removed)
+                    changed = True
+                    continue
+            result.append(block)
+        return (result, removed) if changed else (content, [])
+    return content, []
+
+
 # First-pass message loop — elif-chain strips task-notification, task-tools-nag, deferred-tools, user-interrupt, rejection SRs — returns (new_messages, pass_mods, pass_removed_by_idx, changed_indices, pass_injected_by_idx, pass_ops_by_msg_blk)
 def _apply_first_pass(messages: list) -> tuple:
     result = []
@@ -202,12 +253,13 @@ def _apply_first_pass(messages: list) -> tuple:
                 new_msg["content"] = _strip_system_reminder(new_msg["content"], "task tools haven")
                 pass_mods.append("stripped_task_tools_nag")
                 also_stripped_nag = True
+            new_msg["content"], wrapper_removed = _unwrap_full_sr_wrapper(new_msg["content"])
             result.append(new_msg)
             if new_msg["content"] != old_content:
                 changed_indices.append(idx)
                 mod_name = "replaced_task_notification" if is_failed_bg else "trimmed_task_notification"
                 pass_mods.append(mod_name)
-                removed = _find_task_notification_blocks(old_content)
+                removed = _find_task_notification_blocks(old_content) + wrapper_removed
                 if also_stripped_nag:
                     removed = removed + _find_system_reminder_blocks(old_content, "task tools haven")
                 pass_removed_by_idx[idx] = removed
