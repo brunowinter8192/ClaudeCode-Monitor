@@ -7,8 +7,9 @@ import re
 # block_rag_cli_chained.py / block_websearch_scrape_chained.py / block_worker_cli_read_chained.py
 # used to require same-tool-only chains; sourced by grepping every `-cli\b`/bare-tool anchor
 # actually referenced across src/hooks/*.py). `bd` deliberately excluded — retired
-# (rewrite_bd_invalid_repo.py deleted 2026-08, bd is dead).
-KNOWN_CLI_TOOLS = ("gh-cli", "rag-cli", "worker-cli", "reddit-cli", "linkedin", "websearch")
+# (rewrite_bd_invalid_repo.py deleted 2026-08, bd is dead). `duallog` added 2026-09-04 for
+# block_duallog_chained.py, so a duallog call may chain with the other six tools and with itself.
+KNOWN_CLI_TOOLS = ("gh-cli", "rag-cli", "worker-cli", "reddit-cli", "linkedin", "websearch", "duallog")
 
 _ASSIGN_TOKEN = r'[A-Za-z_][A-Za-z0-9_]*=\S*'
 _ASSIGN_PREFIX = rf'(?:{_ASSIGN_TOKEN}\s+)*'
