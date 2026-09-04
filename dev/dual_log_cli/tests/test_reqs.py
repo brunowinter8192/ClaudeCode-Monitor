@@ -30,6 +30,7 @@ _HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE.parents[2]))
 
 from src.dual_log_cli.discovery import filter_by_family
+from src.dual_log_cli.reader import local_datetime
 from src.dual_log_cli.render import render_reqs
 from src.dual_log_cli.timeline import request_boundaries
 
@@ -45,6 +46,13 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     else:
         FAIL_LIST.append(name)
         print(f"  FAIL  {name}" + (f": {detail}" if detail else ""))
+
+
+# The LOCAL "HH:MM:SS" a UTC "...Z" timestamp renders as — computed the same way production code
+# does (reader.local_datetime), so an expected string built from this is correct on ANY machine's
+# timezone, not just the one this suite happened to be written on.
+def _local_clock(iso_timestamp: str) -> str:
+    return local_datetime(iso_timestamp).strftime("%H:%M:%S")
 
 
 # One forwarded_delta line as addon.py's dual-log writer would shape it
@@ -87,11 +95,15 @@ def test_single_session_req_lines_match_msgs_numbering() -> None:
     ])
     session = _session("api_requests_worker_25c51a2e_proxy-tn-wrap_1788545000", "worker/monitor_cc/proxy-tn-wrap")
     got = render_reqs([(session, boundaries)])
+    # The milestone's own example shows these UTC instants rendering as LOCAL time (verified
+    # against the real proxy pane: the same instant read 20:16:02 there, local, against 18:16:02
+    # in `reqs` before local-time conversion existed) — so the expected clocks here are computed
+    # from the SAME UTC instants via the SAME conversion, not the milestone's illustrative digits.
     expected = (
         "session api_requests_worker_25c51a2e_proxy-tn-wrap_1788545000\n"
-        "REQ 1   20:16:02\n"
-        "REQ 2   20:16:40\n"
-        "REQ 3   20:17:10\n"
+        f"REQ 1   {_local_clock('2026-09-04T20:16:02Z')}\n"
+        f"REQ 2   {_local_clock('2026-09-04T20:16:40Z')}\n"
+        f"REQ 3   {_local_clock('2026-09-04T20:17:10Z')}\n"
     )
     check("output matches the spec's own example byte-for-byte", got == expected, got)
 
@@ -110,7 +122,7 @@ def test_refire_collapsed_same_as_msgs() -> None:
     lines = [l for l in got.split("\n") if l.startswith("REQ")]
     check("re-fire produces no extra REQ line (2 groups, not 3)", len(lines) == 2, lines)
     check("the re-fire+add group uses the OWNER's (f2's) timestamp, not the re-fire's (f1's)",
-          lines[1] == "REQ 2   10:00:05", lines)
+          lines[1] == f"REQ 2   {_local_clock('2026-09-04T10:00:05Z')}", lines)
 
 
 # Multiple sessions stay in LISTING order (newest-first is the caller's responsibility, unchanged
@@ -123,10 +135,10 @@ def test_multiple_sessions_blank_line_separated() -> None:
     got = render_reqs([(session_a, boundaries_a), (session_b, boundaries_b)])
     expected = (
         "session newer_session\n"
-        "REQ 1   09:00:00\n"
+        f"REQ 1   {_local_clock('2026-09-04T09:00:00Z')}\n"
         "\n"
         "session older_session\n"
-        "REQ 1   08:00:00\n"
+        f"REQ 1   {_local_clock('2026-09-04T08:00:00Z')}\n"
     )
     check("two sessions render in the order given, blank-line separated", got == expected, got)
 

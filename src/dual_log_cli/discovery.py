@@ -4,7 +4,7 @@ import re
 from pathlib import Path
 
 from .project_map import build_project_map
-from .reader import infer_family, iter_jsonl
+from .reader import infer_family, iter_jsonl, local_datetime
 
 STREAM_SUFFIXES = ("original", "forwarded", "stripped", "injected", "response", "errors")
 
@@ -166,13 +166,17 @@ def list_sessions(dual_log_dir: Path, project_map: dict = None) -> list:
 # and both case-insensitive substrings:
 #   context — matches the rendered context value only. `sessions <CONTEXT>` uses this.
 #   scope   — matches the context OR the stem, so one argument covers both "a whole project incl.
-#             its workers" and "this one session". `search <term> <SCOPE>` uses this.
+#             its workers" and "this one session". `search <term> <SCOPE>`/`reqs <SCOPE>` use this.
 # Plus an inclusive [since, until] window on the start day.
 #
-# Days are compared on the YYYY-MM-DD prefix of the ISO start timestamp — lexicographic order
-# equals calendar order for that format, so no timezone maths is involved. A session with no
-# start timestamp cannot be placed on a calendar, so an active DATE filter drops it; a context or
-# scope filter alone still keeps it, because both of its match targets are known either way.
+# Days are compared on the LOCAL calendar day of the start timestamp (2026-09-04: was the RAW
+# UTC YYYY-MM-DD prefix, lexicographic order over that being equal to UTC calendar order — but
+# --since/--until are days the CALLER means in their OWN local time, so a session started 23:30
+# local on the 3rd, whose UTC instant can fall on the 4th, was silently listed under the 4th; see
+# `reader.local_datetime`, the one shared conversion point). A session with no start timestamp, or
+# one that fails to parse, cannot be placed on a calendar, so an active DATE filter drops it; a
+# context or scope filter alone still keeps it, because both of its match targets are known either
+# way.
 def filter_sessions(sessions: list, context: str = "", scope: str = "",
                     since: str = "", until: str = "") -> list:
     if not context and not scope and not since and not until:
@@ -186,9 +190,10 @@ def filter_sessions(sessions: list, context: str = "", scope: str = "",
         if scope_needle and not _matches_scope(session, scope_needle):
             continue
         if since or until:
-            day = (session.get("start") or "")[:10]
-            if not day:
+            dt = local_datetime(session.get("start") or "")
+            if dt is None:
                 continue
+            day = dt.strftime("%Y-%m-%d")
             if since and day < since:
                 continue
             if until and day > until:

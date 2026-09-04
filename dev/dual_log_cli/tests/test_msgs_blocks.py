@@ -24,6 +24,7 @@ from pathlib import Path
 _HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE.parents[2]))
 
+from src.dual_log_cli.reader import local_datetime
 from src.dual_log_cli.render import render_msgs
 from src.dual_log_cli.timeline import build_turns
 
@@ -39,6 +40,13 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     else:
         FAIL_LIST.append(name)
         print(f"  FAIL  {name}" + (f": {detail}" if detail else ""))
+
+
+# The LOCAL "HH:MM:SS" a UTC "...Z" timestamp renders as — computed the same way production code
+# does (reader.local_datetime), so an expected string built from this is correct on ANY machine's
+# timezone, not just the one this suite happened to be written on.
+def _local_clock(iso_timestamp: str) -> str:
+    return local_datetime(iso_timestamp).strftime("%H:%M:%S")
 
 
 # A msg row shaped like timeline.build_turns' output, without going through it — used where the
@@ -82,7 +90,7 @@ def test_multiblock_matches_spec_sample() -> None:
         ],
     }
     expected = (
-        "── REQ 25  14:49:03 ──\n"
+        f"── REQ 25  {_local_clock('2026-08-30T14:49:03Z')} ──\n"
         "[ 70] assi  3 blocks            3,862c\n"
         "        thinking                2,451c\n"
         "        thinking                  282c\n"
@@ -181,7 +189,8 @@ def test_req_separator_unchanged() -> None:
         "turns": [_msg(0, "user", 4, [_block("text", 4)])],
     }
     got = render_msgs(data, 0, 0)
-    check("REQ separator format unchanged", got.startswith("── REQ 1  09:00:00 ──\n"), got)
+    check("REQ separator format unchanged",
+          got.startswith(f"── REQ 1  {_local_clock('2026-08-30T09:00:00Z')} ──\n"), got)
 
 
 # ORCHESTRATOR
