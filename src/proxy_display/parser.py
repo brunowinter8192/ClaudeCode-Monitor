@@ -210,6 +210,13 @@ def _find_dual_log_paths(main_log_path: Optional[Path]) -> tuple:
 # shows a neighbor request's span there. It no longer drives any out-of-window rendering: the
 # expanded body is the request's payload delta only (2026-08-30), so an index this flow touched
 # outside that window is simply not drawn.
+# '_sys_idx_by_flow_id' / '_tool_name_by_flow_id' (2026-09-04): the same per-flow scoping as
+# '_msg_idx_by_flow_id', for the system and tools sections — which system indices / tool names
+# THIS line's system_delta/tools_delta touched. Added for duallog's `msgs` sys/tool delta-tail
+# feature (src/dual_log_cli/overlay.py's `build_sys_tool_overlay`); no lag correction is needed for
+# either (unlike messages) — `_diff_system`/`_diff_tools` (src/proxy/diff_engine.py) compute a
+# direct same-request diff of that request's own original vs. forwarded halves, never a historical
+# ops chain, so there is no shape-ambiguity window for a strip to be recorded one request late.
 # '_lag_msg_idx_by_flow_id': {flow_id -> set(msg_idx str)} — the WRITE-SIDE LAG CORRECTION.
 # CC hangs the cache-control breakpoint on the last message, so a request's fresh trailing
 # role='system' total_tokens msg arrives list-shaped; `_apply_role_system_strip` nukes it correctly
@@ -258,6 +265,8 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                         acc[section].clear()
                     acc.setdefault('_has_content_by_flow_id', {}).clear()
                     acc.setdefault('_msg_idx_by_flow_id', {}).clear()
+                    acc.setdefault('_sys_idx_by_flow_id', {}).clear()
+                    acc.setdefault('_tool_name_by_flow_id', {}).clear()
                     acc.setdefault('_lag_msg_idx_by_flow_id', {}).clear()
                     acc['_last_line_meta'] = None
                 acc['system'].update(entry.get('system_delta') or {})
@@ -276,6 +285,8 @@ def accumulate_dual_log(path: Optional[Path], last_pos: int, acc_by_family: dict
                 )
                 acc.setdefault('_has_content_by_flow_id', {})[fid] = has_content
                 acc.setdefault('_msg_idx_by_flow_id', {})[fid] = set(msgs_delta.keys())
+                acc.setdefault('_sys_idx_by_flow_id', {})[fid] = set((entry.get('system_delta') or {}).keys())
+                acc.setdefault('_tool_name_by_flow_id', {})[fid] = set((entry.get('tools_delta') or {}).keys())
                 count = (entry.get('counts') or {}).get('messages', 0)
                 prev_meta = acc.get('_last_line_meta')
                 if prev_meta is not None:

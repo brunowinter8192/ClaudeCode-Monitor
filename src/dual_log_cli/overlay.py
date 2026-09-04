@@ -54,19 +54,103 @@ def build_overlay(session: dict, family: str, boundaries: list) -> dict:
     return overlay
 
 
+# {key: flow_id} — which flow's own delta first recorded a given coordinate, generalized over any
+# of the per-flow index/name dicts `accumulate_dual_log` records (messages/system/tools all share
+# the same {flow_id: set(key)} shape). First-recording flow wins; in every case measured so far a
+# coordinate is touched by at most one flow anyway, so this is unambiguous in practice.
+def _owners_by_flow_key(fam_stripped: dict, fam_injected: dict, by_flow_key: str) -> dict:
+    owners: dict = {}
+    for fam in (fam_stripped, fam_injected):
+        for flow_id, keys in (fam.get(by_flow_key) or {}).items():
+            for key in keys:
+                owners.setdefault(key, flow_id)
+    return owners
+
+
 # {msg_idx_str: flow_id} — which flow actually performed the transformation at each coordinate.
 # The lag set takes precedence: it names the request that stripped the msg, while the raw set names
 # whichever line recorded it (one request later for a trailing total_tokens nuke).
 def _owners_by_index(fam_stripped: dict, fam_injected: dict) -> dict:
-    owners: dict = {}
-    for fam in (fam_stripped, fam_injected):
-        for flow_id, indices in (fam.get("_msg_idx_by_flow_id") or {}).items():
-            for index in indices:
-                owners.setdefault(index, flow_id)
+    owners = _owners_by_flow_key(fam_stripped, fam_injected, "_msg_idx_by_flow_id")
     for flow_id, indices in (fam_stripped.get("_lag_msg_idx_by_flow_id") or {}).items():
         for index in indices:
             owners[index] = flow_id
     return owners
+
+
+# Build the system/tools strip-inject overlay for one session's `msgs` sys/tool delta lines ->
+# (sys_overlay, tools_overlay). sys_overlay is {idx_str: {stripped, injected, req, flow_id}};
+# tools_overlay is {name: {stripped, injected, req, flow_id, whole}} where `whole` marks a tool the
+# proxy removed ENTIRELY (stripped side recorded only {"whole": True}, no text — the description-
+# level strip instead carries {"desc": [texts]}, handled like system's plain span list via `_texts`).
+#
+# No lag correction is needed here (unlike messages): `_diff_system`/`_diff_tools`
+# (src/proxy/diff_engine.py) compute a direct same-request diff of that request's own original vs.
+# forwarded halves, never a historical ops chain the way `_process_messages_section`'s `compose_block`
+# does — so there is no shape-ambiguity window for a strip to land one request late. Verified on
+# `opus_monitor_cc_1788464543`'s first real request: the stripped/injected stream's own system_delta
+# line carries the SAME flow_id `request_boundaries` marks as that request's owner.
+def build_sys_tool_overlay(session: dict, family: str, boundaries: list) -> tuple:
+    streams = session["streams"]
+    acc_stripped: dict = {}
+    acc_injected: dict = {}
+    if streams.get("stripped") is not None:
+        accumulate_dual_log(streams["stripped"], 0, acc_stripped)
+    if streams.get("injected") is not None:
+        accumulate_dual_log(streams["injected"], 0, acc_injected)
+    fam_s = acc_stripped.get(family, {})
+    fam_i = acc_injected.get(family, {})
+    numbers = request_numbers_by_flow(boundaries)
+    sys_owners = _owners_by_flow_key(fam_s, fam_i, "_sys_idx_by_flow_id")
+    tool_owners = _owners_by_flow_key(fam_s, fam_i, "_tool_name_by_flow_id")
+    sys_overlay = _system_overlay(fam_s.get("system") or {}, fam_i.get("system") or {}, sys_owners, numbers)
+    tools_overlay = _tools_overlay(fam_s.get("tools") or {}, fam_i.get("tools") or {}, tool_owners, numbers)
+    return sys_overlay, tools_overlay
+
+
+# System section of the sys/tool overlay: each recorded index's value is a plain list (stripped:
+# strings, injected: (tag, text) spans) — the exact shape `_texts` already normalises for messages.
+def _system_overlay(sys_stripped: dict, sys_injected: dict, owners: dict, numbers: dict) -> dict:
+    overlay: dict = {}
+    for source, key in ((sys_stripped, "stripped"), (sys_injected, "injected")):
+        for idx_str, recorded in source.items():
+            texts = _texts(recorded, key)
+            if not texts:
+                continue
+            slot = overlay.setdefault(idx_str, {"stripped": [], "injected": [], "req": None, "flow_id": None})
+            slot[key] = texts
+            if slot["flow_id"] is None:
+                owner = owners.get(idx_str)
+                slot["flow_id"] = owner
+                slot["req"] = numbers.get(owner)
+    return overlay
+
+
+# Tools section of the sys/tool overlay: each recorded name's value is a DICT — {"whole": True} for
+# a tool the proxy removed entirely (no text to measure, `render.py` sources its original size from
+# the last request's own tools list instead), or {"desc": [...]} for a description-level strip,
+# whose span list is the same shape `_texts` already normalises.
+def _tools_overlay(tools_stripped: dict, tools_injected: dict, owners: dict, numbers: dict) -> dict:
+    overlay: dict = {}
+    for source, key in ((tools_stripped, "stripped"), (tools_injected, "injected")):
+        for name, recorded in source.items():
+            if not isinstance(recorded, dict):
+                continue
+            whole = bool(recorded.get("whole"))
+            texts = [] if whole else _texts(recorded.get("desc") or [], key)
+            if not whole and not texts:
+                continue
+            slot = overlay.setdefault(
+                name, {"stripped": [], "injected": [], "req": None, "flow_id": None, "whole": False},
+            )
+            slot[key] = texts
+            if whole:
+                slot["whole"] = True
+            if slot["flow_id"] is None:
+                owner = owners.get(name)
+                slot["flow_id"] = owner
+                slot["req"] = numbers.get(owner)
+    return overlay
 
 
 # Normalise one recorded coordinate to a list of plain texts. The stripped side is a flat list of

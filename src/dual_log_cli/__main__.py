@@ -50,7 +50,7 @@ from .discovery import (
     resolve_dual_log_dir,
     resolve_stem,
 )
-from .overlay import build_overlay
+from .overlay import build_overlay, build_sys_tool_overlay
 from .project_map import build_project_map
 from .render import render_expand_full, render_msgs, render_search, render_sessions
 from .search import find_matches
@@ -251,7 +251,8 @@ def _run_msgs(dual_log_dir, args: argparse.Namespace) -> int:
         return 2
     usage_by_flow = build_usage_by_flow(data["session"], data["boundaries"])
     overlay = build_overlay(data["session"], data["family"], data["boundaries"])
-    sys.stdout.write(render_msgs(data, start, end, usage_by_flow, overlay))
+    sys_tool_overlay = build_sys_tool_overlay(data["session"], data["family"], data["boundaries"])
+    sys.stdout.write(render_msgs(data, start, end, usage_by_flow, overlay, sys_tool_overlay))
     return 0
 
 
