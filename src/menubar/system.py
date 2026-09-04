@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
 
 # From ghostty.py: Ghostty terminal UUID lookup for click-to-focus
 from .ghostty import get_ghostty_terminal_id, get_ghostty_terminal_id_for_tty
@@ -187,21 +187,6 @@ def _resolve_launch_python3() -> str:
         path_value = os.environ.get('PATH', '')
     return shutil.which('python3', path=path_value) or 'python3'
 
-# Detect the installed Ghostty major.minor version via 'ghostty +version'. (0, 0) on any
-# failure (not installed, unparsable output, timeout) — callers treat that as "use the pre-1.3
-# fallback", the same conservative default the bash reference (tmux_spawn.sh:open_tmux_viewer)
-# uses for its "0.0" sentinel.
-def _ghostty_version() -> Tuple[int, int]:
-    try:
-        r = subprocess.run(['ghostty', '+version'], capture_output=True, text=True,
-                           encoding='utf-8', errors='replace', timeout=3)
-    except Exception:
-        return (0, 0)
-    m = re.search(r'(\d+)\.(\d+)', r.stdout)
-    if m:
-        return int(m.group(1)), int(m.group(2))
-    return (0, 0)
-
 # Build the fixed shell command line for the monitor launch window: 'cd <root> && <python3>
 # workflow.py --project <cwd>' — the same command the user runs by hand today. root and cwd are
 # individually shell-quoted (shlex.quote) so a cwd containing spaces or shell metacharacters
@@ -215,11 +200,13 @@ def _build_monitor_launch_cmd(root: Path, python3_path: str, cwd: str) -> str:
 def _applescript_quote(s: str) -> str:
     return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
 
-# Open a NEW Ghostty window running shell_cmd in the foreground, Ghostty 1.3+ native path (PR
-# #11208) — ported from the iterative-dev plugin's tmux_spawn.sh:open_tmux_viewer. '; exit'
-# after shell_cmd: once the launched process returns (tmux session detached/killed), the shell
-# exits and the window closes — same shape as the worker-viewer window, and the mechanism that
-# keeps 'closing the window detaches the tmux session' true for this button too.
+# Open a NEW Ghostty window running shell_cmd in the foreground via native AppleScript (PR
+# #11208, Ghostty 1.3+ — ported from the iterative-dev plugin's tmux_spawn.sh:open_tmux_viewer).
+# The ONLY launch path (2026-09-04: the 'open -na Ghostty.app' fallback this used to gate to was
+# removed — see _launch_monitor's docstring). '; exit' after shell_cmd: once the launched process
+# returns (tmux session detached/killed), the shell exits and the window closes — same shape as
+# the worker-viewer window, and the mechanism that keeps 'closing the window detaches the tmux
+# session' true for this button too.
 def _launch_monitor_ghostty_native(shell_cmd: str):
     script = (
         'tell application "Ghostty"\n'
@@ -233,31 +220,23 @@ def _launch_monitor_ghostty_native(shell_cmd: str):
     return subprocess.run(['osascript', '-e', script], capture_output=True, text=True,
                           encoding='utf-8', errors='replace', timeout=10)
 
-# Open a NEW Ghostty window running shell_cmd, Ghostty 1.2.x fallback — ported from
-# tmux_spawn.sh:open_tmux_viewer's 'open -na' branch. Runs shell_cmd through '/bin/sh -c' (a
-# fixed argv list — shell_cmd itself is the one already-quoted string built by
-# _build_monitor_launch_cmd) so 'cd X && python3 ...' works without native AppleScript;
-# '--quit-after-last-window-closed=true' closes the window once that shell exits.
-def _launch_monitor_ghostty_fallback(shell_cmd: str):
-    return subprocess.run(
-        ['open', '-na', 'Ghostty.app', '--args',
-         '--quit-after-last-window-closed=true', '--window-save-state=never',
-         '-e', '/bin/sh', '-c', shell_cmd],
-        capture_output=True, text=True, encoding='utf-8', errors='replace', timeout=10)
-
 # Open a new Ghostty window that launches the monitor for cwd ('cd <root> && python3
 # workflow.py --project <cwd>', the exact command a user runs by hand — see
-# _build_monitor_launch_cmd). Version-gates between the two Ghostty AppleScript paths, same
-# gate tmux_spawn.sh:open_tmux_viewer uses (>=1.3 native, else 'open -na' fallback).
+# _build_monitor_launch_cmd). ALWAYS uses the native AppleScript path (_launch_monitor_ghostty_
+# native), unconditionally — no Ghostty-version gate, no 'open -na Ghostty.app' fallback.
+# 2026-09-04 removal: the fallback used to fire whenever 'ghostty +version' failed to resolve
+# (the CLI binary lives only under /Applications/Ghostty.app/Contents/MacOS, never on the
+# menubar's launchd PATH, so the version lookup always failed in production and the fallback
+# ALWAYS fired there). 'open -na Ghostty.app' spawns a brand-new, SEPARATE Ghostty process
+# instance — observed live 2026-09-04: from then on every 'tell application "Ghostty"' AppleScript
+# call (desktop_detection.py, ghostty.py's tty→UUID probe, _focus_session/_focus_worker) answered
+# from that second instance instead of the real one, losing every other window's click-to-focus.
+# A failing osascript now stays a logged 'launch FAILED' line — a tripwire, not a fallback.
 def _launch_monitor(cwd: str) -> None:
     from .menubar_log import log_menubar
     python3_path = _resolve_launch_python3()
     shell_cmd = _build_monitor_launch_cmd(MONITOR_CC_ROOT, python3_path, cwd)
-    major, minor = _ghostty_version()
-    if (major, minor) >= (1, 3):
-        r = _launch_monitor_ghostty_native(shell_cmd)
-    else:
-        r = _launch_monitor_ghostty_fallback(shell_cmd)
+    r = _launch_monitor_ghostty_native(shell_cmd)
     if r.returncode != 0:
         log_menubar('monitor', f'launch FAILED cwd={cwd} rc={r.returncode} '
                                 f'stderr={r.stderr.strip()}')
