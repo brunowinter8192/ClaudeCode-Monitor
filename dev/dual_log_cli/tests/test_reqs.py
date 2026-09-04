@@ -365,25 +365,38 @@ def test_drop_req1_never_qualifies() -> None:
           got == "session s\n", got)
 
 
-# --drop --merged: the predecessor is the previous request in the MERGED chronological chain,
-# possibly from a DIFFERENT session — session B's own REQ 1 is not the merge's first entry (session
-# A's REQ 1 precedes it in time), so it DOES have a predecessor and is evaluated against A's usage.
-def test_merged_drop_predecessor_crosses_sessions() -> None:
-    boundaries_a = _boundaries([_delta_entry("a0", "2026-09-04T10:00:00Z", 2, is_first=True)])
-    boundaries_b = _boundaries([_delta_entry("b0", "2026-09-04T10:05:00Z", 2, is_first=True)])
+# --drop --merged: the predecessor is ALWAYS the previous request of the SAME session, never the
+# merged chain's chronological neighbor — the shared prompt-cache prefix a cache drop measures is
+# system blocks + tools, never the conversation, so comparing across sessions is meaningless.
+# Session B's single request (b0) sits chronologically BETWEEN session A's two requests (a0, a1) —
+# a0 -> b0 -> a1 in time — but b0 is session B's own first request (no same-session predecessor) and
+# must NOT qualify for --drop no matter how its usage compares to a0's; a1, whose real same-session
+# predecessor is a0 (not the chronologically nearer b0), must be evaluated against A0's usage.
+# Constructed so the two readings disagree: against b0 (cr=5, cc=5, total=10) a1's cr=250 would NOT
+# qualify (250 >= 10); against the correct same-session predecessor a0 (cr=100, cc=200, total=300)
+# it DOES (250 < 300, shortfall 50) — only the correct reading produces any output line at all.
+def test_merged_drop_predecessor_stays_within_session() -> None:
+    boundaries_a = _boundaries([
+        _delta_entry("a0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("a1", "2026-09-04T10:20:00Z", 5),
+    ])
+    boundaries_b = _boundaries([_delta_entry("b0", "2026-09-04T10:10:00Z", 2, is_first=True)])
     session_a = _session("s_a", "opus/monitor_cc")
     session_b = _session("s_b", "worker/monitor_cc/proxy-tn-wrap")
-    usage_by_stem = {"s_a": {"a0": (100, 200)}, "s_b": {"b0": (250, 10)}}  # 250 < 100+200=300
+    usage_by_stem = {
+        "s_a": {"a0": (100, 200), "a1": (250, 10)},
+        "s_b": {"b0": (5, 5)},
+    }
     got = render_reqs_merged(
         [(session_a, boundaries_a), (session_b, boundaries_b)],
         usage_by_stem=usage_by_stem, drop=True,
     )
     expected = (
         "merged 2 sessions\n"
-        f"REQ 1   {_local_clock('2026-09-04T10:05:00Z')}  proxy-tn-wrap  CR 250  CC 10  −50\n"
+        f"REQ 2   {_local_clock('2026-09-04T10:20:00Z')}  monitor_cc  CR 250  CC 10  −50\n"
     )
-    check("session B's own REQ 1 qualifies against session A's usage as its merged predecessor",
-          got == expected, got)
+    check("a1 qualifies against ITS OWN session's a0, not the chronologically nearer b0; "
+          "b0 (session B's own REQ 1) never qualifies at all", got == expected, got)
 
 
 # A REQ whose own usage never resolves (absent from the usage map entirely) is skipped under
@@ -475,7 +488,7 @@ def test_reqs_workflow() -> None:
     test_rebuild_keeps_only_cc_gt_cr()
     test_drop_boundary_exact_equal_does_not_qualify()
     test_drop_req1_never_qualifies()
-    test_merged_drop_predecessor_crosses_sessions()
+    test_merged_drop_predecessor_stays_within_session()
     test_unresolved_usage_skipped_under_either_flag()
     test_rebuild_and_drop_combine_with_and()
     test_no_rebuild_no_drop_output_unchanged()
