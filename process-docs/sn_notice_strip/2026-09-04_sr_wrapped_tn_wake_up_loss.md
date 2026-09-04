@@ -9,6 +9,14 @@ Net effect measured in one real session (`api_requests_opus_monitor_cc_178846454
 orchestrator never saw `worker-cli wait` completions; only the 2 wake-ups that happened to arrive as
 a bare `role='system'` string survived.
 
+## Trigger: CC 2.1.258 (2026-09-02)
+
+The wrapped shape's onset was verified against the CC version history: the machine generating the
+`api_requests_opus_monitor_cc_1788464543` session was updated to CC 2.1.258 on 2026-09-02. Every
+wrapped-TN occurrence in the corpus post-dates that update; every TN occurrence recorded before it
+arrived unwrapped (bare paragraph + bare tag, the shape every existing pass was already built for).
+2.1.258 is the verified trigger for the wrapper's introduction, not a coincidental correlation.
+
 ## Root cause: three passes, each individually correct, compose into data loss
 
 Traced the wrapped fixture through `rules.py`'s `_passes` chain in order:
