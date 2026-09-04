@@ -16,7 +16,9 @@ from .paths import PID_FILE as _LOCK_PATH, MONITOR_CC_ROOT
 # From tmux_launcher.py: canonical tmux session-name derivation for a project cwd — the
 # per-project monitor button must resolve the SAME session a manually-run
 # 'python3 workflow.py --project <cwd>' would create; never re-derive the hash locally.
-from ..tmux_launcher import generate_session_name, check_session_exists
+# kill_session backs the monitor button's kill-then-relaunch flow (a stale session whose Ghostty
+# window was closed must not be a silent no-op — see _open_or_focus_monitor).
+from ..tmux_launcher import generate_session_name, check_session_exists, kill_session
 
 _LAUNCHD_LABEL = 'com.brunowinter.monitor-cc-menubar'
 _PLIST_PATH = Path(__file__).resolve().parent / f'{_LAUNCHD_LABEL}.plist'   # PATH source for _resolve_launch_python3
@@ -264,16 +266,17 @@ def _launch_monitor(cwd: str) -> None:
 
 # Click handler for the panel's per-project monitor button (app.py:_PanelController.openMonitor_).
 # Session name comes from tmux_launcher.py:generate_session_name — the SAME derivation
-# 'python3 workflow.py --project <cwd>' uses internally, never re-derived here. Already running
-# → focus its Ghostty window exactly like a worker-viewer row (_focus_worker finds the window by
-# the 'tmux attach'/'attach-session' client's tty; the monitor's own launch command ends by
-# running 'tmux attach-session -t <session>' in its own foreground, so the same tty-scan finds
-# it). Not running → open a new window that launches it fresh.
+# 'python3 workflow.py --project <cwd>' uses internally, never re-derived here. ALWAYS ends in a
+# fresh monitor in a new Ghostty window: the inherited worker-viewer 'focus, or no-op if the
+# window is already closed' behavior (_focus_worker) is deliberately NOT reused here — a
+# monitor_cc_<hash> session can outlive its Ghostty window (window closed, tmux session left
+# running headless), and a click must never be a silent no-op for this button. If the session
+# already exists it is killed first (tmux_launcher.py:kill_session), then _launch_monitor(cwd)
+# opens the new window unconditionally.
 def _open_or_focus_monitor(cwd: str) -> None:
     if not cwd:
         return
     session_name = generate_session_name(cwd)
     if check_session_exists(session_name):
-        _focus_worker(session_name)
-    else:
-        _launch_monitor(cwd)
+        kill_session(session_name)
+    _launch_monitor(cwd)
