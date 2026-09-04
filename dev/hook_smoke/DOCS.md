@@ -331,6 +331,19 @@ python3 dev/hook_smoke/test_block_linkedin_cli_isolated.py
 
 ---
 
+### test_block_penny_cli_chained.py (87 LOC, new 2026-09-04)
+
+**Purpose:** 13-case smoke for `block_penny_cli_chained.py`. Verifies 7 blocked cases (the verbatim real-world chained incident — `gcommit "..." && penny-cli --klasse "X" 2>&1 | sed -n '/^Klasse/,$p'` — piped to `head`, redirected to a file, a leading `cd` guard still blocking (no relaxation here, unlike every other chained-CLI hook), a cross-CLI chain with `rag-cli search` still blocking (no `_known_cli` relax), a command substitution wrapping the call, and a command substitution used as an argument to the call) and 5 pass cases (standalone, env-var-prefixed standalone, `penny-cli` as a path substring in `ls`, `penny-cli` as a path substring in `ln -sf` (twice in one command), a command with no `penny-cli` at all), plus 1 malformed-stdin fail-open case.
+
+**Usage (from project root):**
+```bash
+python3 dev/hook_smoke/test_block_penny_cli_chained.py
+```
+
+**Expected output:** `All 13 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+
+---
+
 ### test_block_rag_cli_document_repeat.py (193 LOC)
 
 **Purpose:** 7-case smoke for `block_rag_cli_document_repeat.py`. Verifies: a single `--document` call passes (exit 0); a 2nd `--document` call to the same collection+subcommand within the window blocks (exit 0 then exit 2); collection-wide calls (no `--document`) always pass, 3x in a row; a different session's `--document` call does not count toward another session's counter (session A #1 = 0, session B #1 = 0, session A #2 = 2); `rag-cli delete --document` is covered by the same threshold as `index`; malformed stdin fails open (exit 0). Each case uses `MONITOR_CC_RAG_DOC_REPEAT_STATE` set to a fresh `tempfile` per case — no shared/leftover state across cases.
