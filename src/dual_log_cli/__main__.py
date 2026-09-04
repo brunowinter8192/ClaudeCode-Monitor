@@ -7,6 +7,9 @@ Commands:
     search <term> [scope]    find a term across the deduplicated timelines, each match reported once
                              scope matches a session's context OR stem; omit it to search all
                              --only restricts hits to one classifier (role, type, or role/type)
+    reqs [scope]             per session: a REQ number + time line per request, nothing else —
+                             scope matches context OR stem like search; --main/--worker (mutually
+                             exclusive) keep only opus/ or worker/ sessions
     msgs <session>           request groups: a REQ separator (with CR/CC prompt-cache usage when
                              resolvable) listing the system blocks and tools that request sent —
                              in full for the family's first request, else only what changed or is
@@ -26,6 +29,7 @@ Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli sessions
     ./venv/bin/python -m src.dual_log_cli search "worker-cli merge" gh_cli_1787939513
     ./venv/bin/python -m src.dual_log_cli search Reißleine websearch --since 2026-08-28
+    ./venv/bin/python -m src.dual_log_cli reqs websearch --main
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 700 740
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 --req 259
@@ -49,6 +53,7 @@ from .discovery import (
     AmbiguousSessionError,
     UnknownSessionError,
     build_session,
+    filter_by_family,
     filter_sessions,
     group_streams,
     list_sessions,
@@ -57,7 +62,7 @@ from .discovery import (
 )
 from .overlay import build_overlay, build_sys_tool_overlay
 from .project_map import build_project_map
-from .render import render_expand_full, render_msgs, render_search, render_sessions
+from .render import render_expand_full, render_msgs, render_reqs, render_search, render_sessions
 from .search import find_matches
 from .timeline import (
     AmbiguousRequestNumberError,
@@ -81,6 +86,8 @@ def main(argv: list) -> int:
         return _run_sessions(dual_log_dir, args)
     if args.command == "search":
         return _run_search(dual_log_dir, args)
+    if args.command == "reqs":
+        return _run_reqs(dual_log_dir, args)
     if args.command == "msgs":
         return _run_msgs(dual_log_dir, args)
     return _run_expand(dual_log_dir, args)
@@ -165,6 +172,25 @@ def _parse_args(argv: list) -> argparse.Namespace:
     search.add_argument("--only", default="", metavar="CLASSIFIER",
                         help=f"restrict hits to msgs matching {ONLY_FORMS}")
     search.add_argument("--case-sensitive", action="store_true", help="match case exactly (default: ignore case)")
+    reqs = sub.add_parser(
+        "reqs",
+        help="one REQ number + time per line, per session",
+        description=(
+            "Prints, per session, a `session <stem>` line followed by one `REQ n   HH:MM:SS` line "
+            "per request — the exact numbers and timestamps `msgs`' own separators print, in the "
+            "same order (re-fires collapsed, a restart handled exactly the way `msgs` handles it). "
+            "No other columns, no counts, no CR/CC."
+        ),
+    )
+    reqs.add_argument("scope", nargs="?", default="", metavar="SCOPE",
+                      help="only sessions whose context OR stem contains this text; omit to search all")
+    reqs.add_argument("--since", default="", metavar="YYYY-MM-DD",
+                      help="only sessions started on or after this day (inclusive)")
+    reqs.add_argument("--until", default="", metavar="YYYY-MM-DD",
+                      help="only sessions started on or before this day (inclusive)")
+    reqs_family = reqs.add_mutually_exclusive_group()
+    reqs_family.add_argument("--main", action="store_true", help="only main sessions (context starts with opus/)")
+    reqs_family.add_argument("--worker", action="store_true", help="only worker sessions (context starts with worker/)")
     return parser.parse_args(argv)
 
 
@@ -244,6 +270,32 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
         if hits:
             results.append((session, hits))
     sys.stdout.write(render_search(args.term, args.case_sensitive, results, skipped))
+    return 0
+
+
+# reqs — scoped like `search`, same per-session last-request reconstruction (skip-on-unloadable,
+# not fatal), plus --main/--worker narrowing to sessions whose context starts with "opus/" or
+# "worker/". No matcher, no hit filtering — every session that loads contributes its own REQ list.
+def _run_reqs(dual_log_dir, args: argparse.Namespace) -> int:
+    code = _reject_bad_days(args)
+    if code:
+        return code
+    sessions = filter_sessions(
+        list_sessions(dual_log_dir),
+        scope=args.scope,
+        since=args.since,
+        until=args.until,
+    )
+    sessions = filter_by_family(sessions, main=args.main, worker=args.worker)
+    results, skipped = [], 0
+    for session in sessions:
+        try:
+            data = load_timeline(session)
+        except Exception:
+            skipped += 1
+            continue
+        results.append((session, data["boundaries"]))
+    sys.stdout.write(render_reqs(results, skipped))
     return 0
 
 

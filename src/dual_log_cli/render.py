@@ -365,6 +365,35 @@ def _skipped_lines(skipped: int) -> list:
     return ["", f"({skipped} session{'s' if skipped != 1 else ''} skipped — timeline could not be loaded)"]
 
 
+# Fixed width of the REQ number field — a 4-char left-justified number directly followed by the
+# clock, no extra space needed (the padding itself is the gap): "REQ 1   20:16:02". Same narrow-
+# default-with-occasional-jog convention `msgs`' own chars column uses — a 5-digit REQ number
+# pushes its own clock one column right rather than widening every shorter line permanently.
+_REQ_NUMBER_WIDTH = 4
+
+
+# reqs: one line per session ("session <stem>"), then one "REQ n   HH:MM:SS" line per request —
+# the exact numbers and timestamps `msgs`' own separators print, in the SAME order (msg-index
+# order, which is also chronological order within the session) — re-fires already collapsed and a
+# restart already handled exactly the way `request_markers` handles it for `msgs`, since this is
+# the SAME dict, just walked here instead of interleaved with msg lines. No other columns, no
+# counts, no CR/CC — `results` is [(session, boundaries), …] in listing order (already scope/date/
+# family-filtered and skip-on-unloadable exactly like `search`), `skipped` the same trailing note.
+def render_reqs(results: list, skipped: int = 0) -> str:
+    if not results:
+        lines = ["no sessions found"]
+        return "\n".join(lines + _skipped_lines(skipped)) + "\n"
+    lines = []
+    for session, boundaries in results:
+        lines.append(f"session {session['stem']}")
+        markers = request_markers(boundaries or [])
+        for msg_index in sorted(markers):
+            marker = markers[msg_index]
+            lines.append(f"REQ {marker['number']:<{_REQ_NUMBER_WIDTH}}{_clock(marker['timestamp'])}")
+        lines.append("")
+    return "\n".join(lines[:-1] + _skipped_lines(skipped)) + "\n"
+
+
 # expand: the complete content of each selected msg in the window, plus the proxy's own
 # transformations of it when an overlay is supplied. `overlay` is {(msg, blk): {stripped, injected,
 # req}} from overlay.py; an empty/absent one renders exactly the pre-overlay output, which is what
