@@ -10,22 +10,22 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _shell_strip import _strip_non_shell_active
 from _fire_log import log_fire
 
-# worker-cli kill with a name token: [\w.-]+ excludes trailing shell metacharacters so
-# 'worker-cli kill foo;' / 'worker-cli kill foo && x' capture 'foo', not 'foo;'.
-# Known accepted residual: a shell comment carrying the literal kill + a live-working-worker-name
+# worker-cli send with a name token: [\w.-]+ excludes trailing shell metacharacters so
+# 'worker-cli send foo;' / 'worker-cli send foo && x' capture 'foo', not 'foo;'.
+# Known accepted residual: a shell comment carrying the literal send + a live-working-worker-name
 # blocks — same non-comment-stripping class as the whole hook family (none of the existing
 # hooks strip shell comments). The double-gate (regex + live status check) makes a comment-FP
 # require both the comment text to name a real worker AND that worker to be actively working.
-_KILL_RE = re.compile(r'\bworker-cli\s+kill\s+([\w.-]+)')
+_SEND_RE = re.compile(r'\bworker-cli\s+send\s+([\w.-]+)')
 
 _BLOCK_MESSAGE = (
-    "worker '{name}' is working — do not kill a working worker. Not possible.\n"
+    "worker '{name}' is working — do not send messages to a working worker. Not possible.\n"
 )
 
 # ORCHESTRATOR
 
-# Read Bash tool_input from stdin; exit 2 + stderr if command kills a currently-working worker
-def block_worker_kill_while_working_workflow() -> None:
+# Read Bash tool_input from stdin; exit 2 + stderr if command sends to a currently-working worker
+def block_worker_send_while_working_workflow() -> None:
     try:
         command, session_id = _parse_command()
         if command is None:
@@ -34,7 +34,7 @@ def block_worker_kill_while_working_workflow() -> None:
         if block:
             msg = _BLOCK_MESSAGE.format(name=name)
             print(msg, file=sys.stderr, end="")
-            log_fire("block_worker_kill_while_working", "block", "Bash", command,
+            log_fire("block_worker_send_while_working", "block", "Bash", command,
                      reason=msg, session_id=session_id)
             sys.exit(2)
     except Exception:
@@ -43,14 +43,14 @@ def block_worker_kill_while_working_workflow() -> None:
 
 # FUNCTIONS
 
-# Pure decision: strip command, find kill-name(s), check each via status_fn.
+# Pure decision: strip command, find send-name(s), check each via status_fn.
 # Returns (should_block: bool, blocking_name: str | None).
 # Blocks iff any captured name returns exactly 'working' as the first whitespace token.
 # status_fn exceptions → '' (allow). Testable: real entrypoint wires _live_worker_status;
 # smoke tests inject a stub.
 def decide(command: str, status_fn) -> tuple:
     stripped = _strip_non_shell_active(command)
-    names = _KILL_RE.findall(stripped)
+    names = _SEND_RE.findall(stripped)
     if not names:
         return False, None
     for name in names:
@@ -99,4 +99,4 @@ def _parse_command():
 
 
 if __name__ == "__main__":
-    block_worker_kill_while_working_workflow()
+    block_worker_send_while_working_workflow()
