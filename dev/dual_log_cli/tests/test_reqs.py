@@ -314,6 +314,128 @@ def test_merged_gap_across_sessions_qualifies() -> None:
     check("a genuine cross-session gap qualifies, after-REQ carries tag AND tail", got == expected, got)
 
 
+# --rebuild: only REQs where CC > CR. REQ 1 (CC 10 > CR 5) qualifies; REQ 2 (CC 3 < CR 20) does
+# not; REQ 3 has no entry in the usage map at all (unresolved) and must be skipped, not shown
+# tail-less. Every printed line carries the "  CR c  CC c" tail, digit-grouped.
+def test_rebuild_keeps_only_cc_gt_cr() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T10:01:00Z", 5),
+        _delta_entry("f2", "2026-09-04T10:02:00Z", 9),
+    ])
+    session = _session("s")
+    usage_by_stem = {"s": {"f0": (5, 10), "f1": (20, 3)}}  # f2 (REQ 3) unresolved
+    got = render_reqs([(session, boundaries)], usage_by_stem=usage_by_stem, rebuild=True)
+    expected = (
+        "session s\n"
+        f"REQ 1   {_local_clock('2026-09-04T10:00:00Z')}  CR 5  CC 10\n"
+    )
+    check("only the CC>CR, resolved REQ prints; REQ 2 (CC<CR) and REQ 3 (unresolved) omitted",
+          got == expected, got)
+
+
+# --drop: REQ n qualifies when CR(n) < CR(n-1) + CC(n-1). REQ 2's CR (300) is exactly REQ 1's
+# CR+CC (100+200=300) — the boundary, does NOT qualify (strict <). REQ 3's CR (250) is less than
+# REQ 2's CR+CC (300+50=350) — qualifies, carrying the shortfall "  −100".
+def test_drop_boundary_exact_equal_does_not_qualify() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T10:01:00Z", 5),
+        _delta_entry("f2", "2026-09-04T10:02:00Z", 9),
+    ])
+    session = _session("s")
+    usage_by_stem = {"s": {"f0": (100, 200), "f1": (300, 50), "f2": (250, 10)}}
+    got = render_reqs([(session, boundaries)], usage_by_stem=usage_by_stem, drop=True)
+    expected = (
+        "session s\n"
+        f"REQ 3   {_local_clock('2026-09-04T10:02:00Z')}  CR 250  CC 10  −100\n"
+    )
+    check("REQ 2 (exactly equal) does not qualify, REQ 3 qualifies with the shortfall tail",
+          got == expected, got)
+
+
+# --drop: REQ 1 of a chain never qualifies (no predecessor), even when its own usage resolves and
+# would otherwise pass every other check.
+def test_drop_req1_never_qualifies() -> None:
+    boundaries = _boundaries([_delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True)])
+    session = _session("s")
+    usage_by_stem = {"s": {"f0": (5, 5)}}
+    got = render_reqs([(session, boundaries)], usage_by_stem=usage_by_stem, drop=True)
+    check("REQ 1 has no predecessor -> never qualifies for --drop, header only",
+          got == "session s\n", got)
+
+
+# --drop --merged: the predecessor is the previous request in the MERGED chronological chain,
+# possibly from a DIFFERENT session — session B's own REQ 1 is not the merge's first entry (session
+# A's REQ 1 precedes it in time), so it DOES have a predecessor and is evaluated against A's usage.
+def test_merged_drop_predecessor_crosses_sessions() -> None:
+    boundaries_a = _boundaries([_delta_entry("a0", "2026-09-04T10:00:00Z", 2, is_first=True)])
+    boundaries_b = _boundaries([_delta_entry("b0", "2026-09-04T10:05:00Z", 2, is_first=True)])
+    session_a = _session("s_a", "opus/monitor_cc")
+    session_b = _session("s_b", "worker/monitor_cc/proxy-tn-wrap")
+    usage_by_stem = {"s_a": {"a0": (100, 200)}, "s_b": {"b0": (250, 10)}}  # 250 < 100+200=300
+    got = render_reqs_merged(
+        [(session_a, boundaries_a), (session_b, boundaries_b)],
+        usage_by_stem=usage_by_stem, drop=True,
+    )
+    expected = (
+        "merged 2 sessions\n"
+        f"REQ 1   {_local_clock('2026-09-04T10:05:00Z')}  proxy-tn-wrap  CR 250  CC 10  −50\n"
+    )
+    check("session B's own REQ 1 qualifies against session A's usage as its merged predecessor",
+          got == expected, got)
+
+
+# A REQ whose own usage never resolves (absent from the usage map entirely) is skipped under
+# EITHER flag, even one that would otherwise qualify for --rebuild by CC/CR alone.
+def test_unresolved_usage_skipped_under_either_flag() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T10:01:00Z", 5),
+    ])
+    session = _session("s")
+    got_rebuild = render_reqs([(session, boundaries)], usage_by_stem={"s": {}}, rebuild=True)
+    check("no usage resolved at all -> --rebuild shows nothing but the header",
+          got_rebuild == "session s\n", got_rebuild)
+    got_drop = render_reqs([(session, boundaries)], usage_by_stem={"s": {}}, drop=True)
+    check("no usage resolved at all -> --drop shows nothing but the header",
+          got_drop == "session s\n", got_drop)
+
+
+# --rebuild AND --drop combine with AND: a REQ must satisfy both. REQ 2 alone satisfies --rebuild
+# (CC 40 > CR 10) but NOT --drop (CR 10 is not < REQ 1's CR+CC = 5+5=10, exactly equal) — combined,
+# it must not appear.
+def test_rebuild_and_drop_combine_with_and() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T10:00:00Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T10:01:00Z", 5),
+    ])
+    session = _session("s")
+    usage_by_stem = {"s": {"f0": (5, 5), "f1": (10, 40)}}
+    got = render_reqs([(session, boundaries)], usage_by_stem=usage_by_stem, rebuild=True, drop=True)
+    check("REQ 2 passes --rebuild alone but fails --drop (exact-equal boundary) -> excluded",
+          got == "session s\n", got)
+
+
+# Neither --rebuild nor --drop set (the default): output is byte-identical to the pre-existing
+# listing, even when a usage_by_stem map happens to be passed in — the new params are additive.
+def test_no_rebuild_no_drop_output_unchanged() -> None:
+    boundaries = _boundaries([
+        _delta_entry("f0", "2026-09-04T20:16:02Z", 2, is_first=True),
+        _delta_entry("f1", "2026-09-04T20:16:40Z", 5),
+    ])
+    session = _session("api_requests_worker_25c51a2e_proxy-tn-wrap_1788545000", "worker/monitor_cc/proxy-tn-wrap")
+    usage_by_stem = {session["stem"]: {"f0": (5, 5), "f1": (100, 200)}}
+    got = render_reqs([(session, boundaries)], usage_by_stem=usage_by_stem)
+    expected = (
+        "session api_requests_worker_25c51a2e_proxy-tn-wrap_1788545000\n"
+        f"REQ 1   {_local_clock('2026-09-04T20:16:02Z')}\n"
+        f"REQ 2   {_local_clock('2026-09-04T20:16:40Z')}\n"
+    )
+    check("passing usage_by_stem with neither flag set leaves the plain listing untouched",
+          got == expected, got)
+
+
 # filter_by_family: --main keeps only opus/-prefixed, --worker keeps only worker/-prefixed,
 # neither flag returns the list unchanged.
 def test_filter_by_family() -> None:
@@ -350,6 +472,13 @@ def test_reqs_workflow() -> None:
     test_merged_order_interleaved_across_sessions()
     test_merged_gap_bridged_by_another_session_does_not_qualify()
     test_merged_gap_across_sessions_qualifies()
+    test_rebuild_keeps_only_cc_gt_cr()
+    test_drop_boundary_exact_equal_does_not_qualify()
+    test_drop_req1_never_qualifies()
+    test_merged_drop_predecessor_crosses_sessions()
+    test_unresolved_usage_skipped_under_either_flag()
+    test_rebuild_and_drop_combine_with_and()
+    test_no_rebuild_no_drop_output_unchanged()
     test_filter_by_family()
 
     total = len(PASS_LIST) + len(FAIL_LIST)
