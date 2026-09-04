@@ -12,6 +12,15 @@ PREVIEW_CHARS = 100
 # delta lines on every request but the first (see process-docs/cache/).
 _BILLING_HEADER_SYS_INDEX = 0
 
+
+class UnknownRequestNumberError(Exception):
+    pass
+
+
+class AmbiguousRequestNumberError(Exception):
+    pass
+
+
 # FUNCTIONS
 
 
@@ -399,6 +408,47 @@ def request_numbers_by_flow(boundaries: list) -> dict:
         for position, boundary in enumerate(boundaries)
         if boundary.get("flow_id")
     }
+
+
+# Msg-index range [start, end] spanned by REQ numbers req_from..req_to inclusive, for `msgs --req`.
+# `markers` is `request_markers`'s own {msg_index: {number, ...}}; `start` is req_from's own msg
+# index, `end` is the msg index right before the NEXT marker (by msg-index order) after req_to's
+# own, or `last_msg_index` when req_to's group is the last one — the exact msg-index range the
+# equivalent `FROM TO` positionals would need to select the same request groups, so the caller
+# hands it straight to the unmodified `render_msgs`.
+#
+# Raises UnknownRequestNumberError when req_from/req_to names no marker at all, and
+# AmbiguousRequestNumberError when it names MORE than one — proven possible even without a
+# restart: a re-fire that adds no NEW msg opens its own group (a start_index no earlier group
+# used) but `_running_request_numbers`' counter does not advance for a non-adding boundary, so
+# that group's owner is assigned the SAME number as the group before it. A genuine restart can
+# produce the identical symptom when the restarted boundary itself adds nothing. Refusing to guess
+# either way is the point — see the callers in __main__.py for the reported message.
+def request_msg_range(markers: dict, req_from: int, req_to: int, last_msg_index: int) -> tuple:
+    by_number: dict = {}
+    for msg_index, marker in markers.items():
+        by_number.setdefault(marker["number"], []).append(msg_index)
+    for number in (req_from, req_to):
+        candidates = by_number.get(number)
+        if not candidates:
+            raise UnknownRequestNumberError(f"REQ {number} not found")
+        if len(candidates) > 1:
+            indices = ", ".join(str(i) for i in sorted(candidates))
+            raise AmbiguousRequestNumberError(
+                f"REQ {number} is ambiguous — msg indices {indices} all carry it "
+                f"(a re-fire or restart repeated the number; refusing to guess)")
+    start = by_number[req_from][0]
+    to_start = by_number[req_to][0]
+    later_starts = sorted(idx for idx in markers if idx > to_start)
+    end = later_starts[0] - 1 if later_starts else last_msg_index
+    return start, end
+
+
+# Convenience wrapper: builds `request_markers` from `boundaries` and delegates to
+# `request_msg_range` — the one call `__main__.py` needs for `msgs --req`.
+def resolve_req_range(boundaries: list, req_from: int, req_to: int, last_msg_index: int) -> tuple:
+    markers = request_markers(boundaries or [])
+    return request_msg_range(markers, req_from, req_to, last_msg_index)
 
 
 # Load everything a command needs for one session: the last request's payload plus its msg rows
