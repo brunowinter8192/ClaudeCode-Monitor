@@ -697,9 +697,9 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ---
 
-### block_worker_kill_while_working.py (103 LOC)
+### block_worker_kill_while_working.py (102 LOC, message text corrected 2026-09-04)
 
-**Purpose:** PreToolUse hook (Bash) — blocks `worker-cli kill <name>` when the named worker is currently `working`. Double-gate: (1) regex `\bworker-cli\s+kill\s+([\w.-]+)` on shell-stripped command captures name token(s); (2) runs `worker-cli status <name>` subprocess (timeout 3s) and blocks only when the first output token is exactly `working`. Quoted/heredoc kill commands inside `worker-cli send` messages are stripped by `_strip_non_shell_active` → no match → guaranteed allow. All non-working statuses (idle, idle force-stopped, exited, unknown), subprocess errors, timeouts, and all exceptions → allow. Exits 2 + stderr with a message instructing the user to stop the worker first (ESC / `send 'stop'`) then kill.
+**Purpose:** PreToolUse hook (Bash) — blocks `worker-cli kill <name>` when the named worker is currently `working`. Double-gate: (1) regex `\bworker-cli\s+kill\s+([\w.-]+)` on shell-stripped command captures name token(s); (2) runs `worker-cli status <name>` subprocess (timeout 3s) and blocks only when the first output token is exactly `working`. Quoted/heredoc kill commands inside `worker-cli send` messages are stripped by `_strip_non_shell_active` → no match → guaranteed allow. All non-working statuses (idle, dead, unknown), subprocess errors, timeouts, and all exceptions → allow. Exits 2 + stderr. **2026-09-04:** `_BLOCK_MESSAGE` shortened to `"worker '{name}' is working — do not kill a working worker. Not possible.\n"` — the old text ("stop it first ... or: worker-cli send '{name}' 'stop'") suggested exactly the workaround the new sibling hook (`block_worker_send_while_working.py`) now forbids, so the message no longer names an alternative at all.
 **Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`); `worker-cli status <name>` output (subprocess).
 **Writes:** stderr (block message naming the worker) on match only.
 **Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
@@ -709,7 +709,21 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 **Known accepted residual:** a shell comment containing the literal kill + a live-working-worker-name blocks (e.g. `echo hi # worker-cli kill foo`). Consistent with the whole hook family — none of the 31 hooks strip comments. The double-gate makes this unlikely in practice.
 
-**Smoke:** `dev/hook_smoke/test_block_worker_kill_while_working.py` (13 cases: 3 block, 9 allow, 1 accepted-residual block).
+**Smoke:** `dev/hook_smoke/test_block_worker_kill_while_working.py` (13 cases: 3 block, 9 allow, 1 accepted-residual block; asserts only on `decide()`'s `(block, name)` tuple, never the message text, so the 2026-09-04 wording change needed no test update).
+
+---
+
+### block_worker_send_while_working.py (102 LOC, new 2026-09-04)
+
+**Purpose:** PreToolUse hook (Bash) — sibling to `block_worker_kill_while_working.py`, same shape applied to `worker-cli send` instead of `kill`: blocks `worker-cli send <name> <message>` when the named worker is currently `working`. Same double-gate — (1) regex `\bworker-cli\s+send\s+([\w.-]+)` on shell-stripped command captures the name token; (2) live `worker-cli status <name>` subprocess (timeout 3s), blocking only when the first output token is exactly `working` — and the identical `decide(command, status_fn)`/`_resolve_worker_cli`/`_live_worker_status`/`_parse_command` set, copied rather than shared, matching this hook family's convention of small, fully independent scripts. Worker statuses are exactly `working`/`idle`/`dead`; only `working` blocks. Exits 2 + stderr with `"worker '{name}' is working — do not send messages to a working worker. Not possible.\n"`. Exits 0 on idle, dead, an unknown/empty status, a `worker-cli status` subprocess error or timeout, or any parse/internal error (fail-open).
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_name, tool_input: {command}}`); `worker-cli status <name>` output (subprocess).
+**Writes:** stderr (block message naming the worker) on match only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_shell_strip._strip_non_shell_active` (same-dir import via `sys.path` insert); `_fire_log.log_fire`; `subprocess` (`worker-cli status`, same absolute-path resolution as the kill guard); `shutil`, `glob` (stdlib).
+
+**Double-gate rationale, known accepted residual:** identical to `block_worker_kill_while_working.py`'s — see that entry.
+
+**Smoke:** `dev/hook_smoke/test_block_worker_send_while_working.py` (12 cases: `decide()`-level — 3 block (single working, one-of-two working, working with a `%` suffix), 7 allow (idle, dead, unknown/empty status, quoted self-reference, heredoc self-reference, non-send command, `status_fn` exception); plus 2 subprocess-level checks against the real entrypoint: malformed stdin fails open, and a command naming an unresolvable real worker fails open).
 
 ---
 
@@ -860,7 +874,7 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ---
 
-### hook_setup.py (259 LOC)
+### hook_setup.py (260 LOC)
 
 **Purpose:** Idempotent installer with three defense layers. **Layer 1 — Worktree Guard:** `_guard_not_worktree()` checks `Path(__file__).resolve().parts` for consecutive `.claude`/`worktrees` components; exits 2 with a clear error message (stderr) if running from a worktree — preventing dead-path registration. **Layer 2 — Stale-hook Sweep:** `_sweep_stale_hooks()` iterates ALL event keys in `settings["hooks"]` (not only `PreToolUse`), checks every `python3 <path>` entry, and removes any whose script path fails `os.path.exists()`; drops now-empty groups, saves atomically, then runs the normal add-loop. **Layer 3 — Two-Condition Install Gate:** `decide_entries()` (pure, injectable `git_query_fn` + `tree_query_fn`) partitions `_HOOK_SCRIPTS` into installable vs. skipped BEFORE the add-loop runs. A script installs only when BOTH: (a) `_script_on_main()` confirms it's committed on `main` (`git cat-file -e main:src/hooks/<script>`, cached `_main_branch_resolves()` check first); (b) `_script_in_worktree()` confirms `os.path.exists(_HOOKS_DIR / script)` — present in the CURRENT working tree, at the exact path about to be registered. Condition (a) prevents the incident this layer was built for: a hook merged into `integration`, auto-registered via `.githooks/post-merge` using its absolute working-tree path, then orphaned machine-wide the moment the tree checked out `main` — every Bash call on every project failed with `[Errno 2] No such file or directory` until the entry was removed by hand. Condition (b) closes the mirror-image hole found in review: (a) alone lets a script that IS on `main` but was deleted/renamed in the CURRENT tree (while its `_HOOK_SCRIPTS` entry stayed) pass the gate and get registered as a dead path — same outage, entering from the other side; note `_sweep_stale_hooks()` runs BEFORE this gate, so without condition (b) the sweep would remove that exact dead entry and the install loop would immediately put it back. Main-branch presence is checked first — a script failing it never reaches the tree check, so a script missing from both reports the main-branch reason. Decision is per-script (cached by filename, shared across a script's multiple matcher entries) — one unmergeable/deleted script never blocks the other 38. `_report_skipped()` prints one deduped stderr line per skipped script naming it and the reason. Re-running heals stale entries from any source (worktree accident, repo move, feature-branch script since merged, etc.). Runs completely silent on success — no stdout output; stderr only for error conditions (worktree guard, JSON parse failure, skipped-script lines).
 **Reads:** `~/.claude/settings.json`; local `main` branch git state (`git rev-parse --verify`, `git cat-file -e`); working-tree filesystem (`os.path.exists`).
