@@ -84,11 +84,13 @@ def build_turns(payload: dict) -> list:
     return turns
 
 
-# Stream every block of every message as {turn, role, block_types, block, label, text}.
+# Stream every block of every message as {turn, role, block_types, block, label, text, chars}.
 # `block_types` is every block type the MESSAGE carries, so a caller can apply a block-level
-# --only to whole messages without re-summarizing them. A generator, so a
-# 14 MB payload is never doubled by holding all full_text values at once — build_turns drops
-# them for exactly the same reason.
+# --only to whole messages without re-summarizing them. `chars` is the same original-payload chars
+# value `build_turns`/`full_turn` read off the block (`block.get("chars", 0)`, or `summary["chars"]`
+# for the no-blocks pseudo-block) — search reports it unchanged, never re-measuring `text`. A
+# generator, so a 14 MB payload is never doubled by holding all full_text values at once —
+# build_turns drops them for exactly the same reason.
 def iter_block_texts(payload: dict):
     for index, message in enumerate(payload.get("messages", []) or []):
         summary = _summarize_message(message)
@@ -104,6 +106,7 @@ def iter_block_texts(payload: dict):
                     "block": position,
                     "label": _block_label(block),
                     "text": block.get("full_text", "") or "",
+                    "chars": block.get("chars", 0),
                 }
         else:
             yield {
@@ -113,6 +116,7 @@ def iter_block_texts(payload: dict):
                 "block": 0,
                 "label": summary.get("type", "text"),
                 "text": summary.get("content_preview", "") or "",
+                "chars": summary.get("chars", 0),
             }
 
 
