@@ -14,9 +14,17 @@ from _known_cli import is_allowed_chain_segment
 # (2026-09-04): the orchestrator ran `duallog expand <session> 1 --before 0 --after 0 | head -60`
 # and later `| tail -25`, reading only PART of a msg — impossible to notice what a truncated view
 # is missing, and the whole point of `expand` is to show a msg's content in full.
-_DUALLOG_SEGMENT_RE = re.compile(r'^duallog\b')
-# Fast-path anchor: skip commands with no duallog token at all
-_DUALLOG_RE = re.compile(r'\bduallog\b')
+#
+# Trigger + per-segment match: a segment that STARTS WITH an actual duallog invocation (optionally
+# env-var-prefixed, same `_ASSIGN_PREFIX` shape `_known_cli.py`'s `_KNOWN_CLI_RE` uses), checked
+# per-segment AFTER splitting — never a bare `\bduallog\b` search over the whole command. 2026-09-04
+# fix, same class `block_rag_cli_chained.py` already fixed for `rag-cli`: the old fast-path anchor
+# (`re.compile(r'\bduallog\b')`, unanchored) matched `duallog` as a PATH SUBSTRING too — observed FP,
+# `cat ~/.../iterative-dev-duallog/SKILL.md | grep ...` blocked with no duallog CLI ever invoked,
+# because `\b` treats the hyphen in `iterative-dev-duallog` as a word boundary.
+_ASSIGN_TOKEN = r'[A-Za-z_][A-Za-z0-9_]*=\S*'
+_ASSIGN_PREFIX = rf'(?:{_ASSIGN_TOKEN}\s+)*'
+_DUALLOG_SEGMENT_RE = re.compile(rf'^{_ASSIGN_PREFIX}duallog(?:\s|$)')
 # Redirect operators only — pipes never need checking here: _SEPARATOR_RE below already splits
 # on `|`, so a piped duallog segment's pipe target becomes its own (foreign, blocking) segment.
 _REDIRECT_RE = re.compile(r'2>&1|2>|&>|>>|<<|>|<')
@@ -50,12 +58,10 @@ def block_duallog_chained_workflow() -> None:
     if command is None:
         sys.exit(0)
     stripped = _strip_non_shell_active(command)
-    if not _DUALLOG_RE.search(stripped):
+    segments = [s.strip() for s in _SEPARATOR_RE.split(stripped) if s.strip()]
+    if not any(_DUALLOG_SEGMENT_RE.match(seg) for seg in segments):
         sys.exit(0)
-    for segment in _SEPARATOR_RE.split(stripped):
-        seg = segment.strip()
-        if not seg:
-            continue
+    for seg in segments:
         if _DUALLOG_SEGMENT_RE.match(seg):
             if _REDIRECT_RE.search(seg):
                 _block(_REDIRECT_MESSAGE, command, session_id)
