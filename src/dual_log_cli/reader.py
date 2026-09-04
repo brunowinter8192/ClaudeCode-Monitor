@@ -1,6 +1,7 @@
 # INFRASTRUCTURE
 import json
 import re
+from datetime import datetime, timezone
 from pathlib import Path
 
 # Top-level key order written by addon.py is timestamp, flow_id, request_id, model, payload —
@@ -11,6 +12,28 @@ _MODEL_SNIFF_BYTES = 512
 _REVERSE_CHUNK_BYTES = 1 << 20
 
 # FUNCTIONS
+
+
+# Parse a dual-log ISO timestamp ("...998Z", always UTC — see src/proxy/logging.py's write side —
+# or the rarer "...998+00:00Z" shape, an offset with "Z" appended, still always UTC in practice)
+# into a LOCAL, DST-correct datetime. This is the ONE place every UTC timestamp this package reads
+# gets converted, so every render/filter that shows or compares a time or a day agrees with each
+# other and with the proxy pane / menubar log (both already local) — see 2026-09-04's
+# process-docs entry in this area for why this exists (verified: the same instant showed 18:16:02
+# in `reqs`, UTC, against 20:16:02 in the proxy pane, local, before this fix).
+# `.astimezone()` with no explicit `tz=` resolves to the SYSTEM's configured local zone via the
+# OS's own tzdata, correct for whichever specific date is being converted — DST included — never a
+# fixed offset baked in. Returns None for an empty/unparseable string (never raises); callers
+# render "?" or drop the session from a date filter, exactly as they did before local conversion
+# existed.
+def local_datetime(timestamp: str):
+    if not timestamp:
+        return None
+    try:
+        aware_utc = datetime.fromisoformat(timestamp.rstrip("Z")).replace(tzinfo=timezone.utc)
+        return aware_utc.astimezone()
+    except ValueError:
+        return None
 
 
 # Infer model family from a model id — mirrors addon.py / dev/proxy_dual_log/*.py

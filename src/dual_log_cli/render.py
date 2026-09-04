@@ -1,4 +1,5 @@
 # INFRASTRUCTURE
+from .reader import local_datetime
 from .timeline import request_markers, _system_block_chars, _tool_chars, _BILLING_HEADER_SYS_INDEX
 
 # FUNCTIONS
@@ -13,9 +14,12 @@ def fmt_chars(count: int) -> str:
     return str(count)
 
 
-# Trim the trailing "Z"/offset noise off an ISO timestamp for column output
+# "YYYY-MM-DD HH:MM:SS" LOCAL wall clock for a UTC ISO timestamp (2026-09-04: was a raw
+# `timestamp[:19]` UTC substring — see `reader.local_datetime`, the one shared conversion point).
+# "?" for an empty/unparseable timestamp, same width (19 chars) either way.
 def fmt_timestamp(timestamp: str) -> str:
-    return timestamp[:19].replace("T", " ") if timestamp else "?"
+    dt = local_datetime(timestamp)
+    return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "?"
 
 
 # One line per session, newest first
@@ -445,12 +449,17 @@ def _overlay_lines(slot) -> list:
     return lines
 
 
-# HH:MM:SS of the request that first carried a msg; "?" when it has no reliable time
+# LOCAL HH:MM:SS of the request that first carried a msg; "?" when it has no reliable time
+# (2026-09-04: was a raw `timestamp[11:19]` UTC substring — see `reader.local_datetime`).
 def _clock(timestamp) -> str:
-    return timestamp[11:19] if timestamp else "?"
+    dt = local_datetime(timestamp)
+    return dt.strftime("%H:%M:%S") if dt else "?"
 
 
-# Calendar day for the window header — the anchor's own day, else the session's start day
+# LOCAL calendar day for the window header — the anchor's own day, else the session's start day
+# (2026-09-04: was a raw `stamp[:10]` UTC substring — a request near local midnight could land on
+# the wrong day otherwise; see `reader.local_datetime`).
 def _window_date(data: dict, anchor: int) -> str:
     stamp = data.get("turn_times", {}).get(anchor) or data["session"].get("start", "")
-    return stamp[:10] if stamp else "?"
+    dt = local_datetime(stamp)
+    return dt.strftime("%Y-%m-%d") if dt else "?"

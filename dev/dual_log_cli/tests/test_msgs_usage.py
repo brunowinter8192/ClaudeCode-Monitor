@@ -26,6 +26,7 @@ from pathlib import Path
 _HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE.parents[2]))
 
+from src.dual_log_cli.reader import local_datetime
 from src.dual_log_cli.render import render_msgs
 from src.dual_log_cli.usage import build_usage_by_flow, _find_transcript
 from src.proxy_display.forwarded_parser import _proxy_session_id_for_project
@@ -42,6 +43,13 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     else:
         FAIL_LIST.append(name)
         print(f"  FAIL  {name}" + (f": {detail}" if detail else ""))
+
+
+# The LOCAL "HH:MM:SS" a UTC "...Z" timestamp renders as — computed the same way production code
+# does (reader.local_datetime), so an expected string built from this is correct on ANY machine's
+# timezone, not just the one this suite happened to be written on.
+def _local_clock(iso_timestamp: str) -> str:
+    return local_datetime(iso_timestamp).strftime("%H:%M:%S")
 
 
 def _msg(index: int, role: str, chars: int, blocks: list) -> dict:
@@ -84,7 +92,7 @@ def test_separator_shows_resolved_usage() -> None:
         "turns": [_msg(0, "user", 4, [_block("text", 4)])],
     }
     got = render_msgs(data, 0, 0, usage_by_flow={"f0": (9096, 1928)})
-    expected = "── REQ 1  16:41:13  CR 9,096  CC 1,928 ──\n[  0] user  text                    4c\n"
+    expected = f"── REQ 1  {_local_clock('2026-09-02T16:41:13Z')}  CR 9,096  CC 1,928 ──\n[  0] user  text                    4c\n"
     check("resolved usage renders CR/CC in the right spot", got == expected, got)
 
 
@@ -96,7 +104,8 @@ def test_separator_omits_unresolved_usage() -> None:
         "turns": [_msg(0, "user", 4, [_block("text", 4)])],
     }
     got = render_msgs(data, 0, 0, usage_by_flow={"other-flow": (1, 2)})
-    check("unresolved usage keeps the plain separator", got.startswith("── REQ 1  16:41:13 ──\n"), got)
+    check("unresolved usage keeps the plain separator",
+          got.startswith(f"── REQ 1  {_local_clock('2026-09-02T16:41:13Z')} ──\n"), got)
     check("unresolved usage carries no CR/CC/placeholder", "CR" not in got and "CC" not in got, got)
 
 
@@ -108,7 +117,8 @@ def test_separator_default_unchanged() -> None:
         "turns": [_msg(0, "user", 4, [_block("text", 4)])],
     }
     got = render_msgs(data, 0, 0)
-    check("default (no usage map) separator unchanged", got.startswith("── REQ 1  09:00:00 ──\n"), got)
+    check("default (no usage map) separator unchanged",
+          got.startswith(f"── REQ 1  {_local_clock('2026-09-02T09:00:00Z')} ──\n"), got)
 
 
 # The re-fire suffix stays OUTSIDE the closing "──", after any CR/CC — same position as before
@@ -122,7 +132,7 @@ def test_refire_suffix_stays_outside_usage() -> None:
         "turns": [_msg(0, "user", 4, [_block("text", 4)])],
     }
     got = render_msgs(data, 0, 0, usage_by_flow={"f1": (100, 200)})
-    expected_line = "── REQ 1  10:00:05  CR 100  CC 200 ──  (+1 re-fire)"
+    expected_line = f"── REQ 1  {_local_clock('2026-09-02T10:00:05Z')}  CR 100  CC 200 ──  (+1 re-fire)"
     check("re-fire suffix sits after usage, outside the '──'", got.startswith(expected_line), got)
 
 

@@ -1,15 +1,12 @@
 # INFRASTRUCTURE
 import json
-import re
-from datetime import datetime
 from pathlib import Path
 
 from .discovery import stem_identity
 from .project_map import build_project_index, project_label
-from .reader import iter_jsonl
+from .reader import iter_jsonl, local_datetime
 
 _PROJECTS_ROOT = Path("~/.claude/projects").expanduser()
-_OFFSET_RE = re.compile(r"[+-]\d{2}:\d{2}$")
 
 # FUNCTIONS
 
@@ -28,16 +25,17 @@ def _flow_status_ids(response_path: Path) -> dict:
 # Epoch seconds of an ISO timestamp, tolerant of the dual log's two shapes ("...998Z" and
 # "...998+00:00Z" — the latter from addon.py appending "Z" to an isoformat() that already carries
 # an offset). None on anything unparseable, which the caller reads as "don't filter by time".
+# 2026-09-04: delegates to `reader.local_datetime` (the one shared UTC-aware parse this package
+# now uses everywhere) rather than its own inline parsing — `.timestamp()` on an AWARE datetime is
+# timezone-independent (correct regardless of which zone the datetime is expressed in), so this
+# still returns the exact same epoch value as before; only the duplicate parsing logic is gone.
+# Audited for a UTC-vs-local bug during that same-day work and found already correct: the ORIGINAL
+# inline version explicitly appended "+00:00" whenever the cleaned string carried no offset of its
+# own, so the "...998Z"-only case (the common one) was already parsed as AWARE UTC, never as a
+# naive-assumed-local datetime.
 def _epoch_from_iso(timestamp: str):
-    if not timestamp:
-        return None
-    cleaned = timestamp.rstrip("Z")
-    if not _OFFSET_RE.search(cleaned):
-        cleaned += "+00:00"
-    try:
-        return datetime.fromisoformat(cleaned).timestamp()
-    except ValueError:
-        return None
+    dt = local_datetime(timestamp)
+    return dt.timestamp() if dt else None
 
 
 # The project directories a session's stem could possibly have a transcript in — derived from the

@@ -31,6 +31,7 @@ from pathlib import Path
 _HERE = Path(__file__).parent.resolve()
 sys.path.insert(0, str(_HERE.parents[2]))
 
+from src.dual_log_cli.reader import local_datetime
 from src.dual_log_cli.render import render_msgs
 from src.dual_log_cli.timeline import request_boundaries, request_markers
 
@@ -46,6 +47,13 @@ def check(name: str, condition: bool, detail: str = "") -> None:
     else:
         FAIL_LIST.append(name)
         print(f"  FAIL  {name}" + (f": {detail}" if detail else ""))
+
+
+# The LOCAL "HH:MM:SS" a UTC "...Z" timestamp renders as — computed the same way production code
+# does (reader.local_datetime), so an expected string built from this is correct on ANY machine's
+# timezone, not just the one this suite happened to be written on.
+def _local_clock(iso_timestamp: str) -> str:
+    return local_datetime(iso_timestamp).strftime("%H:%M:%S")
 
 
 # One forwarded_delta line as addon.py's dual-log writer would shape it
@@ -169,7 +177,7 @@ def test_render_msgs_prints_delta_lines_under_separator() -> None:
     }
     got = render_msgs(data, 0, 0)
     lines = got.rstrip("\n").split("\n")
-    check("separator first", lines[0] == "── REQ 1  10:00:00 ──", lines[0])
+    check("separator first", lines[0] == f"── REQ 1  {_local_clock('2026-09-03T10:00:00Z')} ──", lines[0])
     check("sys[0] line right after separator", lines[1].strip().startswith("sys[0]"), lines[1])
     check("sys[2] line next", lines[2].strip().startswith("sys[2]"), lines[2])
     check("tool[Bash] line next", lines[3].strip().startswith("tool[Bash]"), lines[3])
@@ -183,7 +191,7 @@ def test_render_msgs_prints_delta_lines_under_separator() -> None:
     data_plain = {"boundaries": [plain_boundary], "turns": data["turns"]}
     got_plain = render_msgs(data_plain, 0, 0)
     check("no delta -> plain separator immediately followed by the msg line",
-          got_plain == "── REQ 1  10:00:00 ──\n[  0] user  text                    4c\n", got_plain)
+          got_plain == f"── REQ 1  {_local_clock('2026-09-03T10:00:00Z')} ──\n[  0] user  text                    4c\n", got_plain)
 
 
 # A re-fire group (two boundaries opening the same msg index) shows the OWNER boundary's sys/tool
