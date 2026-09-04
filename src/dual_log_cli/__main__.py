@@ -17,6 +17,14 @@ Commands:
                              prompt cache is shared across a project's workers) instead of one
                              listing per session; each line tagged with its worker/project;
                              combines with --gap, evaluated over the merged chain
+    reqs [scope] --rebuild   only REQs where CC > CR (this request's own cache write outweighs
+                             what it read back); every printed line carries a "  CR c  CC c" tail
+    reqs [scope] --drop      only REQs n where CR(n) < CR(n-1) + CC(n-1) — part of the prefix the
+                             PREVIOUS request had cached was not read again; REQ 1 of a chain never
+                             qualifies (no predecessor); the line also carries "  −N" (the
+                             shortfall). --rebuild/--drop combine with each other (AND), with
+                             --gap (filtering the lines --gap would print), and with --merged (the
+                             "previous" request is then the merged chain's, across sessions)
     msgs <session>           request groups: a REQ separator (with CR/CC prompt-cache usage when
                              resolvable) listing the system blocks and tools that request sent —
                              in full for the family's first request, else only what changed or is
@@ -39,6 +47,8 @@ Usage (from project root, or via bin/duallog once symlinked into PATH):
     ./venv/bin/python -m src.dual_log_cli reqs websearch --main
     ./venv/bin/python -m src.dual_log_cli reqs websearch --gap 30
     ./venv/bin/python -m src.dual_log_cli reqs websearch --merged --gap 30
+    ./venv/bin/python -m src.dual_log_cli reqs websearch --merged --rebuild
+    ./venv/bin/python -m src.dual_log_cli reqs websearch --drop
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 700 740
     ./venv/bin/python -m src.dual_log_cli msgs websearch_1787924727 --req 259
@@ -208,7 +218,16 @@ def _parse_args(argv: list) -> argparse.Namespace:
             "REQ line carries `  <tag>` (its context after the last `/` — a worker's name, or a "
             "main session's project). --merged --gap evaluates the SAME bracketing rule over the "
             "merged chain, so a within-session gap another session's request happens to fall "
-            "inside no longer qualifies, and a gap that only exists ACROSS sessions does."
+            "inside no longer qualifies, and a gap that only exists ACROSS sessions does. "
+            "--rebuild keeps only REQs where CC > CR (the request's own cache write outweighed "
+            "what it read back); --drop keeps only REQs n where CR(n) < CR(n-1) + CC(n-1), i.e. "
+            "part of the prefix the PREVIOUS request had cached was NOT read again by n — the "
+            "previous request is the previous one in the same session, or in the merged chain when "
+            "--merged is given; REQ 1 of a chain never qualifies for --drop (no predecessor). "
+            "Every line --rebuild/--drop prints carries a `  CR c  CC c` tail; --drop also appends "
+            "`  −N` (the shortfall, CR(n-1)+CC(n-1) − CR(n)). Both combine with each other (AND), "
+            "with --gap (filtering exactly the lines --gap would print, before-line included), and "
+            "with --merged; a REQ whose usage does not resolve is skipped under either flag."
         ),
     )
     reqs.add_argument("scope", nargs="?", default="", metavar="SCOPE",
@@ -224,6 +243,10 @@ def _parse_args(argv: list) -> argparse.Namespace:
                       help="show only the REQs bracketing a consecutive gap of at least this many minutes")
     reqs.add_argument("--merged", action="store_true",
                       help="merge every session in scope into one chronological REQ chain, each line tagged by session")
+    reqs.add_argument("--rebuild", action="store_true",
+                      help="only REQs where CC > CR; every printed line carries a CR/CC tail")
+    reqs.add_argument("--drop", action="store_true",
+                      help="only REQs whose predecessor's cached prefix was not fully read back; carries a CR/CC + shortfall tail")
     return parser.parse_args(argv)
 
 
@@ -311,7 +334,10 @@ def _run_search(dual_log_dir, args: argparse.Namespace) -> int:
 # "worker/". No matcher, no hit filtering — every session that loads contributes its own REQ list,
 # optionally reduced to only the REQs bracketing a qualifying --gap, optionally merged across
 # every session in scope into one chronological chain (--merged) — session SELECTION is identical
-# either way, only which render function turns `results` into text differs.
+# either way, only which render function turns `results` into text differs. --rebuild/--drop
+# additionally need each contributing session's own CR/CC map (`usage.build_usage_by_flow`, the
+# SAME per-request join `msgs` already resolves) — built only when either flag is set, so a plain
+# `reqs` run never pays for the transcript-store join at all.
 def _run_reqs(dual_log_dir, args: argparse.Namespace) -> int:
     code = _reject_bad_days(args)
     if code:
@@ -334,10 +360,16 @@ def _run_reqs(dual_log_dir, args: argparse.Namespace) -> int:
             skipped += 1
             continue
         results.append((session, data["boundaries"]))
+    usage_by_stem = None
+    if args.rebuild or args.drop:
+        usage_by_stem = {
+            session["stem"]: build_usage_by_flow(session, boundaries)
+            for session, boundaries in results
+        }
     if args.merged:
-        sys.stdout.write(render_reqs_merged(results, skipped, args.gap))
+        sys.stdout.write(render_reqs_merged(results, skipped, args.gap, usage_by_stem, args.rebuild, args.drop))
     else:
-        sys.stdout.write(render_reqs(results, skipped, args.gap))
+        sys.stdout.write(render_reqs(results, skipped, args.gap, usage_by_stem, args.rebuild, args.drop))
     return 0
 
 
