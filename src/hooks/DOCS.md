@@ -20,20 +20,20 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 
 ### _shell_strip.py (194 LOC)
 
-**Purpose:** Shared utility — provides `_strip_non_shell_active(command)`, the position-preserving shell-region stripper used by twenty-two Bash-scanning hooks. Replaces heredoc bodies, single/double-quoted strings, and ANSI-C `$'...'` quotes with spaces of the same length before pattern matching runs. Command substitutions `$(...)` and backtick expressions are kept shell-active. Fail-open: any parse error returns the original command unchanged (never silently allows a blocked pattern due to a strip failure). `_strip_impl` is decomposed into 6 private scan helpers (`_scan_heredoc`, `_scan_ansi_c_quote`, `_scan_cmd_subst`, `_scan_backtick`, `_scan_single_quote`, `_scan_double_quote`), each returning `(fragment, new_i)`.
+**Purpose:** Shared utility — provides `_strip_non_shell_active(command)`, the position-preserving shell-region stripper used by twenty-three Bash-scanning hooks. Replaces heredoc bodies, single/double-quoted strings, and ANSI-C `$'...'` quotes with spaces of the same length before pattern matching runs. Command substitutions `$(...)` and backtick expressions are kept shell-active. Fail-open: any parse error returns the original command unchanged (never silently allows a blocked pattern due to a strip failure). `_strip_impl` is decomposed into 6 private scan helpers (`_scan_heredoc`, `_scan_ansi_c_quote`, `_scan_cmd_subst`, `_scan_backtick`, `_scan_single_quote`, `_scan_double_quote`), each returning `(fragment, new_i)`.
 **Reads:** n/a (pure logic module, not a standalone script).
 **Writes:** n/a.
-**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_gh_cli_chained.py`, `block_gh_cli_local_path.py`, `block_linkedin_cli_isolated.py`, `block_manual_worker_cleanup.py`, `block_pipe_scraper_isolated.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_cli_index_isolated.py`, `block_rag_corpus_read.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
+**Called by:** `block_broad_find.py`, `block_broad_grep.py`, `block_busywait_loop.py`, `block_dangerous_kill.py`, `block_duallog_chained.py`, `block_gh_cli_chained.py`, `block_gh_cli_local_path.py`, `block_linkedin_cli_isolated.py`, `block_manual_worker_cleanup.py`, `block_pipe_scraper_isolated.py`, `block_po_read.py`, `block_rag_cli_chained.py`, `block_rag_cli_index_isolated.py`, `block_rag_corpus_read.py`, `block_rag_docs_layer.py`, `block_search_subreddits_limit.py`, `block_venv_no_redirect.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`, `block_worker_kill_while_working.py`, `block_worker_send_background.py`, `block_worker_spawn_placement.py`, `rewrite_chained_sleep.py` via `sys.path` insertion + `from _shell_strip import _strip_non_shell_active`.
 **Calls out:** stdlib only (no imports).
 
 ---
 
-### _known_cli.py (67 LOC, 2026-08 loop-scaffold relax)
+### _known_cli.py (68 LOC, 2026-09-04 duallog addition)
 
-**Purpose:** Shared utility — provides `is_allowed_chain_segment(segment)`, the single allow-predicate used by the chained-CLI block hooks (`block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`) to decide whether a foreign-looking Bash segment is actually fine; composed from `is_known_cli_segment`, `is_guard_segment`, `is_echo_segment`, and `is_loop_scaffold_segment`. 2026-08 cross-CLI relax: `is_known_cli_segment` passes any segment invoking a `KNOWN_CLI_TOOLS` entry — `gh-cli`, `rag-cli`, `worker-cli`, `reddit-cli`, `linkedin`, `websearch` (sourced by grepping every CLI token actually referenced across `src/hooks/*.py`; `bd` deliberately excluded — retired, see `rewrite_bd_invalid_repo.py` deletion) — regardless of which tool or subcommand. `is_guard_segment` recognizes `cd`, `test`, and `[ ... ]` bracket-test segments. **2026-08 loop-scaffold relax:** real case blocked wrongly — `for n in 62 61 59; do echo "===== #$n ====="; gh-cli get_issue owner repo $n; done` — none of `for ...`, `do echo ...`, `done` are known-CLI/guard segments. `is_echo_segment` passes a pure `echo`/`printf` segment (output-only, cannot filter/truncate another segment's output). `is_loop_scaffold_segment` passes a `for ...`/`while ...` header, a bare `do`/`done`, or `do <segment>` where `<segment>` is itself a known-CLI call, guard, or echo/printf — a foreign command inside `do <cmd>` (e.g. `do curl ...`) still fails all four predicates and blocks.
+**Purpose:** Shared utility — provides `is_allowed_chain_segment(segment)`, the single allow-predicate used by the chained-CLI block hooks (`block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`, `block_duallog_chained.py`) to decide whether a foreign-looking Bash segment is actually fine; composed from `is_known_cli_segment`, `is_guard_segment`, `is_echo_segment`, and `is_loop_scaffold_segment`. 2026-08 cross-CLI relax: `is_known_cli_segment` passes any segment invoking a `KNOWN_CLI_TOOLS` entry — `gh-cli`, `rag-cli`, `worker-cli`, `reddit-cli`, `linkedin`, `websearch`, and (since 2026-09-04) `duallog` (sourced by grepping every CLI token actually referenced across `src/hooks/*.py`; `bd` deliberately excluded — retired, see `rewrite_bd_invalid_repo.py` deletion) — regardless of which tool or subcommand. `duallog` was added so a `block_duallog_chained.py`-governed call can chain with the other six CLIs (and vice versa — e.g. a `duallog search foo` segment now passes `block_gh_cli_chained.py`'s own chain check too), not just with itself. `is_guard_segment` recognizes `cd`, `test`, and `[ ... ]` bracket-test segments. **2026-08 loop-scaffold relax:** real case blocked wrongly — `for n in 62 61 59; do echo "===== #$n ====="; gh-cli get_issue owner repo $n; done` — none of `for ...`, `do echo ...`, `done` are known-CLI/guard segments. `is_echo_segment` passes a pure `echo`/`printf` segment (output-only, cannot filter/truncate another segment's output). `is_loop_scaffold_segment` passes a `for ...`/`while ...` header, a bare `do`/`done`, or `do <segment>` where `<segment>` is itself a known-CLI call, guard, or echo/printf — a foreign command inside `do <cmd>` (e.g. `do curl ...`) still fails all four predicates and blocks.
 **Reads:** n/a (pure logic module, not a standalone script).
 **Writes:** n/a.
-**Called by:** `block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py` via `sys.path` insertion + `from _known_cli import is_allowed_chain_segment`.
+**Called by:** `block_gh_cli_chained.py`, `block_rag_cli_chained.py`, `block_websearch_scrape_chained.py`, `block_worker_cli_read_chained.py`, `block_duallog_chained.py` via `sys.path` insertion + `from _known_cli import is_allowed_chain_segment`.
 **Calls out:** stdlib only (`re`).
 
 ---
@@ -353,6 +353,32 @@ Each hook script is a standalone `python3 <script>.py` entry invoked by CC. Not 
 **Segment split.** Same `_SEPARATOR_RE`/mechanic as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`.
 
 **Smoke:** `dev/hook_smoke/test_block_worker_cli_read_chained.py` (23 cases incl. redirect/pipe/foreign-segment blocks, cross-CLI-relax passes, cd-guard passes, for/while loop-scaffold passes, foreign-command-in-loop-body block).
+
+---
+
+### block_duallog_chained.py (89 LOC, new 2026-09-04)
+
+**Purpose:** PreToolUse hook (Bash) — triggered by the 2026-09-04 incident: the orchestrator ran `duallog expand <session> 1 --before 0 --after 0 | head -60` and later `| tail -25`, reading only PART of a msg — impossible to notice what got cut, and the whole point of `expand` is a msg's content in full. Unlike `block_worker_cli_read_chained.py`, EVERY `duallog` subcommand (`sessions`, `msgs`, `expand`, `search`) is protected, not just a subset — one anchor regex (`_DUALLOG_SEGMENT_RE`, `^duallog\b`) covers all four, since `duallog` has no "unprotected" subcommand the way `worker-cli status`/`list` are. A protected segment must carry no redirect and no pipe (`_REDIRECT_RE`; pipes are caught structurally — `_SEPARATOR_RE` splits on `|` first, turning the pipe target into its own foreign segment). Same shape as the other four chained-CLI hooks: every OTHER segment must be a known CLI call, guard, echo/printf, or loop scaffold (`_known_cli.is_allowed_chain_segment`). Exits 2 + stderr on violation, naming re-issuing the call standalone and reading the whole output. Exits 0 on any parse/internal error (fail-open).
+**Reads:** stdin (CC PreToolUse JSON payload: `{tool_input: {command}}`).
+**Writes:** stderr (block message) on violation only.
+**Called by:** CC hook system (`type: command` in `~/.claude/settings.json` PreToolUse/Bash entry). Never imported.
+**Calls out:** `_shell_strip._strip_non_shell_active`, `_known_cli.is_allowed_chain_segment`, `_fire_log.log_fire`; stdlib (`json`, `os`, `re`, `sys`).
+
+**Blocked patterns:**
+- `duallog expand s 1 --before 0 --after 0 | head -60` — the trigger incident, first observed form
+- `duallog expand s 1 --before 0 --after 0 | tail -25` — the trigger incident, second observed form
+- `duallog expand s 1 > /tmp/out.txt` — redirected
+- `duallog search foo ; grep bar /tmp/x.log` — chained with a non-CLI command via `;`
+
+**Allowed patterns:**
+- `duallog expand s 5` — standalone
+- `duallog sessions && duallog msgs x` — same-tool combine (via `_DUALLOG_SEGMENT_RE` matching both segments directly)
+- `cd /x && duallog search foo` — leading cd guard
+- `duallog search foo && gh-cli get_issue owner/repo 5` — cross-CLI chain (`duallog` is now a `KNOWN_CLI_TOOLS` entry, see `_known_cli.py`)
+
+**Segment split.** Same `_SEPARATOR_RE`/mechanic as `block_gh_cli_chained.py`/`block_rag_cli_chained.py`/`block_worker_cli_read_chained.py`.
+
+**Smoke:** `dev/hook_smoke/test_block_duallog_chained.py` (6 cases incl. the two verbatim incident forms, a redirect block, same-tool combine, cd-guard, and standalone — plus the standard malformed-payload fail-open check).
 
 ---
 
@@ -834,7 +860,7 @@ Comparison is **case-insensitive** (`.lower()` on both roots) — macOS FS is ca
 
 ---
 
-### hook_setup.py (257 LOC)
+### hook_setup.py (259 LOC)
 
 **Purpose:** Idempotent installer with three defense layers. **Layer 1 — Worktree Guard:** `_guard_not_worktree()` checks `Path(__file__).resolve().parts` for consecutive `.claude`/`worktrees` components; exits 2 with a clear error message (stderr) if running from a worktree — preventing dead-path registration. **Layer 2 — Stale-hook Sweep:** `_sweep_stale_hooks()` iterates ALL event keys in `settings["hooks"]` (not only `PreToolUse`), checks every `python3 <path>` entry, and removes any whose script path fails `os.path.exists()`; drops now-empty groups, saves atomically, then runs the normal add-loop. **Layer 3 — Two-Condition Install Gate:** `decide_entries()` (pure, injectable `git_query_fn` + `tree_query_fn`) partitions `_HOOK_SCRIPTS` into installable vs. skipped BEFORE the add-loop runs. A script installs only when BOTH: (a) `_script_on_main()` confirms it's committed on `main` (`git cat-file -e main:src/hooks/<script>`, cached `_main_branch_resolves()` check first); (b) `_script_in_worktree()` confirms `os.path.exists(_HOOKS_DIR / script)` — present in the CURRENT working tree, at the exact path about to be registered. Condition (a) prevents the incident this layer was built for: a hook merged into `integration`, auto-registered via `.githooks/post-merge` using its absolute working-tree path, then orphaned machine-wide the moment the tree checked out `main` — every Bash call on every project failed with `[Errno 2] No such file or directory` until the entry was removed by hand. Condition (b) closes the mirror-image hole found in review: (a) alone lets a script that IS on `main` but was deleted/renamed in the CURRENT tree (while its `_HOOK_SCRIPTS` entry stayed) pass the gate and get registered as a dead path — same outage, entering from the other side; note `_sweep_stale_hooks()` runs BEFORE this gate, so without condition (b) the sweep would remove that exact dead entry and the install loop would immediately put it back. Main-branch presence is checked first — a script failing it never reaches the tree check, so a script missing from both reports the main-branch reason. Decision is per-script (cached by filename, shared across a script's multiple matcher entries) — one unmergeable/deleted script never blocks the other 38. `_report_skipped()` prints one deduped stderr line per skipped script naming it and the reason. Re-running heals stale entries from any source (worktree accident, repo move, feature-branch script since merged, etc.). Runs completely silent on success — no stdout output; stderr only for error conditions (worktree guard, JSON parse failure, skipped-script lines).
 **Reads:** `~/.claude/settings.json`; local `main` branch git state (`git rev-parse --verify`, `git cat-file -e`); working-tree filesystem (`os.path.exists`).
