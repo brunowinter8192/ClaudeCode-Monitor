@@ -42,15 +42,17 @@ status, delta indices) + PASS/FAIL summary line.
 
 ---
 
-### tt_delta_skip_replay.py (273 LOC)
+### tt_delta_skip_replay.py (282 LOC)
 
 **Purpose:** Before/after proof for the read-side badge suppression of the per-request
-`<total_tokens>N tokens left</total_tokens>` nuke. Replays a recorded `_original.jsonl` through the
-REAL production pass pipeline (`rules.apply_modification_rules`, the actual source of `all_ops`),
-feeds `(orig_payload, fwd_payload, all_ops)` into the REAL `_build_stripped_injected_deltas` — the
-same call `addon.py` makes — and runs the resulting dual-log lines through the REAL
-`parser.accumulate_dual_log`. Unlike `verify_strip_inject.py` it therefore exercises the message
-delta path end to end, because it supplies `all_ops`.
+`<total_tokens>N tokens left</total_tokens>` nuke, INCLUDING its claude-f trailing-nudge variant
+(2026-09-05 — see `src/proxy_display/DOCS.md`'s `parser.py` entry for the full design). Replays a
+recorded `_original.jsonl` through the REAL production pass pipeline
+(`rules.apply_modification_rules`, the actual source of `all_ops`), feeds `(orig_payload,
+fwd_payload, all_ops)` into the REAL `_build_stripped_injected_deltas` — the same call `addon.py`
+makes — and runs the resulting dual-log lines through the REAL `parser.accumulate_dual_log`.
+Unlike `verify_strip_inject.py` it therefore exercises the message delta path end to end, because
+it supplies `all_ops`.
 
 Reports two things separately: the WRITE side (entries carrying `messages_delta`, which must be
 unchanged — the spans keep rendering) and the RENDERED BADGE, resolved through the real
@@ -58,7 +60,13 @@ unchanged — the spans keep rendering) and the RENDERED BADGE, resolved through
 not just the per-line filter), under the old one-to-one rule vs the new one. The old rule is
 reproduced in-process by monkeypatching `parser._msgs_delta_is_substantial` to
 `bool(messages_delta)`, so both readings differ in nothing else. Classifies each request as `pure_total_tokens` / `mixed` / `real_strip` / `no_msg_delta` by
-inspecting the original payload's messages.
+inspecting the original payload's messages via `_is_tt_msg`, which delegates to the REAL
+`parser._is_total_tokens_nuke_text` (lazy-imported via `_shape_classifier()`) rather than keeping
+its own copy of the shape test — updated 2026-09-05 alongside the production widening so this
+script's own classification never drifts out of agreement with what it is verifying; before that
+change this script's narrower bare-tag-only `_is_tt_msg` misclassified nudge-shaped messages as
+`real_strip`/`mixed` and the `--compare` check FAILED on the claude-f sessions for that reason
+alone (the widened production code was correct, the harness's classifier was stale).
 
 **Verified:** PASS on `api_requests_opus_monitor_cc_1788011077`, one run of 88 requests on
 2026-08-29 (that log was live during the work, so a later run shows larger absolute counts — the
@@ -66,7 +74,12 @@ script asserts per-class invariants, not fixed totals, and keeps passing as the 
 side unchanged at 77 stripped / 76 injected entries with `messages_delta`; rendered badge 78 → 25
 for `strip` and 78 → 25 for `inject`; 53/53 pure-total_tokens requests show NEITHER word while 53/53
 still carry their stripped spans; 14/14 real-strip requests show `strip` and 13/13 of those with a
-green message span show `inject`; 10/10 mixed requests show both words.
+green message span show `inject`; 10/10 mixed requests show both words. **Re-verified 2026-09-05**
+against all three current claude-f/opus corpus stems (`api_requests_opus_{wise2627_1788612045,
+websearch_1788611995, monitor_cc_1788611156}`) after the trailing-nudge widening — PASS on all
+three; the widened `pure_total_tokens` bucket on `monitor_cc` (which now correctly absorbs the
+nudge-prefixed shapes) rose from 16 requests (old bare-only classification) to 119, and `strip`
+dropped from 157 → 38 shown while every real-strip request kept showing both words.
 
 **Check semantics note:** the inject check is an implication, not an equality — a green message span
 MUST light `inject`, but the converse does not hold, because a system-section injection (proxy rules

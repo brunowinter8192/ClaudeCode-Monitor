@@ -2,10 +2,12 @@
 
 ## Purpose
 
-Regression coverage for the display side of the `TOOL_BLOCKLIST` mechanism (`src/constants.py` +
-`src/proxy/tools.py`) — how a whole-stripped tool shows up in the proxy pane's tools drill-down.
-Shares its name with `process-docs/proxy_tool_stripping/`, the area covering both the write-side
-strip (per-CC-version blocklist follow-ups) and the read-side display of what got stripped.
+Regression coverage and measurement probes for the proxy's strip/inject display area — how a
+whole-stripped tool shows up in the tools drill-down (`TOOL_BLOCKLIST`, `src/constants.py` +
+`src/proxy/tools.py`), and the REQ-header `strip`/`inject` badge's noise filters
+(`src/proxy_display/parser.py`). Shares its name with `process-docs/proxy_tool_stripping/`, the
+broader area covering both the write-side strip mechanism and the read-side display/logging of
+what got stripped — not limited to the tool blocklist specifically, despite the directory name.
 
 ## Scripts
 
@@ -33,6 +35,25 @@ hook otherwise blocks for any other `dev/` script (see that hook's own module fo
 JSONL file it writes itself for the `accumulate_original_tools` incremental-read tests.
 **Writes:** Nothing persistent — prints PASS/FAIL to stdout.
 **Usage:** `python3 dev/proxy_tool_stripping/tests/test_whole_stripped_tool_expand.py`
+
+### probe_trailing_message_shapes.py (121 LOC)
+
+**Purpose:** Measurement probe (2026-09-05) backing the claude-f trailing-nudge badge-widening —
+scans every `_stripped.jsonl` line's `messages_delta` in the three current corpus stems, collects
+every individual stripped text ending with the `<total_tokens>N tokens left</total_tokens>` tag,
+normalizes by replacing the digit run with `N`, and reports distinct shapes with counts per
+session plus a union total. Pure text/regex measurement — no `src/` import needed (does not touch
+the `from src.` block-dev-imports-src hook at all), so it lives at the top level of this directory
+rather than under `tests/`. This is what established the 24-distinct-shapes finding and the
+3-sentence nudge catalog now in `src/proxy_display/parser.py`'s `_TOTAL_TOKENS_NUDGE_PARAGRAPHS` —
+re-runnable against the live corpus to check whether a NEW, uncatalogued nudge shape has appeared
+(by design it would show up here as a new distinct shape with real content mixed in, or as a
+growing "ending-with-tag but never matches any catalogued shape" bucket over time).
+**Reads:** `src/logs/dual_log/api_requests_opus_{wise2627_1788612045,websearch_1788611995,
+monitor_cc_1788611156}_stripped.jsonl` (hardcoded stems — measurement was run against a specific
+corpus snapshot, not parameterized).
+**Writes:** `md/trailing_message_shapes_report.md`.
+**Usage:** `python3 dev/proxy_tool_stripping/probe_trailing_message_shapes.py`
 
 ## Gotchas
 

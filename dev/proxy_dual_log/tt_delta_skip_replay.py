@@ -32,7 +32,6 @@ Usage (from project root):
 # INFRASTRUCTURE
 import argparse
 import json
-import re
 import sys
 import tempfile
 from pathlib import Path
@@ -45,7 +44,12 @@ sys.path.insert(0, str(WORKTREE_ROOT))
 MAIN_REPO_ROOT = Path('/Users/brunowinter2000/Documents/ai/monitor-cc')
 LOG_DIR = MAIN_REPO_ROOT / 'src' / 'logs' / 'dual_log'
 
-TT_RE = re.compile(r'^<total_tokens>\d+ tokens left</total_tokens>$')
+# Lazy import — this module is imported both at top-level (WORKTREE_ROOT already on sys.path from
+# the block above) and reused this way inside `_is_tt_msg`, mirroring `replay()`'s own late-import
+# convention below (src imports deferred so this file can be inspected without src/ importable).
+def _shape_classifier():
+    from src.proxy_display.parser import _is_total_tokens_nuke_text
+    return _is_total_tokens_nuke_text
 
 
 # FUNCTIONS
@@ -63,17 +67,22 @@ def _load_jsonl(path: Path) -> list:
     return entries
 
 
-# True when the message is a genuine role='system' total_tokens marker (the target class)
+# True when the message is a genuine role='system' total_tokens marker OR the same marker preceded
+# only by known CC nudge prose (2026-09-05, claude-f trailing-nudge widening) — delegates to the
+# real `parser._is_total_tokens_nuke_text` rather than keeping a second, narrower copy of the shape
+# test here, so this replay's own classification stays in agreement with the production code it is
+# verifying against.
 def _is_tt_msg(msg: dict) -> bool:
     if msg.get('role') != 'system':
         return False
+    is_nuke_text = _shape_classifier()
     content = msg.get('content', '')
     if isinstance(content, str):
-        return bool(TT_RE.match(content.strip()))
+        return is_nuke_text(content)
     if isinstance(content, list):
         return (len(content) == 1 and isinstance(content[0], dict)
                 and content[0].get('type') == 'text'
-                and bool(TT_RE.match(str(content[0].get('text', '')).strip())))
+                and is_nuke_text(str(content[0].get('text', ''))))
     return False
 
 
