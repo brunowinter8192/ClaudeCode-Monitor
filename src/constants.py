@@ -148,5 +148,7 @@ TOOL_BLOCKLIST = frozenset({
     "Workflow",
     # CC 2.1.223+ built-ins (Claude-facing artifact/finding-report/deferred-schema tools, unused)
     "Artifact", "ReportFindings", "DeferredToolPlaceholder",
+    # CC 2.1.258+ built-ins (feedback + agent-list, unused)
+    "SendFeedback", "ListAgents",
 })
 
