@@ -35,17 +35,6 @@ python3 dev/hook_smoke/test_block_broad_grep.py
 
 ---
 
-### test_block_gh_cli_chained.py (123 LOC, 2026-08 cross-CLI relax + get_issue/list_issues absorbed)
-
-**Purpose:** 30-case smoke for `block_gh_cli_chained.py`. Verifies: blocked cases for each of the 7 search/research tools piped/chained with a non-CLI command; `get_issue`/`list_issues` piped/redirected/chained-with-echo BLOCK (2026-08: absorbed from the deleted `rewrite_gh_cli_read_noise.py`, no longer exempt); standalone/tool-native-args/redirect-to-file passes for the 7; `get_issue`/`list_issues` standalone and combined-with-each-other/combined-with-`index_issues` passes; cross-CLI-relax passes (`index_issues && rag-cli search`, `get_issue && worker-cli capture`, leading `cd` guard); 2 shell-strip passes (single-quotes, heredoc body); 3 `repo_freshness` cases (2026-08 websearch incident, now resolved via the generic known-CLI check rather than a dedicated carve-out): `repo_freshness && index_issues && index_issues` PASS, the same chain with `echo` segments interleaved still BLOCK (echo isn't a known-CLI segment), `repo_freshness && git log` PASS (hook never triggers — `repo_freshness` alone is outside `_GH_TRIGGER_RE`'s scope).
-
-**Usage:**
-```bash
-python3 dev/hook_smoke/test_block_gh_cli_chained.py
-```
-
----
-
 ### test_block_gh_cli_local_path.py (83 LOC)
 
 **Purpose:** 15-case smoke for `block_gh_cli_local_path.py` (2026-08-07). Verifies 5 blocked cases
@@ -62,40 +51,6 @@ python3 dev/hook_smoke/test_block_gh_cli_local_path.py
 ```
 
 **Report:** `md/block_gh_cli_local_path_smoke_report.md`.
-
----
-
-### probe_gh_cli_repo_freshness_incident.py (121 LOC)
-
-**Purpose:** Replays the exact commands from the websearch-session `repo_freshness` incident
-(`src/logs/dual_log/api_requests_opus_websearch_1786052022_original.jsonl`, messages [118]-[129])
-through the real `block_gh_cli_chained.py` hook via subprocess — asserts exit code AND stderr
-shape (BLOCK cases carry stderr, PASS cases carry none), plus 3 content checks on the
-`_BLOCK_MESSAGE` (combine example present, "always full context" wording, "cross-CLI chains ARE
-allowed" wording — 2026-08: swapped from the old "repo_freshness may join" check, since that
-carve-out is now subsumed by the generic known-CLI check). Distinct from the smoke suite above:
-pins the literal incident commands verbatim rather than minimal synthetic variants, and asserts
-message CONTENT, not just exit code.
-**Reads:** none (commands are inlined verbatim from the incident log, not re-read from disk).
-**Writes:** `md/gh_cli_repo_freshness_incident_probe_report.md`.
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/probe_gh_cli_repo_freshness_incident.py
-```
-
-**Expected output:** `ALL PASS` (exit 0).
-
----
-
-### test_block_rag_cli_chained.py (94 LOC, 2026-08 cross-CLI relax + search redirect absorbed)
-
-**Purpose:** 17-case smoke for `block_rag_cli_chained.py`. Verifies: blocked cases (rag-cli followed via `;`, `&&`, `|` by tail/echo/grep/head), `rag-cli search` redirect/`2>&1`/pipe BLOCK (2026-08: absorbed from the deleted `rewrite_rag_cli_search_noise.py`), and allow cases (non-search redirect to file, `search` standalone, cross-CLI-relax — `search && gh-cli get_issue`, `search && worker-cli capture`, file-guard before rag-cli, cd before rag-cli, two rag-cli calls chained, no rag-cli at all, rag-cli inside single-quotes, rag-cli inside heredoc body).
-
-**Usage:**
-```bash
-python3 dev/hook_smoke/test_block_rag_cli_chained.py
-```
 
 ---
 
@@ -160,32 +115,6 @@ python3 dev/hook_smoke/test_log_janitor.py
 ```
 
 **Expected output:** `All 4 tests passed.` (exit 0). Uses `sys.path.insert` on `src/` + `from log_janitor import` to avoid the `from src.` import restriction.
-
----
-
-### test_block_websearch_scrape_chained.py (100 LOC, 2026-08)
-
-**Purpose:** 18-case smoke for `block_websearch_scrape_chained.py` (replaces the deleted `rewrite_websearch_scrape_noise.py`). Verifies the proven incident command verbatim (`scrape_url URL > /tmp/f.md 2>&1; wc -l /tmp/f.md; head -120 /tmp/f.md` BLOCK), redirect/`2>&1`/pipe/foreign-segment BLOCK cases, standalone/`search_web`-untouched PASS, and cross-CLI-relax PASS cases (two `scrape_url` calls chained, `scrape_url && rag-cli search`, `scrape_url && gh-cli get_issue`, leading cd guard), plus quoted-mention shell-strip and malformed-stdin fail-open.
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/test_block_websearch_scrape_chained.py
-```
-
-**Expected output:** `All 18 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
-
----
-
-### test_block_worker_cli_read_chained.py (105 LOC, 2026-08)
-
-**Purpose:** 20-case smoke for `block_worker_cli_read_chained.py` (replaces the deleted `rewrite_worker_cli_capture_noise.py` / `rewrite_worker_cli_response_noise.py`). Verifies pipe/redirect BLOCK on both `capture` and `response` (incl. the retired `capture | tail -40` fallback and `capture > file` allowance), foreign-segment BLOCK, standalone/`--raw`/out-of-scope-subcommand PASS, and cross-CLI-relax PASS cases (`capture && response` combine, `capture && rag-cli search`, leading cd guard — a real pattern here since `worker-cli capture`/`response` fall back to cwd via `resolve_project_path` when `project_path` is omitted), plus quoted-mention shell-strip and malformed-stdin fail-open.
-
-**Usage (from project root):**
-```bash
-python3 dev/hook_smoke/test_block_worker_cli_read_chained.py
-```
-
-**Expected output:** `All 20 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
 
 ---
 
@@ -318,29 +247,31 @@ python3 dev/hook_smoke/test_block_po_read.py
 
 ---
 
-### test_block_linkedin_cli_isolated.py (114 LOC)
+### test_block_cli_chained.py (139 LOC, new 2026-09 chain-hook unification)
 
-**Purpose:** 25-case smoke for `block_linkedin_cli_isolated.py`. Verifies 11 blocked cases (piped to grep/head/tail/sed/awk/wc, two `linkedin` calls chained via `&&`/`;`, chained with an unrelated command both after and BEFORE the `linkedin` call, env-prefixed call then piped) and 13 pass cases (standalone with `--count`/`--days`, redirect-to-file, env-prefixed standalone, bare `linkedin` with no subcommand — a pinned decision, not accidental — non-`linkedin` command untouched, and 5 false-positive-avoidance cases: "linkedin" as a `cd` path segment, as a `cli/linkedin/cli.py` path, as a `grep` argument, as a different tool's name prefix (`linkedin-web`), and as text inside quotes), plus 1 malformed-stdin fail-open case.
+**Purpose:** 36-case smoke for `block_cli_chained.py` — the single hook that replaced `block_gh_cli_chained.py`/`block_rag_cli_chained.py`/`block_worker_cli_read_chained.py`/`block_websearch_scrape_chained.py`/`block_duallog_chained.py`/`block_linkedin_cli_isolated.py`/`block_penny_cli_chained.py`. Verifies all 3 rule classes across all 8 CLIs: rule 1 (pipe after any known-CLI segment, both a protected subcommand like `rag-cli search` and an unprotected one like `gh-cli get_file_content`/`worker-cli kill`, plus a for-loop with one piped iteration); rule 2 (redirect on a protected subcommand, one case per CLI incl. `duallog`/`linkedin`/`penny-cli`'s every-subcommand-protected shape, plus the bare-`2>`-does-not-count PASS and the unprotected-subcommand-redirect-stays-allowed PASS for `rag-cli index`/`worker-cli status`/`reddit-cli index_subreddits`); rule 3 (the milestone's canonical `rag-cli update_docs . > file; tail file` incident, readback via `head`/`cat`, a different-file PASS, a no-readback-at-all PASS). Also verifies the "no allowlist of chain segments" thesis directly: `mkdir -p x && rag-cli index`, `ls; gh-cli get_issue`, `echo test && penny-cli` (isolation retired), a `cd` guard, a cross-CLI chain with neither pipe nor redirect, a for-loop with no pipe/redirect, and the `duallog`/`worker-cli` path-substring false-positive cases all PASS — plus 1 malformed-stdin fail-open case.
 
 **Usage (from project root):**
 ```bash
-python3 dev/hook_smoke/test_block_linkedin_cli_isolated.py
+python3 dev/hook_smoke/test_block_cli_chained.py
 ```
 
-**Expected output:** `All 25 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** `All 36 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
 
 ---
 
-### test_block_penny_cli_chained.py (87 LOC, new 2026-09-04)
+### probe_replay_cli_chained.py (n/a — replay probe, not a smoke test)
 
-**Purpose:** 13-case smoke for `block_penny_cli_chained.py`. Verifies 7 blocked cases (the verbatim real-world chained incident — `gcommit "..." && penny-cli --klasse "X" 2>&1 | sed -n '/^Klasse/,$p'` — piped to `head`, redirected to a file, a leading `cd` guard still blocking (no relaxation here, unlike every other chained-CLI hook), a cross-CLI chain with `rag-cli search` still blocking (no `_known_cli` relax), a command substitution wrapping the call, and a command substitution used as an argument to the call) and 5 pass cases (standalone, env-var-prefixed standalone, `penny-cli` as a path substring in `ls`, `penny-cli` as a path substring in `ln -sf` (twice in one command), a command with no `penny-cli` at all), plus 1 malformed-stdin fail-open case.
+**Purpose:** Feeds every historical `decision="block"` fire of the 7 replaced hooks (`block_gh_cli_chained`, `block_rag_cli_chained`, `block_worker_cli_read_chained`, `block_websearch_scrape_chained`, `block_duallog_chained`, `block_linkedin_cli_isolated`, `block_penny_cli_chained`) from the MAIN checkout's `src/logs/hook_firing.jsonl` (never the worktree's own — a worktree has no fire history of its own) through the real `block_cli_chained.py` via subprocess, and reports per-old-hook counts of still-blocks vs now-passes. As of the 2026-09 rewrite: 115 historical block fires total, 49 still block, 66 now pass — every now-passing command's full text is written to the report for manual review (the milestone's own pre-implementation estimate was "about 83/32"; the measured split is more permissive than that estimate, traced case-by-case to the literal 3-rule text rather than a design gap — see the report).
+**Reads:** `<main-repo-root>/src/logs/hook_firing.jsonl` (main checkout, resolved by stripping this script's own `.claude/worktrees/<name>` path suffix).
+**Writes:** `md/block_cli_chained_replay_report.md` (per-hook counts table + full text of every now-passing command, grouped by old hook).
 
-**Usage (from project root):**
+**Usage (from project root, in ANY worktree — the main-checkout log path is resolved automatically):**
 ```bash
-python3 dev/hook_smoke/test_block_penny_cli_chained.py
+python3 dev/hook_smoke/probe_replay_cli_chained.py
 ```
 
-**Expected output:** `All 13 tests passed.` (exit 0). HOOK path is relative — must be run from project root.
+**Expected output:** per-hook block/pass counts to stdout, `~83/~32` order of magnitude per the milestone's estimate (measured 2026-09: 49/66 — see Purpose).
 
 ---
 
