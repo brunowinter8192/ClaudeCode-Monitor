@@ -195,6 +195,54 @@ def _find_dual_log_paths(main_log_path: Optional[Path]) -> tuple:
         dual_dir / f'{stem}_injected.jsonl',
     )
 
+# Derive the _original dual-log path from the resolved main log path
+def _find_original_log_path(main_log_path: Optional[Path]) -> Optional[Path]:
+    if main_log_path is None:
+        return None
+    dual_dir = main_log_path.parent / 'dual_log'
+    stem = main_log_path.stem
+    return dual_dir / f'{stem}_original.jsonl'
+
+# Read new entries from the _original dual-log, keeping the LATEST non-empty tools list per model
+# family as a {name: tool_def} map. Unlike _stripped/_injected/_forwarded, _original is NOT
+# delta-encoded — every line with tools carries the full list — so no merge logic is needed, just
+# overwrite. Tool defs are stable within a session (measured 2026-09-04, process-docs/dual_log_cli/
+# 2026-09-04_sys_tool_original_chars_and_whole_strip_lines.md: 0 hash mismatches comparing any
+# earlier request's tool-by-name content against the last request's, across 45 sessions), so always
+# keeping the newest snapshot is correct without tracking history. acc_by_family: {family ->
+# {name -> tool_def}}, mutated IN-PLACE per family dict (same reference-preservation convention as
+# accumulate_dual_log) so entries holding a reference see updates automatically. Returns new file
+# position; silently ignores missing/unreadable file.
+def accumulate_original_tools(path: Optional[Path], last_pos: int, acc_by_family: dict) -> int:
+    if path is None or not path.exists():
+        return last_pos
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            f.seek(last_pos)
+            while True:
+                raw_line = f.readline()
+                if not raw_line:
+                    break
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                tools = (entry.get('payload') or {}).get('tools')
+                if not tools:
+                    continue
+                family = _infer_model_family(entry.get('model', ''))
+                fam_map = acc_by_family.setdefault(family, {})
+                fam_map.clear()
+                for t in tools:
+                    if isinstance(t, dict) and t.get('name'):
+                        fam_map[t['name']] = t
+            return f.tell()
+    except OSError:
+        return last_pos
+
 # Read new entries from one dual-log file (stripped or injected), accumulate per model_family.
 # acc_by_family: {family -> {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}}}
 # Mutates acc_by_family IN-PLACE so all proxy_entries holding a reference see updates
