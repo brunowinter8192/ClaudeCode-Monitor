@@ -72,6 +72,20 @@ therefore invisible in the pane — the accepted cost, recoverable only from the
 **Writes:** `md/no_flow_extra_prepend_report.md`.
 **Calls out:** `src.proxy_display.{forwarded_parser,parser,render_messages,render_turn}`.
 
+### p7_blocklist_258_probe.py (145 LOC)
+
+**Purpose:** Verifies the CC 2.1.258 `TOOL_BLOCKLIST` extension (SendFeedback, ListAgents)
+end-to-end against the CURRENT full `src/logs/dual_log/*_original.jsonl` corpus, not one hardcoded
+session — glob-driven, since the corpus rotates. Runs the real `proxy.tools._strip_unused_tools`
+on the newest main-session log's original payload, asserts the post-strip set is exactly
+`{Bash, Edit, Read, Write, Skill}` + any MCP-injected names; corpus-wide sanity check for a live
+`tool_use` invocation of either newly-blocked name in ANY `_original.jsonl` file's messages (would
+400 the API if stripped) — reports files-scanned count and hit count; confirms both names are in
+`TOOL_BLOCKLIST`.
+**Reads:** all `src/logs/dual_log/*_original.jsonl` files present at run time.
+**Writes:** `md/blocklist_258_probe_report.md`.
+**Calls out:** `proxy.tools` (`_strip_unused_tools`), `constants` (`TOOL_BLOCKLIST`).
+
 ### p1_measure_full_replacement_blast_radius.py (536 LOC)
 
 **Purpose:** Measurement script (dev/ M1 "bg-ack-shapes" milestone, 2026-07-29) — drives real
