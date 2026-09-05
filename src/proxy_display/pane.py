@@ -12,6 +12,7 @@ from ..constants import (
 from .parser import (
     parse_proxy_log_forwarded, _lazy_load_messages_forwarded, find_proxy_log_path,
     accumulate_dual_log, _find_dual_log_paths, _infer_model_family, reconstruct_all_messages,
+    _find_original_log_path, accumulate_original_tools,
 )
 from .format import format_proxy_block, _is_standalone_entry
 from .search import build_search_matches
@@ -51,6 +52,8 @@ _proxy_stripped_pos: int = 0     # dual-log read position for _stripped.jsonl
 _proxy_injected_pos: int = 0     # dual-log read position for _injected.jsonl
 _proxy_acc_stripped: dict = {}   # family → {'system': {}, 'tools': {}, 'messages': {}, 'fields': {}}
 _proxy_acc_injected: dict = {}   # same — both mutated in-place; entries hold references
+_proxy_original_pos: int = 0     # dual-log read position for _original.jsonl
+_proxy_acc_original: dict = {}   # family → {tool_name -> tool_def}; latest snapshot, mutated in-place
 _proxy_log_path: Optional[Path] = None  # current log file path, updated each poll cycle for lazy-reload
 _proxy_pane_width: int = 80  # updated each render cycle; used by click handler for copy-button column check
 _proxy_copy_rows: Set[int] = set()  # phys_rows where ⎘ copy button is rendered; populated by format_proxy_block
@@ -376,6 +379,7 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
     global _proxy_log_path, _last_full_parse_ts
     global _proxy_current_main_session, _proxy_session_start_ts
     global _proxy_stripped_pos, _proxy_injected_pos, _proxy_acc_stripped, _proxy_acc_injected
+    global _proxy_original_pos, _proxy_acc_original
     global _proxy_undo_stack
     if now - last_data_refresh < POLL_INTERVAL:
         return input_changed, last_data_refresh
@@ -402,6 +406,8 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
         _proxy_injected_pos = 0
         _proxy_acc_stripped.clear()
         _proxy_acc_injected.clear()
+        _proxy_original_pos = 0
+        _proxy_acc_original.clear()
         search_bar.handle_search_cancel(_proxy_search)  # reset query/focused/matches/selection
         input_changed = True
     if _last_full_parse_ts == 0.0:
@@ -419,6 +425,8 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
         _proxy_injected_pos = 0
         _proxy_acc_stripped.clear()
         _proxy_acc_injected.clear()
+        _proxy_original_pos = 0
+        _proxy_acc_original.clear()
         input_changed = True
     new_entries, _proxy_fwd_pos = parse_proxy_log_forwarded(
         monitor.active_project_filter, _proxy_fwd_pos, _proxy_acc_fwd
@@ -431,6 +439,8 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
     stripped_path, injected_path = _find_dual_log_paths(_proxy_log_path)
     _proxy_stripped_pos = accumulate_dual_log(stripped_path, _proxy_stripped_pos, _proxy_acc_stripped)
     _proxy_injected_pos = accumulate_dual_log(injected_path, _proxy_injected_pos, _proxy_acc_injected)
+    original_path = _find_original_log_path(_proxy_log_path)
+    _proxy_original_pos = accumulate_original_tools(original_path, _proxy_original_pos, _proxy_acc_original)
     for entry in filtered:
         family = _infer_model_family(entry.get('model', ''))
         if family not in _proxy_acc_stripped:
@@ -445,6 +455,11 @@ def _refresh_proxy_data(now: float, input_changed: bool, last_data_refresh: floa
         # One lag set governs BOTH sides — the class it corrects is a stripped total_tokens nuke
         # plus its injected "." at the same coordinate, and only the stripped line can identify it
         entry['_lag_msgs_lookup'] = _proxy_acc_stripped[family].setdefault('_lag_msg_idx_by_flow_id', {})
+        # Reference to this family's latest {tool_name -> tool_def} snapshot from the _original
+        # dual-log — drives the whole-stripped tool row's expanded description/schema (render_sections
+        # ._render_whole_stripped_tool). Reference, not copy, so late-arriving _original lines
+        # (or a worker-pane entry that never gets one attached at all) are handled uniformly.
+        entry['_original_tools_by_name'] = _proxy_acc_original.setdefault(family, {})
     _strip_inactive_messages(proxy_entries, proxy_expand_states)
     main_sessions = monitor.get_main_session_files()
     if main_sessions:

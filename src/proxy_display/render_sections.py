@@ -1,4 +1,6 @@
 # INFRASTRUCTURE
+from typing import Optional
+
 from ..constants import (
     SOFT_RESET, RED, DIM, DIM_YELLOW_BG, DIM_GREEN_BG,
 )
@@ -218,6 +220,45 @@ def _render_tool_legacy(tool_idx: int, t_name: str, tool_def: dict, expand_state
                 keys.append(None)
     return lines, keys
 
+# Render one whole-stripped tool row (yellow, expandable) — original def sourced from the same
+# session's own _original dual-log (entry['_original_tools_by_name'], see pane.py's
+# accumulate_original_tools), since the stripped stream itself only records {"whole": true} with
+# no text. tool_def is None when the lookup hasn't resolved yet or was never attached (worker
+# proxy pane) — degrades to a plain unavailable notice, row stays expandable either way.
+def _render_whole_stripped_tool(entry_idx: int, name: str, tool_def: Optional[dict], expand_states: dict) -> tuple:
+    lines = []
+    keys = []
+    tool_key = ('stripped_tool', entry_idx, name)
+    is_tool_exp = expand_states.get(tool_key, False)
+    t_symbol = '▼' if is_tool_exp else '▶'
+    lines.append(f"      {DIM_YELLOW_BG}{DIM}{t_symbol} {name}{SOFT_RESET}")
+    keys.append(tool_key)
+    if is_tool_exp:
+        if tool_def is None:
+            lines.append(f"        {DIM_YELLOW_BG}{DIM}(original definition unavailable){SOFT_RESET}")
+            keys.append(None)
+            return lines, keys
+        description = tool_def.get('description', '')
+        if description:
+            for raw_line in description.split('\n'):
+                raw_line = raw_line.expandtabs(8)
+                lines.append(f"        {DIM_YELLOW_BG}{DIM}{raw_line or ''}{SOFT_RESET}")
+                keys.append(None)
+        input_schema = tool_def.get('input_schema', {})
+        props = input_schema.get('properties', {}) if isinstance(input_schema, dict) else {}
+        required_props = input_schema.get('required', []) if isinstance(input_schema, dict) else []
+        for param_name, param_info in props.items():
+            if isinstance(param_info, dict):
+                param_type = param_info.get('type', '?')
+                param_desc = param_info.get('description', '')
+                req_marker = '*' if param_name in required_props else ''
+                param_line = f"{param_name}{req_marker}: {param_type}"
+                if param_desc:
+                    param_line += f" — {param_desc}"
+                lines.append(f"        {DIM_YELLOW_BG}{DIM}{param_line}{SOFT_RESET}")
+                keys.append(None)
+    return lines, keys
+
 # Render tools section for an expanded request entry, returning (lines, keys)
 def render_tools(entry_idx: int, entry: dict, prev_entry_for_delta, expand_states: dict, pane_width: int) -> tuple:
     lines = []
@@ -261,10 +302,12 @@ def render_tools(entry_idx: int, entry: dict, prev_entry_for_delta, expand_state
             deferred = entry.get('deferred_tools_names', [])
             if use_dual:
                 forwarded_names = set(tools_names)
+                original_tools = entry.get('_original_tools_by_name') or {}
                 for name, val in entry['_stripped_spans'].get('tools', {}).items():
                     if val.get('whole') and name not in forwarded_names:
-                        lines.append(f"      {DIM_YELLOW_BG}{DIM}▶ {name}{SOFT_RESET}")
-                        keys.append(None)
+                        t_lines, t_keys = _render_whole_stripped_tool(entry_idx, name, original_tools.get(name), expand_states)
+                        lines.extend(t_lines)
+                        keys.extend(t_keys)
             else:
                 stripped_unused = entry.get('stripped_unused_tools_names', [])
                 if stripped_unused:
