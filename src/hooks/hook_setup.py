@@ -17,9 +17,6 @@ _DEFAULT_EVENT = "PreToolUse"
 # (script_filename, matcher, event) to register under another hook event.
 # block_path_typo registers under Bash + Read + Write + Edit — the same hook script
 # inspects tool_name internally to pick the right field (command vs file_path).
-# PostToolUseFailure fires ONLY on a failed tool call (measured: successes go to PostToolUse and
-# never reach this event), which is what makes feedback_bash_error's "untouched on success"
-# guarantee structural rather than a condition it has to test for.
 _HOOK_SCRIPTS = [
     ("block_dangerous_kill.py",          "Bash"),
     ("rewrite_chained_sleep.py",         "Bash"),
@@ -63,7 +60,6 @@ _HOOK_SCRIPTS = [
     ("block_penny_cli_chained.py",       "Bash"),
     ("block_pipe_scraper_isolated.py",   "Bash"),
     ("block_rag_cli_document_repeat.py", "Bash"),
-    ("feedback_bash_error.py",           "Bash", "PostToolUseFailure"),
 ]
 
 # ORCHESTRATOR
