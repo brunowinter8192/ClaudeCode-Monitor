@@ -1,5 +1,6 @@
 # INFRASTRUCTURE
 from typing import Dict, Optional, Set
+from pathlib import Path
 import os
 import time
 
@@ -58,6 +59,7 @@ def run_tokens_loop() -> None:
     register_ram_dump('tokens', _tokens_ram_state)
     last_output = None
     last_data_refresh = 0.0
+    last_janitor_ts = 0.0
     setup_keyboard_input()
     enable_mouse()
     try:
@@ -94,8 +96,8 @@ def run_tokens_loop() -> None:
                             input_changed = True
 
                 now = time.time()
-                input_changed, last_data_refresh = _refresh_tokens_data(
-                    now, input_changed, last_data_refresh
+                input_changed, last_data_refresh, last_janitor_ts = _refresh_tokens_data(
+                    now, input_changed, last_data_refresh, last_janitor_ts
                 )
 
                 _cache_copy_feedback_until = {k: v for k, v in _cache_copy_feedback_until.items() if v > now}
@@ -321,15 +323,18 @@ def _handle_tokens_search_release() -> bool:
 def _render_tokens_search_bar(pane_width: int) -> str:
     return search_bar.render_search_bar(_tokens_search, pane_width, label=_TOKENS_SEARCH_BAR_LABEL)
 
-# Tick-boundary token data refresh; returns (input_changed, new_last_data_refresh)
-def _refresh_tokens_data(now: float, input_changed: bool, last_data_refresh: float) -> tuple:
+# Tick-boundary token data refresh; also runs the 24h log janitor (this pane is always active
+# and runs from the main checkout, unlike the menubar bundle — see process-docs/logging/
+# log_janitor.md and process-docs/main_pane/ for why the janitor moved here from the now-removed
+# main pane). Returns (input_changed, new_last_data_refresh, new_last_janitor_ts).
+def _refresh_tokens_data(now: float, input_changed: bool, last_data_refresh: float, last_janitor_ts: float) -> tuple:
     from ..core import monitor as _monitor
     from ..proxy_display.parser import find_response_log_path, read_response_log
     global _cache_current_filepath, _cache_jsonl_position, _cache_turns
     global cache_expand_states, cache_scroll_offset, cache_hover_row
     global _response_log_pos, _response_rid_map
     if now - last_data_refresh < POLL_INTERVAL:
-        return input_changed, last_data_refresh
+        return input_changed, last_data_refresh, last_janitor_ts
     main_sessions = _monitor.get_main_session_files()
     filepath = main_sessions[0] if main_sessions else None
     if filepath != _cache_current_filepath:
@@ -354,7 +359,13 @@ def _refresh_tokens_data(now: float, input_changed: bool, last_data_refresh: flo
     resp_path = find_response_log_path(_monitor.active_project_filter)
     new_entries, _response_log_pos = read_response_log(resp_path, _response_log_pos)
     _response_rid_map.update(new_entries)
-    return True, now
+    if now - last_janitor_ts >= 86400:
+        from ..log_janitor import cleanup_old_jsonl, sweep_eligible_specs
+        _logs = Path(__file__).parent.parent / 'logs'
+        for _, _path in sweep_eligible_specs(_logs):
+            cleanup_old_jsonl(_path)
+        last_janitor_ts = now
+    return True, now, last_janitor_ts
 
 # Format, clip viewport, and render token turns to ANSI string; updates cache_line_map
 def _build_tokens_output() -> str:

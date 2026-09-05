@@ -4,7 +4,9 @@
 
 Regression coverage for the click-UI milestone series (making every tmux-pane control reachable
 by mouse, not just keyboard). Milestone 1 covers worker selection in the worker-proxy pane header
-and the workers pane. Milestone 2 covers copy-by-click in the main/tokens/warnings/workers panes.
+and the workers pane. Milestone 2 covers copy-by-click in the tokens/warnings/workers panes (the
+main pane's own copy-by-click case was removed 2026-09 along with the main pane itself, see
+`process-docs/main_pane/`).
 Milestone 3 covers two of three remaining single-purpose keyboard controls (workers freeze,
 warnings refresh) as pane-chrome buttons — the third (proxy undo) got a button too but it was
 reverted 2026-07-30 per user decision after live-testing; `u` stays the only way to undo. Milestone
@@ -53,21 +55,18 @@ any change to `_format_worker_proxy_header`, `_handle_worker_proxy_mouse`,
 
 ---
 
-### p2_copy_click_probe.py (342 LOC)
+### p2_copy_click_probe.py (281 LOC)
 
-**Purpose:** Proves, per pane (main, tokens, warnings, workers), that after one real render pass
+**Purpose:** Proves, per pane (tokens, warnings, workers), that after one real render pass
 the copy-row registry contains an entry for every row carrying a copyable unit, and that a
 synthetic click on the symbol column copies EXACTLY the same string the `y` key produces for that
-row — both paths run through the real serializer (`serialize_main_event`, `_serialize_tokens`,
-`_serialize_warnings`, `_serialize_workers`), compared against each other, nothing hardcoded.
+row — both paths run through the real serializer (`_serialize_tokens`, `_serialize_warnings`,
+`_serialize_workers`), compared against each other, nothing hardcoded.
 Also: a pure-function width-guard regression (`utils.append_copy_symbol`) plus one
 render-integration width-guard check per pane (narrow `pane_width` → no symbol, no row
-registration). **Main pane (updated 2026-09, tool-calls-only redesign):** `test_main_pane_copy_click`
-now seeds a `tool_call` + `warning` + `session_banner` event — since `format_tool_call` collapsed
-to one block (`req N: Tool` + params + result, see `process-docs/main_pane/`), tool_call now
-registers a single `'all'` copy region through the SAME generic first-line branch every other
-event type already used, not a separate `'request'`/`'response'` two-region special case (that
-mechanism is gone along with the header pair it copied). Regression guards for two bugs found and
+registration). **(2026-09) `test_main_pane_copy_click` and its `mod_main_display`/`mod_monitor`
+imports removed** — the main pane it covered was deleted entirely (window 0 is now the tokens
+pane at full width, see `process-docs/main_pane/`). Regression guards for two bugs found and
 fixed in an earlier milestone: (1)
 `warnings_render._serialize_warnings` expected a `('error', idx)` tuple but `error_line_map`
 stores a bare `int` — `y` silently copied `''` for every warnings row until fixed; (2)
@@ -77,17 +76,17 @@ to the parent worker's identity instead of the specific call, fixed via
 `_resolve_workers_hover_key` (closer-ancestor-wins). Also checks that the workers-pane
 copy-region priority does not disturb milestone-1's row-click-select wiring (no state change on a
 copy click; a normal non-edge click still selects+expands).
-**Reads:** nothing external — seeds `main_event_buffer` / `_cache_turns` / `tool_errors` /
+**Reads:** nothing external — seeds `_cache_turns` / `tool_errors` /
 `worker_turns` with synthetic data; `copy_to_clipboard` is monkeypatched per module to a
 capturing stub (no real pbcopy calls).
 **Writes:** `md/p2_copy_click_probe_<timestamp>.md`; one throwaway IPC selection file under
 `/tmp/monitor_cc_selected_worker_<hash>.txt` (workers-pane project_filter
 `/tmp/click_ui_probe_p2_workers`), removed after the check.
 **Called by:** run manually — regression guard for copy-by-click wiring; re-run after any change
-to `append_copy_symbol`, `render_main_buffer`, `format_cache_tracker`, `_format_warnings_pane`,
-`_serialize_warnings`, `format_workers_block`, `_resolve_workers_hover_key`, or any of the four
+to `append_copy_symbol`, `format_cache_tracker`, `_format_warnings_pane`,
+`_serialize_warnings`, `format_workers_block`, `_resolve_workers_hover_key`, or any of the three
 panes' `_handle_*_mouse` / `_handle_*_key` functions.
-**Calls out:** `src.core.monitor_display`, `src.core.monitor`, `src.panes.token_pane`,
+**Calls out:** `src.panes.token_pane`,
 `src.format.token_format`, `src.panes.warnings_pane`, `src.panes.warnings_render`,
 `src.workers.worker_pane`, `src.utils` — loaded via `importlib.import_module`.
 

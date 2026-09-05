@@ -43,17 +43,12 @@ PROXY_MESSAGES_KEEP_LAST = 10  # entries at end of list that retain messages for
 PROXY_REPARSE_INTERVAL_SECONDS = 3600  # periodic re-init of proxy panes to release parent pymalloc pages
 WORKER_COL_WIDTH = 20  # name-field width; full column = W: + name + space = 23 chars
 WARNINGS_INITIAL_TAIL_BYTES = 50_000_000  # max bytes to back-seek on initial log parse to bound pymalloc peak
-MAIN_EVENT_BUFFER_CAP = 1000
 PANE_ERROR_LOG_PATH = '/tmp/monitor_cc_error.log'
 PANE_ERROR_LOG_MAX_BYTES = 2_000_000   # size that triggers truncation on next write
 PANE_ERROR_LOG_KEEP_BYTES = 500_000    # tail bytes kept after truncation
 
-# Tool names
-TOOL_TASK = 'Task'
-
 # Mode names
 MODE_ALL = 'all'
-MODE_MAIN = 'main'
 MODE_WARNINGS = 'warnings'
 MODE_TOKENS = 'tokens'
 MODE_WORKERS = 'workers'
@@ -119,9 +114,6 @@ HOOK_EVENT_CATEGORIES = {
     'Elicitation': 'mcp', 'ElicitationResult': 'mcp', 'Notification': 'mcp',
     'WorktreeCreate': 'worktree', 'WorktreeRemove': 'worktree',
 }
-
-# Excluded tools from display
-EXCLUDED_TOOLS = {'Edit'}
 
 # Proxy addon — tool stripping (shared between proxy_addon.py and proxy_pane.py)
 TOOL_BLOCKLIST = frozenset({

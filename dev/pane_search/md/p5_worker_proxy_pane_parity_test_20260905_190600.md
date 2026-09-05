@@ -1,24 +1,26 @@
-# P4 main pane parity regression — 20260818_195337
+# P5 worker-proxy pane parity regression — 20260905_190600
 
 77/77 checks passed
 
-- [x] _main_search is a search_bar.SearchState instance
-- [x] _search_committed (dead, never read for branching) removed
-- [x] _search_cached_query (unchanged-query Enter-gate) removed — proxy's always-rerun convention now
-- [x] private _highlight_query_in_line duplicate removed
-- [x] utils.highlight_query_in_line imported instead
-- [x] row 1 shows the 'Search: ' label
-- [x] no [<-] click-arrow
-- [x] no [->] click-arrow
-- [x] no HOVER_BG baseline on the bar row
-- [x] row 1 is NOT a body key (it's the search bar)
-- [x] click at label end -> index 0
-- [x] click past the end -> clamped to len(query)
+- [x] _worker_proxy_search is a search_bar.SearchState instance
+- [x] label matches the proxy pane's ('search: ', this pane's structural twin)
+- [x] search bar is fixed 1-line
+- [x] row 1 (search bar) contains the label
+- [x] row 1 has no click-arrows
+- [x] worker-switcher header text appears on a LATER line, not row 1
+- [x] row 1 is not a body line_map key
+- [x] row 2 (worker header) is not a body line_map key either
+- [x] all header-region rows are >= 2 (shifted past the search bar row)
+- [x] all body line_map rows are past BOTH header rows (search bar + 1-line worker header)
+- [x] region exists and is at a shifted (>=2) row
+- [x] marker region row is 2 (single-line worker header, right after the search bar)
+- [x] header-marker click at the shifted row selects the worker
+- [x] force_reload set
 - [x] press returns True (redraw)
 - [x] press focuses the bar
 - [x] press arms dragging
 - [x] press anchors at index 1 ('e')
-- [x] motion returns True and extends sel_end only
+- [x] motion extends sel_end only
 - [x] release returns True (redraw)
 - [x] release disarms dragging
 - [x] release copies exactly the selected substring
@@ -42,40 +44,38 @@
 - [x] last char trimmed
 - [x] kill-line reports a change
 - [x] query fully emptied
-- [x] query fully emptied (not just the selected substring)
-- [x] selection also cleared
 - [x] matches survive plain backspace
-- [x] matches survive selection-delete backspace
 - [x] matches survive kill-line
+- [x] _worker_proxy_log_path is None (no reconstruction)
 - [x] Enter reports a change
-- [x] matches found the two events containing the query
+- [x] real search found exactly entry 1
 - [x] match_set mirrors matches
 - [x] current_idx reset to 0
 - [x] Enter unfocuses the bar
+- [x] _wp_just_expanded set to the match's req key (reuses the expand-click auto-scroll anchor)
 - [x] first Enter found 1 match
-- [x] query unchanged before the second Enter
-- [x] second Enter (same query) picked up the new event -> 2 matches now
+- [x] second Enter (same query) picked up the new entry -> 2 matches now
+- [x] Enter reports a change
+- [x] entry 1's messages were populated from the reconstruction merge (were None before)
+- [x] the reconstructed content is findable — real search found entry 1
 - [x] no-op with zero matches
 - [x] n advances to idx 1
 - [x] n advances to idx 2
 - [x] n wraps back to idx 0
 - [x] N (backward) wraps to idx 2
+- [x] _wp_just_expanded tracks the current match's req key
 - [x] cancel reports a change
 - [x] query cleared
 - [x] matches cleared
 - [x] focused cleared
 - [x] selection cleared
-- [x] main-pane-specific line offsets cleared too
 - [x] bar still renders (never hidden)
-- [x] search state populated before session change
-- [x] query cleared by session change
-- [x] matches cleared by session change
-- [x] focused cleared by session change
-- [x] main-pane-specific line offsets cleared by session change
 - [x] reverse-video ON code present
 - [x] reverse-video OFF code present
 - [x] the reversed span wraps exactly the selected substring
 - [x] no reverse-video codes when there is no selection
-- [x] current-match BG present
-- [x] highlight wraps exactly the matched substring, restore right after
-- [x] highlight is NOT a whole-row prefix (row 1 char after the newline is not the BG code)
+- [x] search state populated before the switch
+- [x] selected worker actually changed
+- [x] query cleared by the worker switch
+- [x] matches cleared by the worker switch
+- [x] focused cleared by the worker switch

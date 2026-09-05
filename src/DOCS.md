@@ -14,11 +14,11 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 
 | Subdir | Role | LOC | Modules |
 |---|---|---|---|
-| `core/` | Session polling orchestrator + main-pane output | 911 | 3 |
-| `panes/` | Tmux pane event loops (tokens, warnings) + warnings scan/render/parse helpers + tokens search matcher | 1026 | 4 |
-| `format/` | ANSI string rendering (tool calls, events, cache tracker) | 560 | 4 |
+| `core/` | Session discovery + mode dispatcher (main pane removed 2026-09, see `process-docs/main_pane/`) | 121 | 1 |
+| `panes/` | Tmux pane event loops (tokens, warnings) + warnings scan/render/parse helpers + tokens search matcher | 1037 | 4 |
+| `format/` | ANSI string rendering (cache tracker) | 324 | 2 |
 | `input/` | Keyboard/mouse stdin handling | 150 | 1 |
-| `jsonl/` | JSONL parsing + tool call extraction | 580 | 3 |
+| `jsonl/` | JSONL parsing (incremental read + cache-turn extraction) | 206 | 2 |
 | `workers/` | Workers pane (tmux session discovery + status display) | 878 | 3 |
 | `proxy_display/` | Proxy pane TUI (two-level expand, delta rendering, subprocess-parse, copy-button) | 2892 | 8 |
 | `proxy/` | mitmproxy addon (payload modification + JSONL logging) | 3074 | 18 |
@@ -37,7 +37,7 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 | `utils.py` | 190 | Same — `format_timestamp` + `visual_line_count` used everywhere; also `append_copy_symbol` (right-align a ⎘/✓ symbol, width-guarded — shared by `core.monitor_display`, `format.token_format`, `panes.warnings_render`, `workers.worker_format`, and `proxy_display`'s own reference implementation stays independent), `compute_header_rule_len` (shrinking-decoration header layout, shared by `gpu_pane`/`news_pane`), `highlight_query_in_line` (2026-08, browser-find-style inline substring BG highlight, ANSI-safe; `restore_bg` param defaults to `\033[49m` for callers with no per-row background — used directly by `core.monitor_display` since 2026-08-18 (its own identical private copy was deleted, rollout sub-milestone 2) and by `format.token_format` since sub-milestone 4 (passed a `search_bar._BG_RESTORE_SENTINEL` restore_bg, since the tokens pane DOES have a per-row background); `search_bar.py` passes a caller-owned sentinel instead, substituted for the real row background once known, for panes WITH a per-row background), and `wrap_visible` (2026-08-28, thinking-expander milestone — the repo's first word-wrap helper, cell-aware via `_cell_width` like `truncate_visible`, NOT character-count-based; breaks on spaces, hard-splits a single word wider than the target width; currently used only by `proxy_display/render_messages.py`'s thinking-block content wrapping) |
 | `search_bar.py` | 215 | Shared search-bar mechanics (2026-08-18, sub-milestone 1 of the pane-search rollout — extracted from `proxy_display/pane.py`, the reference implementation) — `SearchState`, `render_search_bar`, `col_to_query_index`, `handle_search_input`/`_cancel`, the drag-select mouse handlers, and the `_BG_RESTORE_SENTINEL`/`resolve_bg_restore` pair. Imported by `proxy_display` (sub-milestone 1's `pane.py` AND sub-milestone 3's `worker_proxy_pane.py`, 2026-08-18 — the latter imports only `SearchState`/`render_search_bar`/the input+drag handlers, not `_BG_RESTORE_SENTINEL`/`resolve_bg_restore` directly, since that sentinel machinery already lives in the SHARED `format.py`/`render_turn.py` render pipeline both proxy panes call through — worker_proxy_pane's own zebra/hover rows get the same sentinel-based highlight preservation automatically, no separate import needed), `core` (sub-milestone 2, 2026-08-18 — the main pane's `_main_search`), `panes`/`format` (sub-milestone 4, 2026-08-18 — the tokens pane's `_tokens_search`; `format/token_format.py` imports `_BG_RESTORE_SENTINEL` directly to embed search highlights at construction time, `panes/token_pane.py` imports `resolve_bg_restore` to resolve them in its own hand-rolled row loop — same `ZEBRA_BG_A == ''` trap the proxy pane hit, fixed the same way), `workers` (sub-milestone 5, 2026-08-18 — the workers pane's `_worker_search`; same `_BG_RESTORE_SENTINEL`/`resolve_bg_restore` split between `worker_format.py` (embed) and `worker_pane.py` (resolve, own hand-rolled loop) as the tokens pane — third occurrence of the identical sentinel fix), `panes.warnings_pane`/`warnings_render` (sub-milestones 6-8, 2026-08-18, bundled — the warnings pane's `_warnings_search`; fourth sentinel occurrence, `ZEBRA_BG_A==''` still applied even though this pane's PRE-EXISTING `DIM_YELLOW_BG` detection was already substring-based, verified before assuming), and `gpu_pane`/`news_pane` (sub-milestones 7-8, 2026-08-18 — `_gpu_search`/`_news_search`; HIGHLIGHT-ONLY, no jump-to-match, no sentinel needed at all — neither pane has any per-row background/zebra/hover loop, so `utils.highlight_query_in_line`'s default `restore_bg` is directly correct, same simple case as the main pane; `search_bar.py`'s drag-select/editor-deletion functions called directly at each pane's own INLINE mouse/key dispatch, since neither pane factors dispatch into a standalone handler function) — same shallow-path rationale as `constants.py`/`utils.py`. Rollout complete as of sub-milestone 8 — all 8 panes now share this module (`news_pane/log_pane.py` explicitly excluded per decision). See `proxy_display/DOCS.md` and `core/DOCS.md` for each retrofit and `process-docs/pane_search/` for the rollout plan. |
 | `pane_error_log.py` | 35 | `log_pane_error(pane_name)` — shared exception-safe sink all 8 pane `run_*_loop()` functions call from their `except Exception:` guard (2026-07-31); imported by every pane module the same shallow-path way as `constants.py`, so it belongs at the same level |
-| `log_janitor.py` | 170 | `LogSpec` registry (12 entries) + `sweep_eligible_specs()` + `cleanup_old_jsonl(path)` — authoritative log inventory; 7-day JSONL sweep triggered from `core/monitor.py` every 24h |
+| `log_janitor.py` | 170 | `LogSpec` registry (12 entries) + `sweep_eligible_specs()` + `cleanup_old_jsonl(path)` — authoritative log inventory; 7-day JSONL sweep triggered from `panes/token_pane.py::run_tokens_loop` every 24h (moved here 2026-09 when the main pane, the janitor's original host, was removed — see `process-docs/main_pane/` and `process-docs/logging/log_janitor.md`) |
 | `session_finder.py` | 85 | Single module, no subpackage warranted |
 | `startup.py` | 48 | Single module; only called by `workflow.py` |
 | `tmux_launcher.py` | 287 | Single module; only called by `workflow.py` (mode `all` → `launch_split_screen`; mode `restart-panes` → `restart_panes`, the Ctrl+R self-heal handler) |
@@ -47,31 +47,29 @@ Real-time monitor for Claude Code sessions. Reads Claude Code's JSONL output fil
 
 ## Flow (Main Session)
 
-1. `workflow.py` → `run_monitor(project_filter, mode="all")` → `tmux_launcher.launch_split_screen()` spawns 9 panes each running `workflow.py --mode <X>`.
-2. The main pane runs `run_main_loop()` (in `core/monitor.py`): every 0.5s discover sessions → for each session read new JSONL lines → classify tool calls → append to `main_event_buffer` (list in `core/monitor_display.py`) → render via `render_main_buffer()` → `print()` to stdout in `run_main_loop()`.
-3. Each dedicated pane runs its own event loop (e.g. `run_tokens_loop()`): poll data source → handle mouse/keyboard → render full screen.
-4. mitmproxy (started by `claude_proxy_start.sh`) intercepts API traffic, strips/modifies payloads, logs to `src/logs/api_requests_<id>.jsonl`.
-5. Panes that need proxy data (proxy_display, warnings) tail that JSONL file independently.
+1. `workflow.py` → `run_monitor(project_filter, mode="all")` → `tmux_launcher.launch_split_screen()` spawns 8 panes each running `workflow.py --mode <X>`. **(2026-09) Window 0 is the tokens pane at full width** — the main pane was removed entirely, see `process-docs/main_pane/`.
+2. Each pane runs its own event loop (e.g. `run_tokens_loop()`): poll data source → handle mouse/keyboard → render full screen. `core/monitor.py::run_monitor` only discovers sessions and dispatches to the matching loop by `--mode`; it does not run a loop of its own anymore.
+3. mitmproxy (started by `claude_proxy_start.sh`) intercepts API traffic, strips/modifies payloads, logs to `src/logs/api_requests_<id>.jsonl`.
+4. Panes that need proxy data (proxy_display, warnings) tail that JSONL file independently.
 
 ## Shared State
 
-Most runtime state lives in `core/monitor.py` as module-level variables; display-side buffer state lives in `core/monitor_display.py`. Every pane that needs session state imports via `from ..core import monitor as _monitor` (lazy, inside the run function to avoid circular imports).
+Runtime state (`file_positions`, `active_project_filter`, `active_mode`) lives in `core/monitor.py` as module-level variables. Every pane that needs session state imports via `from ..core import monitor as _monitor` (lazy, inside the run function to avoid circular imports).
 
 | State | Owner | Readers |
 |---|---|---|
-| `file_positions`, `call_counter` | `core/monitor.py` | `core/monitor_session.py` |
-| `agent_to_task`, `agent_to_type` | `core/monitor.py` | `core/monitor_session.py`, pane loops |
+| `file_positions` | `core/monitor.py` | `core/monitor.py` itself (session-file bookkeeping only) |
 | `active_project_filter` | `core/monitor.py` | all pane loops |
-| `main_event_buffer`, `main_scroll_offset`, `main_hover_row`, `main_line_map` | `core/monitor_display.py` | `core/monitor.py` (`run_main_loop`) |
+| `active_mode` | `core/monitor.py` | `core/monitor.py` itself |
 | Pane scroll/expand state | each pane module | that pane only |
 
 ## Subdir DOCS
 
-- [core/DOCS.md](core/DOCS.md) — polling loop, session processing, main-pane display
+- [core/DOCS.md](core/DOCS.md) — session discovery, mode dispatch
 - [panes/DOCS.md](panes/DOCS.md) — token, warnings pane loops
-- [format/DOCS.md](format/DOCS.md) — formatter, formatter_events, token_format
+- [format/DOCS.md](format/DOCS.md) — strip_marker, token_format
 - [input/DOCS.md](input/DOCS.md) — click_handler
-- [jsonl/DOCS.md](jsonl/DOCS.md) — jsonl_parser, jsonl_extractors, jsonl_cache_turns
+- [jsonl/DOCS.md](jsonl/DOCS.md) — jsonl_parser, jsonl_cache_turns
 - [workers/DOCS.md](workers/DOCS.md) — worker_pane, worker_format, worker_tmux
 - [proxy_display/DOCS.md](proxy_display/DOCS.md) — proxy pane TUI (8 modules)
 - [proxy/DOCS.md](proxy/DOCS.md) — mitmproxy addon (18 modules)

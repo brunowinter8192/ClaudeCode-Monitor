@@ -26,9 +26,18 @@ core/monitor.run_monitor(mode=X)
 
 ## Modules
 
-### token_pane.py (412 LOC)
+### token_pane.py (423 LOC)
 
 **Purpose:** Token/cache tracker pane — incrementally reads session JSONL, builds cache-turn dicts, renders interactive expand/collapse/scroll view with CR/CC/D per request. Owns the zebra/hover/truncation render loop: calls `format_cache_tracker` for logical lines, then applies `ZEBRA_BG_A/B`, `HOVER_BG` priority, and `truncate_visible` per line. Loop follows drain-refresh-render pattern; private helpers `_tokens_ram_state`, `_handle_tokens_mouse`, `_handle_tokens_key`, `_refresh_tokens_data`, `_build_tokens_output` extracted from loop body. Also polls `_response` dual-log incrementally via `find_response_log_path` + `read_response_log` (from `proxy_display.parser`), accumulates `_response_rid_map: {request_id → headers}` for rate-limit display; resets on session change alongside other state. **(2026-07-31) The `while True:` body is wrapped in its own `try/except Exception:`** — an uncaught exception is caught, logged via `pane_error_log.log_pane_error('tokens')`, and the loop continues after `wait_for_input(INPUT_POLL_INTERVAL)`; `KeyboardInterrupt`/`SystemExit` still propagate, `finally: disable_mouse(); restore_terminal()` still runs. **(2026-07-30) Copy-by-click on the ⎘ symbol:** `format_cache_tracker` is called with `copy_feedback=_cache_copy_feedback_until` (button-region pattern, mirrors `proxy_display`'s `_proxy_copy_rows`); `_build_tokens_output` detects the rendered `⎘`/`✓` substring per row and populates `cache_copy_rows`. `_handle_tokens_mouse` checks `col >= _cache_pane_width - 2 and row in cache_copy_rows` FIRST (before the pre-existing expand-toggle) — a hit calls `copy_to_clipboard(_serialize_tokens(key))` and sets a 1.5s `✓`-flash entry, identical to the `y` key's `_serialize_tokens` call for the same row.
+
+**(2026-09) Window 0 is now the tokens pane at full width** (the main pane was removed entirely —
+see `process-docs/main_pane/`). `run_tokens_loop`'s `_refresh_tokens_data` gained a `last_janitor_ts`
+param/return threaded through the loop exactly like the old main pane's `run_main_loop` did: every
+tick, once `now - last_janitor_ts >= 86400`, runs `log_janitor.cleanup_old_jsonl` over
+`log_janitor.sweep_eligible_specs(Path(__file__).parent.parent / 'logs')` — the tokens pane is
+always-active and runs from the main checkout (unlike the menubar bundle, which resolves the wrong
+`logs/` path), the same property that made the main pane the janitor's original host; see
+`process-docs/logging/log_janitor.md`.
 
 **(2026-08-18, rollout sub-milestone 4) Permanent row-1 search bar, mirroring `proxy_display/pane.py`'s reference implementation** — `_tokens_search: search_bar.SearchState`, thin wrapper functions (`_handle_tokens_search_cancel`/`_input`/`_release`, `_render_tokens_search_bar`), `_tokens_search_on_commit` (Enter callback — data is ALWAYS fully loaded incrementally here, no windowing/reconstruction step unlike the proxy panes, so it just calls `token_search.build_token_search_matches` directly over `_cache_turns`; always re-runs, no unchanged-query gate), `_jump_tokens_search_match`/`_ensure_tokens_match_visible` (`n`/`N` — mirrors `core/monitor_display.py`'s simpler `ensure_match_visible` pattern, NOT the proxy panes' defer-to-next-render `_proxy_just_expanded` dance, since there's no lazy-load to interleave with a scroll here). `_ensure_tokens_match_visible` reads `_tokens_nav` (key → absolute line index + `'total_lines'`, populated fresh by `format_cache_tracker`'s `nav_out` param on every render — not part of `SearchState`, pane-specific) to compute a scroll offset the same way the main pane's `_search_all_line_offsets`/`_search_total_lines` do; relies on at least one prior render having populated it (same accepted staleness tolerance as the main pane's own design — positions don't depend on scroll/search state, only on `_cache_turns`/`cache_expand_states`).
 
@@ -40,7 +49,7 @@ core/monitor.run_monitor(mode=X)
 **Reads:** Session JSONL (incremental via `_cache_jsonl_position`); `_response` dual-log (incremental via `_response_log_pos`); shared state `monitor.active_project_filter`.
 **Writes:** stdout (ANSI screen); `/tmp/monitor_cc_error.log` on caught exception (via `pane_error_log`); mutates module-level `cache_expand_states`, `cache_line_map`, `cache_hover_row`, `cache_scroll_offset`, `cache_copy_rows`, `_cache_copy_feedback_until`, `_cache_pane_width`, `_cache_turns`, `_cache_jsonl_position`, `_response_log_pos`, `_response_rid_map`, `_tokens_search` (query/focused/matches/match_set/current_idx/drag-select fields), `_tokens_nav`.
 **Called by:** `core/monitor.py` (mode dispatch); `proxy_display/pane.py` + `proxy_display/worker_proxy_pane.py` (`build_cache_turns` function).
-**Calls out:** `jsonl`, `input.click_handler`, `format.token_format`, `core.monitor` (lazy, inside `_refresh_tokens_data`), `proxy_display.parser` (lazy: `find_response_log_path`, `read_response_log`), `pane_error_log` (`log_pane_error`), `panes.token_search` (`build_token_search_matches`), `search_bar` (shared search-bar mechanics), `utils.truncate_visible`.
+**Calls out:** `jsonl`, `input.click_handler`, `format.token_format`, `core.monitor` (lazy, inside `_refresh_tokens_data`), `proxy_display.parser` (lazy: `find_response_log_path`, `read_response_log`), `log_janitor` (lazy, inside `_refresh_tokens_data`: `cleanup_old_jsonl`, `sweep_eligible_specs`), `pane_error_log` (`log_pane_error`), `panes.token_search` (`build_token_search_matches`), `search_bar` (shared search-bar mechanics), `utils.truncate_visible`.
 
 ---
 
