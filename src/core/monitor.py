@@ -1,48 +1,19 @@
 # INFRASTRUCTURE
 from datetime import datetime, timedelta
-import os
-import time
 from pathlib import Path
-from typing import Dict, Set, List, Optional
+from typing import Dict, List, Optional
 
-# From constants.py: Colors, config, shared constants
-from ..constants import RESET, CYAN, POLL_INTERVAL, INPUT_POLL_INTERVAL, MODE_ALL, MODE_MAIN, MODE_WARNINGS, MODE_TOKENS, MODE_WORKERS, MODE_PROXY, MODE_WORKER_PROXY
+# From constants.py: Mode constants
+from ..constants import MODE_ALL, MODE_WARNINGS, MODE_TOKENS, MODE_WORKERS, MODE_PROXY, MODE_WORKER_PROXY
 
 # From session_finder.py: Discover active Claude Code sessions
 from ..session_finder import find_active_sessions
 # From jsonl/: Parse JSONL lines for session start timestamp
 from ..jsonl import parse_jsonl_lines, read_new_lines
-# From monitor_display.py: Session status output + main-loop rendering
-from .monitor_display import print_session_status, render_main_buffer
-from . import monitor_display as _md
-# From monitor_session.py: Session file processing, task handling, historical load
-from .monitor_session import get_file_end_position, get_initial_position, process_session_file, load_historical_main
-# From ram_audit: register tracemalloc + SIGUSR1 dump handler for this pane
-from ..ram_audit import register_ram_dump
-# From pane_error_log.py: shared exception-safe pane-error sink
-from ..pane_error_log import log_pane_error
-# From click_handler: keyboard/mouse I/O for main loop
-from ..input.click_handler import (
-    read_keypress, setup_keyboard_input, restore_terminal,
-    enable_mouse, disable_mouse, read_mouse_event,
-    resolve_parent_key, copy_to_clipboard,
-)
-# From search_bar.py: shared search-bar mechanics (state, key/mouse handling, drag-select) —
-# rollout sub-milestone 2, retrofitting the main pane onto the proxy pane's reference
-# implementation (src/proxy_display/pane.py)
-from .. import search_bar
 
 file_positions: Dict[Path, int] = {}
-tool_use_caches: Dict[Path, dict] = {}
-request_numbers_by_file: Dict[Path, dict] = {}  # {requestId: ordinal} per session file — see jsonl_parser.update_request_numbers
-call_counter = 0
-agent_to_task: Dict[str, str] = {}
-agent_to_type: Dict[str, str] = {}
-buffered_subagent_calls: Dict[str, List[dict]] = {}
-task_requests_seen: Set[str] = set()
 active_project_filter: Optional[str] = None
 active_mode: str = MODE_ALL
-_last_monitored_count: Optional[int] = None
 
 # ORCHESTRATOR
 def run_monitor(project_filter: Optional[str] = None, mode: str = MODE_ALL) -> None:
@@ -68,10 +39,7 @@ def run_monitor(project_filter: Optional[str] = None, mode: str = MODE_ALL) -> N
         from ..proxy_display import run_worker_proxy_loop
         run_worker_proxy_loop()
     else:
-        sessions = find_active_sessions(active_project_filter)
-        session_count = len(filter_sessions_by_mode(sessions, mode))
-        print_session_status(session_count, project_filter, mode)
-        run_main_loop()
+        raise ValueError(f"Unknown monitor mode: {mode!r}")
 
 # FUNCTIONS
 
@@ -83,26 +51,21 @@ def initialize_file_positions() -> int:
 
     for session_file in sessions:
         if session_file not in file_positions:
-            pos = get_file_end_position(session_file)
-            file_positions[session_file] = pos
+            file_positions[session_file] = get_file_end_position(session_file)
 
     return len(sessions)
 
-# Monitor all active sessions for new tool calls
+# Track session-file lifecycle (new/removed sessions) for the active project filter — session
+# bookkeeping only, no tool-call extraction; that pipeline lived in the main pane and was removed
+# along with it, see process-docs/main_pane/
 def monitor_sessions() -> None:
-    global active_project_filter, active_mode, _last_monitored_count
+    global active_project_filter
     sessions = find_active_sessions(active_project_filter)
-
-    if _last_monitored_count != len(sessions):
-        _last_monitored_count = len(sessions)
-
-    filtered_sessions = filter_sessions_by_mode(sessions, active_mode)
-    update_session_tracking(filtered_sessions)
-    process_all_sessions(filtered_sessions)
+    update_session_tracking(sessions)
 
 # Update tracking for new or removed sessions
 def update_session_tracking(sessions: list) -> None:
-    global file_positions, tool_use_caches, request_numbers_by_file
+    global file_positions
 
     current_files = set(sessions)
     tracked_files = set(file_positions.keys())
@@ -112,246 +75,25 @@ def update_session_tracking(sessions: list) -> None:
 
     for new_file in new_files:
         file_positions[new_file] = get_initial_position(new_file)
-        tool_use_caches[new_file] = {}
-        request_numbers_by_file[new_file] = {}
 
     for removed_file in removed_files:
         del file_positions[removed_file]
-        if removed_file in tool_use_caches:
-            del tool_use_caches[removed_file]
-        if removed_file in request_numbers_by_file:
-            del request_numbers_by_file[removed_file]
 
-# Process all tracked session files
-def process_all_sessions(sessions: list) -> None:
-    global file_positions
+# Get end position of file (for initializing at EOF)
+def get_file_end_position(filepath: Path) -> int:
+    if not filepath.exists():
+        return 0
+    return filepath.stat().st_size
 
-    for session_file in sessions:
-        if session_file in file_positions:
-            process_session_file(session_file)
+# Get initial position for new session file
+def get_initial_position(filepath: Path) -> int:
+    if is_agent_file(filepath):
+        return 0
+    return get_file_end_position(filepath)
 
 # Check if file is a subagent file
 def is_agent_file(filepath: Path) -> bool:
     return filepath.name.startswith('agent-')
-
-# Filter sessions based on mode (all vs main-only)
-def filter_sessions_by_mode(sessions: list, mode: str) -> list:
-    if mode == MODE_MAIN:
-        filtered = [s for s in sessions if not is_agent_file(s)]
-    else:
-        filtered = sessions
-
-    return filtered
-
-# Runs virtual-rendering main loop with mouse-scroll, zebra, and truncation
-def run_main_loop() -> None:
-    register_ram_dump('main', _main_ram_state)
-    load_historical_main()
-    current_main_session = _get_newest_main_session()
-    last_output = None
-    last_data_refresh = 0.0
-    last_janitor_ts = 0.0
-    setup_keyboard_input()
-    enable_mouse()
-    try:
-        while True:
-            try:
-                input_changed = False
-                while True:
-                    char = read_keypress()
-                    if char is None:
-                        break
-                    if char == '\033':
-                        event = read_mouse_event(char)
-                        if event is not None and event[0] != -1:
-                            if _handle_main_mouse(*event):
-                                input_changed = True
-                        elif event is not None:
-                            # (-1,-1,-1) release sentinel — no-op unless a row-1 drag was active
-                            if _handle_main_search_release():
-                                input_changed = True
-                        elif _md._main_search.focused:  # bare ESC → cancel search
-                            if _handle_main_search_cancel():
-                                input_changed = True
-                    elif _md._main_search.focused:
-                        if _handle_main_search_input(char):
-                            input_changed = True
-                    elif char == '/':
-                        _md._main_search.focused = True
-                        input_changed = True
-                    elif char in ('n', 'N'):
-                        if _jump_search_match(forward=(char == 'n')):
-                            input_changed = True
-                    elif char == 'y':
-                        key = resolve_parent_key(_md.main_line_map, _md.main_hover_row)
-                        if key is not None:
-                            copy_to_clipboard(_md.serialize_main_event(key))
-                now = time.time()
-                _md._main_copy_feedback_until = {
-                    k: v for k, v in _md._main_copy_feedback_until.items() if v > now
-                }
-                if _md._main_copy_feedback_until:
-                    input_changed = True
-                changed, last_data_refresh, last_janitor_ts, current_main_session = (
-                    _refresh_main_data(now, last_data_refresh, last_janitor_ts, current_main_session)
-                )
-                input_changed = input_changed or changed
-                if input_changed:
-                    last_output = _build_main_output(last_output)
-                time.sleep(INPUT_POLL_INTERVAL)
-            except Exception:
-                log_pane_error('main')
-                time.sleep(INPUT_POLL_INTERVAL)
-    finally:
-        disable_mouse()
-        restore_terminal()
-
-# RAM state snapshot for the main pane (registered via register_ram_dump)
-def _main_ram_state() -> list:
-    return [
-        ('file_positions',          file_positions),
-        ('tool_use_caches',         tool_use_caches),
-        ('request_numbers_by_file', request_numbers_by_file),
-        ('agent_to_task',           agent_to_task),
-        ('agent_to_type',           agent_to_type),
-        ('buffered_subagent_calls', buffered_subagent_calls),
-        ('task_requests_seen',      task_requests_seen),
-        ('call_counter',            call_counter),
-        ('active_project_filter',   str(active_project_filter)),
-        ('active_mode',             active_mode),
-        ('_last_monitored_count',   str(_last_monitored_count)),
-    ]
-
-# Handle mouse events for the main pane; returns True if input_changed.
-def _handle_main_mouse(button: int, col: int, row: int) -> bool:
-    pw = _md._main_pane_width
-    if button == 0:  # left click
-        if row == 1:  # search bar row — focuses; also anchors a potential drag-select
-            return search_bar.handle_search_mouse_press(_md._main_search, col, _md._SEARCH_BAR_LABEL)
-        # Click elsewhere clears any lingering drag-selection highlight (before the copy check
-        # below, so even a click on an empty/unmapped row clears it)
-        had_selection = _md._main_search.sel_anchor is not None
-        search_bar.clear_selection(_md._main_search)
-        entry = _md._main_copy_rows.get(row)
-        if entry is not None and col >= pw - 2:
-            event_idx, part = entry
-            copy_to_clipboard(_md.serialize_main_event(event_idx, part))
-            _md._main_copy_feedback_until[(event_idx, part)] = time.time() + 1.5
-            return True
-        return had_selection
-    elif button == 64:  # WheelUp → older events
-        _md.main_scroll_offset = max(0, _md.main_scroll_offset + 3)
-        return True
-    elif button == 65:  # WheelDown → newer events
-        _md.main_scroll_offset = max(0, _md.main_scroll_offset - 3)
-        return True
-    elif button == 32 and _md._main_search.dragging:  # motion with left button held (0+32), row-1 drag active
-        return search_bar.handle_search_mouse_motion(_md._main_search, col, _md._SEARCH_BAR_LABEL)
-    elif button >= 32:  # motion/hover
-        _md.main_hover_row = row
-        return True
-    return False
-
-# Cancel active search on bare ESC; returns True (always triggers redraw). Thin wrapper —
-# search_bar.handle_search_cancel resets query/focused/matches/match_set/selection all at once;
-# the extra main-pane-specific _search_match_line_offsets is cleared here too.
-def _handle_main_search_cancel() -> bool:
-    _md._search_match_line_offsets = {}
-    return search_bar.handle_search_cancel(_md._main_search)
-
-# Handle keyboard input while search is focused; returns True if input_changed. Thin wrapper
-# over search_bar.handle_search_input — _main_search_on_commit is the pane-specific "run the
-# actual search" callback, injected so the shared module stays data-model-agnostic.
-def _handle_main_search_input(char: str) -> bool:
-    return search_bar.handle_search_input(_md._main_search, char, on_commit=_main_search_on_commit)
-
-# on_commit callback for search_bar.handle_search_input (fires on Enter): always re-runs the
-# full match rebuild (proxy's convention — a repeated Enter picks up events appended to
-# main_event_buffer since the last search; the recompute over the in-memory buffer is cheap),
-# then jumps to the first match if any.
-def _main_search_on_commit(state: search_bar.SearchState) -> None:
-    state.matches, state.match_set = _md._compute_search_matches(state.query)
-    state.current_idx = 0
-    _md._search_match_line_offsets = _md._compute_match_line_offsets(state.query, state.matches)
-    _md.ensure_match_visible()
-
-# Jump to the next (forward=True) or previous search match, wrapping around; returns True if
-# a jump happened (False when there are no matches, e.g. before the first Enter)
-def _jump_search_match(forward: bool) -> bool:
-    state = _md._main_search
-    if not state.matches:
-        return False
-    state.current_idx = (state.current_idx + (1 if forward else -1)) % len(state.matches)
-    _md.ensure_match_visible()
-    return True
-
-# Finalize a row-1 drag on SGR mouse release; returns True if a redraw is needed. No-op (False)
-# unless a row-1 drag was actually in progress — safe to call unconditionally on EVERY release
-# sentinel, including releases after a plain click elsewhere (never armed). Thin wrapper —
-# release-copies-to-clipboard is identical across every pane.
-def _handle_main_search_release() -> bool:
-    return search_bar.handle_search_mouse_release(_md._main_search, copy_to_clipboard)
-
-# Tick-boundary data refresh: session change, sticky-scroll, monitor_sessions, janitor.
-# Returns (input_changed, last_data_refresh, last_janitor_ts, current_main_session).
-def _refresh_main_data(now: float, last_data_refresh: float, last_janitor_ts: float, current_main_session) -> tuple:
-    if now - last_data_refresh < POLL_INTERVAL:
-        return False, last_data_refresh, last_janitor_ts, current_main_session
-    newest = _get_newest_main_session()
-    if newest != current_main_session and newest is not None:
-        current_main_session = newest
-        file_positions[newest] = 0
-        tool_use_caches[newest] = {}
-        request_numbers_by_file[newest] = {}
-        _md.main_event_buffer.clear()
-        _md.main_scroll_offset = 0
-        _md.main_event_buffer.append({'type': 'session_banner', 'data': {}, 'call_number': None})
-        # A stale _main_search.matches list holds event_idx values into the buffer just cleared
-        # above — reset query/focused/matches/selection (mirrors proxy's _refresh_proxy_data)
-        # plus the main-pane-specific line-offset dict search_bar.handle_search_cancel doesn't
-        # know about.
-        search_bar.handle_search_cancel(_md._main_search)
-        _md._search_match_line_offsets = {}
-    _sticky_pre = None
-    if _md.main_scroll_offset > 0:
-        try:
-            _sticky_pw = os.get_terminal_size().columns
-        except OSError:
-            _sticky_pw = 80
-        _sticky_pre = _md._count_buffer_lines(_sticky_pw)
-    monitor_sessions()
-    if _sticky_pre is not None and _md.main_scroll_offset > 0:
-        try:
-            _sticky_pw = os.get_terminal_size().columns
-        except OSError:
-            _sticky_pw = 80
-        _sticky_delta = _md._count_buffer_lines(_sticky_pw) - _sticky_pre
-        if _sticky_delta != 0:
-            _md.main_scroll_offset = max(0, _md.main_scroll_offset + _sticky_delta)
-    if now - last_janitor_ts >= 86400:
-        from ..log_janitor import cleanup_old_jsonl, sweep_eligible_specs
-        _logs = Path(__file__).parent.parent / 'logs'
-        for _, _path in sweep_eligible_specs(_logs):
-            cleanup_old_jsonl(_path)
-        last_janitor_ts = now
-    return True, now, last_janitor_ts, current_main_session
-
-# Render main buffer, print if changed; returns new last_output.
-def _build_main_output(last_output):
-    try:
-        term = os.get_terminal_size()
-        pane_height = term.lines - 1
-        pane_width = term.columns
-    except OSError:
-        pane_height = 50
-        pane_width = 80
-    output = render_main_buffer(pane_height, pane_width, _md.main_scroll_offset)
-    if output != last_output:
-        print("\033[2J\033[3J\033[H", end='', flush=True)
-        if output:
-            print(output)
-        return output
-    return last_output
 
 # Get the newest main (non-agent) session file
 def _get_newest_main_session() -> Optional[Path]:

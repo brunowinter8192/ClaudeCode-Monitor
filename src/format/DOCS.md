@@ -2,7 +2,7 @@
 
 ## Role
 
-ANSI-colored string rendering — tool call pairs, user events, and the token/cache tracker pane. This package has no side effects: every function takes data in and returns a formatted string. Touch this package to change how tool calls look, how events are formatted, or how the cache tracker renders. Do NOT add I/O, state, or pane loop logic here.
+ANSI-colored string rendering for the token/cache tracker pane, plus the shared proxy-strip highlight helper. This package has no side effects: every function takes data in and returns a formatted string. Touch this package to change how the cache tracker renders. Do NOT add I/O, state, or pane loop logic here.
 
 ## Public Interface
 
@@ -10,25 +10,21 @@ ANSI-colored string rendering — tool call pairs, user events, and the token/ca
 # Strip highlighting (strip_marker.py)
 from src.format.strip_marker import highlight_stripped        # inline DIM_YELLOW_BG chunk highlight
 
-# Tool call formatting (formatter.py)
-from src.format import format_tool_call
-from src.format import format_request, format_response, combine_request_response
-from src.format import format_todo_list, format_parameters, format_task_parameters
-from src.format import format_output, format_error_output
-from src.format import format_value, get_status_icon, get_status_color, shorten_tool_name
-
 # Cache tracker rendering (token_format.py)
 from src.format import format_cache_tracker
 from src.format import _format_k          # compact "Xk" token count — used by workers/proxy_display
+from src.format import shorten_tool_name  # mcp__plugin__tool → tool, used by token_format itself
 ```
 
-**(2026-09) `formatter_events.py` removed entirely** — `format_user_prompt`, `format_hook_annotation`,
-`format_system_message`, `format_user_media`, `format_skill_activation`, `format_thinking` all had
-zero callers once `core/monitor_session.py` stopped displaying those event types (the main pane
-shows only tool calls now, see `core/DOCS.md` and `process-docs/main_pane/`); `format_hook_annotation`
-was already unreferenced before this change. `format_system_reminders` (`formatter.py`) was also
-removed — the `system_reminders` field it formatted was never populated anywhere in
-`jsonl_parser.py`/`jsonl_extractors.py`, so the function was dead on arrival even before this milestone.
+**(2026-09) `formatter.py` and `formatter_events.py` removed entirely, main pane deleted** —
+`format_tool_call`/`format_request`/`format_response`/`combine_request_response`/`format_todo_list`/
+`format_parameters`/`format_task_parameters`/`format_output`/`format_error_output`/`format_value`/
+`get_status_icon`/`get_status_color` all had exactly one caller, `core/monitor_display.py`, which
+was deleted along with the main pane it rendered (window 0 is now the tokens pane at full width —
+see `process-docs/main_pane/`). `shorten_tool_name` had a second real caller (`token_format.py`
+itself) and moved there instead of dying with the rest of the module. `formatter_events.py` was
+already removed in an earlier pass (2026-09, tool-calls-only redesign) once `core/monitor_session.py`
+stopped displaying non-tool-call event types.
 
 ## Modules
 
@@ -42,41 +38,7 @@ removed — the `system_reminders` field it formatted was never populated anywhe
 
 ---
 
-### formatter.py (160 LOC)
-
-**Purpose:** Format one tool call as a single ANSI-colored block for the main pane — `req N:
-ToolName` header (GREEN, or BLUE for a subagent call), `key: value` param lines, a blank
-separator, then the result (RED when the call errored). **(2026-09, tool-calls-only redesign,
-see `process-docs/main_pane/`):** `format_tool_call(tool_name, input_data, output_data, req_num,
-is_subagent=False, is_error=False)` — dropped `tool_use_id` (was already unused in the function
-body before this change), `timestamp`/`call_number` (replaced by `req_num`, the same ordinal the
-tokens pane shows as `REQ #N` for the same request — resolved upstream in
-`core/monitor_session.py`, this module stays a pure function with no file-scoped lookups), and
-`system_reminders` (the field was never populated anywhere in `jsonl_parser.py`/
-`jsonl_extractors.py` — `format_system_reminders` was dead code, removed). `format_request`
-returns just the header when `input_data` is empty (no trailing blank param line).
-`format_response` no longer takes a header at all — the single `req N:` header above already
-identifies the call, so a separate `RESPONSE #N ← Tool [ERROR]` line would be redundant; an error
-is still visibly marked, via the same RED `format_error_output` as before. `format_value` gained
-an optional `depth: int = 1` param (default unchanged, so every pre-existing single-level caller —
-`format_parameters`, `format_task_parameters` — renders a multi-line string byte-identical to
-before) to flatten `dict`/`list` values into indented `key: value` / `- item` lines instead of
-Python-repr braces and quotes — unobserved in real tool usage (measured 2026-09: 840 real
-tool_use blocks across 6 sessions in 2 projects, 0 dict/list-valued params — see
-`process-docs/main_pane/`) but kept minimal rather than skipped, since a future tool call could
-carry one and the milestone explicitly bans JSON-style punctuation in the rendered output.
-Handles todo list rendering (`format_todo_list`, unchanged, kept per the milestone's own
-instruction to preserve special-casing that already produces readable output), Task-parameter
-`subagent_type` highlighting (`format_task_parameters`, unchanged), and status icons/colors.
-**Reads:** Tool call dicts passed as arguments. No shared state, no file I/O.
-**Writes:** Returns formatted strings. No stdout, no file writes.
-**Called by:** `core/monitor_display.py` (`format_tool_call`, and `serialize_main_event` calling it
-directly for clipboard text, ANSI-stripped).
-**Calls out:** nothing (only `utils`, `constants`).
-
----
-
-### token_format.py (293 LOC)
+### token_format.py (300 LOC)
 
 **Purpose:** Build logical lines for the token/cache tracker — groups API calls into turns with CR/CC/D counts, handles expand/collapse and viewport clipping. Returns a 5-tuple `(visible_lines, visible_keys, sticky_header, viewport_start, initial_parent_count)` — return arity UNCHANGED since 2026-08-18 (see below). The fifth element `initial_parent_count` is the number of collapsed parent rows before the current viewport — used by `token_pane.py` to keep expand/collapse key assignments stable across scrolls. Does NOT render (no zebra, no hover, no truncation) — that is `token_pane.py`'s job. Also provides `_format_k` for compact token counts. `format_cache_tracker` accepts an optional `response_rid_map: dict` (keyed by `request_id`); when a call's `request_id` matches, renders (1) usage-extras lines above the content-blocks loop (5m/1h TTL split, web_search/web_fetch if non-zero, tier/speed/geo, iteration count) and (2) rate-limit header lines (`rl: 5h:X%→HH:MM  7d:X%→…`; status/overage in YELLOW when non-nominal). Graceful when map absent or request_id not matched. **(2026-07-30) Optional `copy_feedback: Optional[dict] = None`** (keyed by `(turn_idx,call_idx)`, same as `line_keys`) — when given, appends a `⎘`/`✓` symbol to the call-summary line via `utils.append_copy_symbol`; `None` (the default, used by every pre-existing caller) skips the branch entirely, byte-identical to before.
 
@@ -86,13 +48,13 @@ directly for clipboard text, ANSI-stripped).
 **Reads:** Cache turn lists, expand state dicts, pane dimensions, scroll offset, optional response_rid_map/copy_feedback/search_match_set/search_current_key/search_query/nav_out — all passed as arguments.
 **Writes:** Returns 5-tuple (unchanged shape); mutates `nav_out` in place when given (`.clear()`-then-rewrite). No stdout, no file writes.
 **Called by:** `panes/token_pane.py` (`format_cache_tracker`); `panes/token_search.py` (`_format_turn_header_line`, `_call_thinking_meta`, `_format_cache_call`, `_render_expanded_call_lines`); `workers/worker_format.py` (`format_cache_tracker`, `_format_k`); `proxy_display/format.py` (`_format_k`); `dev/click_ui/p2_copy_click_probe.py`, `dev/display/A_format_cache_tracker_proof.py` (test/proof callers).
-**Calls out:** `format.formatter` (`shorten_tool_name`, module-level import), `utils` (`append_copy_symbol`, `highlight_query_in_line`), `search_bar` (`_BG_RESTORE_SENTINEL`).
+**Calls out:** `utils` (`append_copy_symbol`, `highlight_query_in_line`), `search_bar` (`_BG_RESTORE_SENTINEL`).
 Private helpers (same module): `_fmt_rl_reset_time`, `_render_expanded_call_lines`, `_compute_cache_viewport`, `_call_thinking_meta`, `_format_turn_header_line`.
 
 ## Gotchas
 
 - `highlight_stripped` wraps each **line** of a chunk individually (`DIM_YELLOW_BG{line}SOFT_RESET` per `\n`-separated segment) rather than wrapping the whole chunk as a single unit. Downstream renderers (`warnings_pane`) split the result on `\n` and apply a per-line zebra BG; a single wrap around the whole chunk would leave lines 2..N without `DIM_YELLOW_BG`, causing the zebra selector to miss them. `outer_bg` is appended once after the final highlighted line to restore the caller's row background.
-- `token_format.py` imports `formatter.shorten_tool_name` at module level — same package, `from .formatter import shorten_tool_name`. Do NOT change to `..formatter`.
+- **(2026-09)** `shorten_tool_name` used to live in the now-deleted `formatter.py` (`from .formatter import shorten_tool_name`) — moved into `token_format.py` itself since this was its only remaining caller once the main pane (`formatter.py`'s other consumer) was removed. No import needed anymore; it's a plain module-level function here.
 - `_format_k` and `_format_cache_call` use leading underscores but are exported and used by 4 external callers — they are effectively public despite the naming convention.
 - `format_cache_tracker` returns a **5-tuple** `(visible_lines, visible_keys, sticky_header, viewport_start, initial_parent_count)` — NOT a string, and this shape is preserved even after the 2026-08-18 search-highlight additions (4 new params, all optional out-params/kwargs, zero new return values — `nav_out` is populated in place, not returned). The render loop (zebra/hover/truncation, plus `search_bar.resolve_bg_restore` per row) lives in `token_pane.py`. `initial_parent_count` counts collapsed parent rows before the viewport start; callers that don't need it unpack with `_, _, _, _, _`.
 - Line content uses `SOFT_RESET` (`\033[39m`) instead of `RESET` (`\033[0m`) for inline FG-color endings. This lets the render loop inject a row-level BG without it being killed mid-line. Exception: `_format_cache_call` keeps `RESET` for `cc_broken` rows (error-BG ends at the line terminator, not mid-content).

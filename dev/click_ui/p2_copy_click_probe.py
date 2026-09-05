@@ -1,5 +1,5 @@
 """
-P2 -- copy-by-click parity probe (Milestone 2: copy-by-click in the four y-only panes).
+P2 -- copy-by-click parity probe (Milestone 2: copy-by-click in the y-only panes).
 
 Proves, per pane, that after ONE real render pass:
   1. the copy-row registry (phys_row set/dict populated by the pane's own build function) contains
@@ -11,10 +11,11 @@ Proves, per pane, that after ONE real render pass:
      guard) -- proven once at the pure-function level (append_copy_symbol) and once at the
      render-integration level (format_cache_tracker, tokens pane)
 
+**(2026-09) The main pane was removed entirely** (window 0 is now the tokens pane at full width,
+see `process-docs/main_pane/`) — `test_main_pane_copy_click` and its `mod_main_display`/
+`mod_monitor` imports were dropped accordingly.
+
 Covers:
-  - src/core/monitor_display.py :: render_main_buffer (_main_copy_rows, tool_call pre-existing
-    request/response split + this milestone's new first-line-of-event 'all' coverage for every
-    other event type), src/core/monitor.py :: _handle_main_mouse (unchanged, generic dispatch)
   - src/panes/token_pane.py :: _build_tokens_output (cache_copy_rows), _handle_tokens_mouse,
     _handle_tokens_key
   - src/panes/warnings_pane.py :: _build_warnings_output (error_copy_rows), _handle_warnings_mouse,
@@ -44,8 +45,6 @@ sys.path.insert(0, str(WORKTREE_ROOT))
 os.environ.setdefault('MONITOR_CC_ROOT', str(WORKTREE_ROOT))
 
 _ROOT_PKG = 'src'
-mod_main_display = importlib.import_module(f'{_ROOT_PKG}.core.monitor_display')
-mod_monitor = importlib.import_module(f'{_ROOT_PKG}.core.monitor')
 mod_tokens = importlib.import_module(f'{_ROOT_PKG}.panes.token_pane')
 mod_token_format = importlib.import_module(f'{_ROOT_PKG}.format.token_format')
 mod_warnings = importlib.import_module(f'{_ROOT_PKG}.panes.warnings_pane')
@@ -79,65 +78,6 @@ def test_append_copy_symbol_width_guard():
     check("append_copy_symbol: appends ⎘ when the pane is wide enough", '⎘' in wide and wide != "short line")
     narrow = mod_utils.append_copy_symbol("x" * 60, '⎘', 50)
     check("append_copy_symbol: leaves line unchanged when too narrow (no invisible hit zone)", narrow == "x" * 60)
-
-
-# Main pane (2026-09 tool-calls-only redesign): tool_call is now ONE block (req N: Tool + params
-# + result), same as every other event type -- the old REQUEST/RESPONSE two-region special case
-# is gone, so tool_call now falls through the SAME generic first-line 'all' branch as warning/
-# session_banner (the only other event types the main pane still buffers). Click vs 'y' parity
-# via the real serializer.
-def test_main_pane_copy_click():
-    captured = _patch_clipboard(mod_monitor)
-    mod_main_display.main_event_buffer.clear()
-    mod_main_display.main_scroll_offset = 0
-    mod_main_display._main_copy_feedback_until.clear()
-    mod_main_display.main_event_buffer.append({
-        'type': 'tool_call',
-        'data': {'tool_use_id': 'tu1', 'output': 'file1\nfile2', 'tool_name': 'Bash',
-                  'input': {'command': 'ls'}, 'req_num': 5,
-                  'is_subagent': False, 'is_error': False},
-        'call_number': 1,
-    })
-    mod_main_display.main_event_buffer.append({
-        'type': 'warning',
-        'data': {'file_path': 'x.jsonl', 'line_number': 3, 'error_message': 'bad json', 'raw_line': '{...'},
-        'call_number': None,
-    })
-    mod_main_display.main_event_buffer.append({
-        'type': 'session_banner', 'data': {}, 'call_number': None,
-    })
-
-    mod_main_display.render_main_buffer(pane_height=50, pane_width=100, scroll_offset=0)
-    regions = dict(mod_main_display._main_copy_rows)
-
-    parts_seen = {v[1] for v in regions.values()}
-    check("main: every event (tool_call included) registers an 'all' copy region -- no more "
-          "request/response split",
-          parts_seen == {'all'})
-    check("main: one copy region per event (3 total: tool_call, warning, session_banner)",
-          len(regions) == 3)
-
-    for phys_row, (eidx, part) in regions.items():
-        mod_main_display.main_hover_row = phys_row
-        key = mod_monitor.resolve_parent_key(mod_main_display.main_line_map, mod_main_display.main_hover_row)
-        y_text = mod_main_display.serialize_main_event(key)
-        captured.clear()
-        mod_monitor.copy_to_clipboard(y_text)
-        y_captured = captured[-1]
-
-        captured.clear()
-        click_col = mod_main_display._main_pane_width - 1
-        changed = mod_monitor._handle_main_mouse(0, click_col, phys_row)
-        check(f"main: click on row {phys_row} (eidx={eidx}, part={part}) triggers copy", changed and len(captured) == 1)
-        if captured:
-            check(f"main: click/y parity row {phys_row} (eidx={eidx}, part={part})",
-                  captured[-1] == y_captured and y_captured != '')
-
-    # Width guard: no copy row registers anywhere when the symbol doesn't fit (tool_call now
-    # goes through the SAME width-guarded generic branch as every other event type).
-    mod_main_display.render_main_buffer(pane_height=50, pane_width=10, scroll_offset=0)
-    check("main: width guard -- no copy rows register when pane_width=10 (too narrow)",
-          len(mod_main_display._main_copy_rows) == 0)
 
 
 # Tokens pane: one copy region per API-call row; click vs 'y' parity; width guard end-to-end
@@ -300,10 +240,9 @@ def test_workers_pane_copy_click():
 
 def run_probe_workflow():
     print("=" * 70)
-    print("copy-by-click parity probe -- main, tokens, warnings, workers")
+    print("copy-by-click parity probe -- tokens, warnings, workers")
     print("=" * 70)
     test_append_copy_symbol_width_guard()
-    test_main_pane_copy_click()
     test_tokens_pane_copy_click()
     test_warnings_pane_copy_click()
     test_workers_pane_copy_click()

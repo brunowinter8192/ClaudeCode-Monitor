@@ -446,7 +446,7 @@ def test_session_change_resets_search_state():
     mod_parser.find_response_log_path = lambda pf: None
     mod_parser.read_response_log = lambda path, pos: ({}, pos)
     try:
-        mod_tp._refresh_tokens_data(10_000_000.0, False, 0.0)
+        mod_tp._refresh_tokens_data(10_000_000.0, False, 0.0, 10_000_000.0)
     finally:
         mod_monitor.get_main_session_files = orig_get_sessions
         mod_parser.find_response_log_path = orig_find_resp

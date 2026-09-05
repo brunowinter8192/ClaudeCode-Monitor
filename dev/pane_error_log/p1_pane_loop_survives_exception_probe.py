@@ -1,5 +1,5 @@
 """
-P1 — verifies all 9 pane event loops (8 previously unguarded + worker_pane.py, the reference
+P1 — verifies all 8 pane event loops (7 previously unguarded + worker_pane.py, the reference
 pattern) survive an uncaught exception raised inside the loop body, log it with a pane
 identifier via the shared src/pane_error_log.py sink, and keep running — and that the guard
 does NOT swallow deliberate termination (KeyboardInterrupt/SystemExit still propagate, `finally:`
@@ -10,15 +10,15 @@ run_*_loop() is loaded (via importlib, package-qualified — these modules use `
 import ...` double-dot relative imports, so they must be loaded as real `src.<pkg>.<mod>`
 submodules, not path-inserted top-level modules) and invoked directly with its I/O primitives
 monkeypatched per-module:
-  - 8 of the 9 loops have keyboard/mouse: read_keypress raises a distinctive marker exception on
+  - 7 of the 8 loops have keyboard/mouse: read_keypress raises a distinctive marker exception on
     its 1st call only, then returns None; setup_keyboard_input/enable_mouse are no-op'd;
     disable_mouse/restore_terminal are counted, to prove the existing `finally:` cleanup still runs
-  - the 9th (news_pane/log_pane.py::run_news_log_loop) has NO keyboard/mouse and NO `finally:` —
+  - the 8th (news_pane/log_pane.py::run_news_log_loop) has NO keyboard/mouse and NO `finally:` —
     it never had one and this milestone does not invent one — so the marker exception is injected
     via find_log_file() instead, and only the catch+log+continue behavior is asserted, not cleanup
-  - the tick function (wait_for_input, or time.sleep for core.monitor and news_pane/log_pane.py)
-    counts calls and raises _ProbeStop (a BaseException, like Ctrl-C) on the 3rd call — guarantees
-    the loop cannot hang, and proves the loop survived 2 full iterations past the injected crash
+  - the tick function (wait_for_input, or time.sleep for news_pane/log_pane.py) counts calls and
+    raises _ProbeStop (a BaseException, like Ctrl-C) on the 3rd call — guarantees the loop cannot
+    hang, and proves the loop survived 2 full iterations past the injected crash
 Real render/data-refresh calls run for real (against whatever real session/tmux state exists on
 this machine) — any exception they raise is caught by the SAME new guard and logged with the
 SAME pane id, which is harmless to the assertions below (they only check for the specific
@@ -53,7 +53,6 @@ mod_warnings = importlib.import_module(f'{_ROOT_PKG}.panes.warnings_pane')
 mod_gpu = importlib.import_module(f'{_ROOT_PKG}.gpu_pane.pane')
 mod_news = importlib.import_module(f'{_ROOT_PKG}.news_pane.pane')
 mod_news_log = importlib.import_module(f'{_ROOT_PKG}.news_pane.log_pane')
-mod_main = importlib.import_module(f'{_ROOT_PKG}.core.monitor')
 
 _PROBE_LOG_PATH = '/tmp/_pane_error_log_probe.log'
 pel.PANE_ERROR_LOG_PATH = _PROBE_LOG_PATH  # redirect the shared sink so pane tests below never
@@ -164,7 +163,7 @@ def _run_loop_and_capture(pane_id: str, module, run_fn_name: str, use_time_sleep
     }
 
 
-# Runs the catch+log+continue+cleanup assertions shared by all 8 panes
+# Runs the catch+log+continue+cleanup assertions shared by all 7 panes
 def _assert_survives(pane_id: str, module, run_fn_name: str, use_time_sleep: bool = False) -> None:
     if os.path.exists(_PROBE_LOG_PATH):
         os.remove(_PROBE_LOG_PATH)
@@ -214,11 +213,6 @@ def test_gpu_pane():
 def test_news_pane():
     print("\n[Test] news pane (src/news_pane/pane.py)")
     _assert_survives('news', mod_news, 'run_news_loop')
-
-
-def test_main_pane():
-    print("\n[Test] main pane (src/core/monitor.py, run_main_loop — uses time.sleep, not wait_for_input)")
-    _assert_survives('main', mod_main, 'run_main_loop', use_time_sleep=True)
 
 
 # Runs a keyboard/mouse-less, finally-less loop (currently: news_pane/log_pane.py) with the
@@ -293,7 +287,7 @@ def test_news_log_pane():
 # Test: the guard must not swallow deliberate termination — real KeyboardInterrupt and SystemExit
 # both propagate out of the loop, and `finally:` cleanup still runs (checked on one representative
 # pane; the _ProbeStop-based BaseException path above already proves the same MRO relationship
-# for all 8, since KeyboardInterrupt/SystemExit/_ProbeStop are all BaseException, not Exception)
+# for all 7, since KeyboardInterrupt/SystemExit/_ProbeStop are all BaseException, not Exception)
 def test_keyboard_interrupt_and_system_exit_not_swallowed():
     print("\n[Test] KeyboardInterrupt / SystemExit propagate, finally: cleanup still runs (proxy pane)")
     for exc_cls in (KeyboardInterrupt, SystemExit):
@@ -387,7 +381,7 @@ def test_log_size_capping():
 
 def run_probe_workflow():
     print("=" * 70)
-    print("pane_error_log probe — 9 pane loops survive an uncaught exception")
+    print("pane_error_log probe — 8 pane loops survive an uncaught exception")
     print("=" * 70)
     test_workers_pane()
     test_proxy_pane()
@@ -397,7 +391,6 @@ def run_probe_workflow():
     test_gpu_pane()
     test_news_pane()
     test_news_log_pane()
-    test_main_pane()
     test_keyboard_interrupt_and_system_exit_not_swallowed()
     test_failing_log_write_does_not_raise()
     test_log_size_capping()

@@ -7,7 +7,6 @@ from ..constants import (
     RED, GREEN, YELLOW, WHITE, PASTEL_PURPLE, PASTEL_ORANGE, LIGHT_RED_BG, DIM, SOFT_RESET,
     SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
 )
-from .formatter import shorten_tool_name
 # From utils.py: right-align a ⎘/✓ copy symbol at the pane edge, width-guarded; browser-find-style
 # inline substring highlight
 from ..utils import append_copy_symbol, highlight_query_in_line
@@ -17,6 +16,14 @@ from ..utils import append_copy_symbol, highlight_query_in_line
 from ..search_bar import _BG_RESTORE_SENTINEL
 
 # FUNCTIONS
+
+# Shorten MCP tool names for display (mcp__plugin_xxx_yyy__tool_name → tool_name)
+def shorten_tool_name(name: str) -> str:
+    if name.startswith('mcp__'):
+        parts = name.split('__')
+        if len(parts) >= 3:
+            return parts[-1]
+    return name
 
 # Format token count as compact "Xk" or "X.Xk" string
 def _format_k(n: int) -> str:
