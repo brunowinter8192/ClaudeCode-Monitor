@@ -11,7 +11,7 @@ modifying cache-turn grouping. Do NOT touch for display logic — that lives in 
 
 ## Public Interface
 
-- `parse_new_tool_calls(filepath, last_position, tool_use_cache)` — incremental parse, returns 9-tuple of lists + new position
+- `parse_new_tool_calls(filepath, last_position, tool_use_cache, request_numbers=None)` — incremental parse, returns 9-tuple of lists + new position
 - `read_new_lines(filepath, last_position)` — read raw new lines from file
 - `parse_jsonl_lines(lines)` — parse raw lines into message dicts
 - `get_current_position(filepath)` — return current byte offset
@@ -22,17 +22,21 @@ modifying cache-turn grouping. Do NOT touch for display logic — that lives in 
 ## Flow
 
 `~/.claude/projects/**/*.jsonl` → `jsonl_parser` (incremental read by byte offset, line parse,
-tool_use/tool_result correlation) → `jsonl_extractors` (typed extractions from message list)
-→ callers: `core.monitor`, `panes.token_pane`, `workers`
+tool_use/tool_result correlation, requestId → ordinal assignment) → `jsonl_extractors` (typed
+extractions from message list) → callers: `core.monitor_session` (the main pane), `panes.token_pane`,
+`workers` (the latter two read lower-level functions — `read_new_lines`/`parse_jsonl_lines`/
+`extract_cache_turns`/`get_message_content`/`is_tool_use` — directly, NOT `parse_new_tool_calls`/
+`parse_new_tool_calls_isolated`, which only `core/monitor_session.py` calls; corrected 2026-09,
+previously stale here).
 
 ## Modules
 
-### jsonl_parser.py (256 LOC)
+### jsonl_parser.py (302 LOC)
 
-**Purpose:** Core session JSONL parser — reads new lines incrementally by byte offset, correlates tool_use/tool_result pairs, and delegates typed extraction to `jsonl_extractors`.
-**Reads:** Session JSONL file (by `filepath` + `last_position` byte offset); `tool_use_cache` dict for cross-chunk correlation.
-**Writes:** Nothing — returns 9-tuple `(tool_calls, new_position, malformed_warnings, user_media, thinking_blocks, user_prompts, skill_activations, usage_data, system_messages)`.
-**Called by:** `src/core/monitor.py`, `src/core/monitor_session.py`, `src/workers/worker_format.py`, `src/workers/worker_pane.py`, `src/panes/token_pane.py`
+**Purpose:** Core session JSONL parser — reads new lines incrementally by byte offset, correlates tool_use/tool_result pairs, delegates typed extraction to `jsonl_extractors`, and (2026-09, additive) assigns each distinct API request a stable ordinal number. **`update_request_numbers(messages, request_numbers)`** mutates `request_numbers` (`{requestId: ordinal}`, a persistent dict the caller owns — mirrors the `tool_use_cache` convention) in place: for each `type == 'assistant'` message with non-zero `cache_read`/`cache_creation`/`input_tokens` usage (the SAME qualifying condition `jsonl_cache_turns.extract_cache_turns` uses to build an `api_call`), its `requestId` gets the next ordinal the first time it's seen — insertion order makes `len(request_numbers) + 1` the next value, no separate counter needed. This is the SAME number `format_cache_tracker`'s own `request_num` loop shows as `REQ #N` in the tokens pane, verified 2026-09 against 840 real tool_use blocks across 6 sessions in 2 projects: 0 disagreements (`dev/main_pane/probe_req_numbering.py`, `process-docs/main_pane/`). `create_tool_use_entry` additionally stamps `request_id` (the owning message's own `requestId`, `''` when absent) onto every tool_use entry — this is what `core/monitor_session.py` looks up in `request_numbers` to resolve the main pane's `req N` header. `parse_new_tool_calls`/`parse_new_tool_calls_isolated` both gained an optional trailing `request_numbers: dict = None` param (calls `update_request_numbers` only when given) — every pre-existing caller passes none, so the 9-tuple return and all existing behavior stay byte-identical. The subprocess path (`parse_new_tool_calls_isolated` with `last_position == 0`) always builds its OWN `request_numbers` dict in the child process and returns it via the Queue (4th element, alongside the existing cache-state transfer) — the parent only applies it into the caller's dict when one was actually requested.
+**Reads:** Session JSONL file (by `filepath` + `last_position` byte offset); `tool_use_cache` dict for cross-chunk correlation; `request_numbers` dict (optional) for requestId ordinal assignment.
+**Writes:** Nothing — returns 9-tuple `(tool_calls, new_position, malformed_warnings, user_media, thinking_blocks, user_prompts, skill_activations, usage_data, system_messages)`. Mutates the caller-supplied `tool_use_cache` and (when given) `request_numbers` dicts in place.
+**Called by:** `src/core/monitor_session.py` (the only real caller of `parse_new_tool_calls_isolated`/`parse_new_tool_calls` — `monitor.py` re-exports the module but does not call it directly; `workers`/`token_pane` use lower-level functions from this package instead, see Flow above)
 **Calls out:** —
 
 ---
@@ -55,3 +59,7 @@ tool_use/tool_result correlation) → `jsonl_extractors` (typed extractions from
 **Called by:** `src/panes/token_pane.py`, `src/workers/worker_pane.py`
 **Calls out:** —
 Private helpers (same module): `_parse_user_message_text`, `_extract_content_blocks`, `_build_api_call`, `_merge_duplicate_call`.
+
+## Gotchas
+
+- **CC's current JSONL format splits one logical API response into multiple top-level `assistant` lines — one per content block** (thinking/text/tool_use each get their own line), all sharing the identical `requestId` and `usage` object (measured 2026-09, `process-docs/main_pane/`). `extract_cache_turns`'s pre-existing per-`requestId` dedup (`_input_key`, `_merge_duplicate_call`) and `jsonl_parser.update_request_numbers`'s first-seen-per-`requestId` ordinal assignment both already handle this correctly without any special-casing for the split — do not assume one JSONL line == one API response when reading this package's code.

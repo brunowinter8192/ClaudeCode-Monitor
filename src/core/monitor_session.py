@@ -5,8 +5,11 @@ from pathlib import Path
 from ..constants import MODE_WARNINGS, MODE_TOKENS, MODE_MAIN, TOOL_TASK
 # From jsonl/: Parse JSONL and extract tool calls
 from ..jsonl import parse_new_tool_calls_isolated
-# From monitor_display.py: Console output for tool calls and session status
-from .monitor_display import display_warning, display_user_media, display_skill_activation, display_thinking, display_tool_call, display_user_prompt_from_jsonl, display_system_message
+# From monitor_display.py: Console output for tool calls and session status. The main pane shows
+# only tool calls (plus malformed-JSON warnings and the session-change banner) — display_* for
+# user prompts/media/thinking/skill-activations/system-messages was removed 2026-09 along with
+# their formatter_events.py helpers, see process-docs/main_pane/.
+from .monitor_display import display_warning, display_tool_call
 
 # FUNCTIONS
 
@@ -29,11 +32,14 @@ def process_session_file(filepath: Path) -> None:
 
     if filepath not in _monitor.tool_use_caches:
         _monitor.tool_use_caches[filepath] = {}
+    if filepath not in _monitor.request_numbers_by_file:
+        _monitor.request_numbers_by_file[filepath] = {}
 
     last_position = _monitor.file_positions[filepath]
     cache = _monitor.tool_use_caches[filepath]
+    request_numbers = _monitor.request_numbers_by_file[filepath]
 
-    tool_calls, new_position, malformed_warnings, user_media, thinking_blocks, user_prompts, skill_activations, usage_data, system_messages = parse_new_tool_calls_isolated(filepath, last_position, cache)
+    tool_calls, new_position, malformed_warnings, user_media, thinking_blocks, user_prompts, skill_activations, usage_data, system_messages = parse_new_tool_calls_isolated(filepath, last_position, cache, request_numbers)
 
     _monitor.file_positions[filepath] = new_position
 
@@ -43,26 +49,13 @@ def process_session_file(filepath: Path) -> None:
     for warning in malformed_warnings:
         display_warning(warning)
 
-    for prompt_item in user_prompts:
-        display_user_prompt_from_jsonl(prompt_item)
-
-    for sys_msg in system_messages:
-        display_system_message(sys_msg)
-
-    for skill_item in skill_activations:
-        display_skill_activation(skill_item)
-
-    media_groups: dict = {}
-    for media_item in user_media:
-        ts = media_item.get('timestamp', '')
-        media_groups.setdefault(ts, []).append(media_item)
-    for ts_group in media_groups.values():
-        display_user_media(ts_group)
-
-    for thinking_item in thinking_blocks:
-        display_thinking(thinking_item)
-
     for tool_call in tool_calls:
+        # req_num: the same ordinal the tokens pane shows as REQ #N for this requestId (see
+        # jsonl_parser.update_request_numbers). '?' when unresolved — measured 2026-09: never
+        # observed in real data (see process-docs/main_pane/), a graceful fallback for a
+        # requestId this session's own request_numbers map never saw (e.g. a subagent/progress
+        # entry whose owning message carries no requestId at all).
+        tool_call['req_num'] = request_numbers.get(tool_call.get('request_id', ''), '?')
         if is_task_request(tool_call):
             handle_task_request(tool_call)
         elif is_task_response(tool_call):
@@ -138,4 +131,5 @@ def load_historical_main() -> None:
         filepath = main_sessions[0]
         _monitor.file_positions[filepath] = 0
         _monitor.tool_use_caches[filepath] = {}
+        _monitor.request_numbers_by_file[filepath] = {}
 

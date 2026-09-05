@@ -13,7 +13,7 @@ from .jsonl_extractors import (
 )
 
 # Top-level subprocess worker (must be importable by name for multiprocessing 'spawn').
-# Parses session JSONL in a child process, returns 9-tuple + cache via Queue.
+# Parses session JSONL in a child process, returns 9-tuple + cache + request_numbers via Queue.
 # SUBPROCESS_PARSE_FAIL=1 / SUBPROCESS_PARSE_SLOW=1 env vars activate test hooks.
 def _subprocess_worker(filepath_str: str, root_dir: str, q) -> None:
     import sys
@@ -27,8 +27,9 @@ def _subprocess_worker(filepath_str: str, root_dir: str, q) -> None:
         from pathlib import Path as _Path
         from src.jsonl.jsonl_parser import parse_new_tool_calls as _parse
         cache: dict = {}
-        result = _parse(_Path(filepath_str), 0, cache)
-        q.put(('ok', result, dict(cache)))
+        request_numbers: dict = {}
+        result = _parse(_Path(filepath_str), 0, cache, request_numbers)
+        q.put(('ok', result, dict(cache), dict(request_numbers)))
     except Exception as exc:
         q.put(('error', str(exc)))
 
@@ -39,9 +40,15 @@ def _subprocess_worker(filepath_str: str, root_dir: str, q) -> None:
 # Falls back to in-parent parse on subprocess failure, timeout, or IPC error.
 # Test hooks: SUBPROCESS_PARSE_TIMEOUT env (override 60s default), SUBPROCESS_PARSE_FAIL=1,
 # SUBPROCESS_PARSE_SLOW=1 (child sleeps 10s to exercise timeout path).
-def parse_new_tool_calls_isolated(filepath: Path, last_position: int, tool_use_cache: dict) -> Tuple[List[dict], int, List[dict], List[dict], List[dict], List[dict], List[dict], List[dict], List[dict]]:
+# `request_numbers` (2026-09, main-pane req-numbering milestone): optional, additive — None
+# (every pre-existing caller) skips it entirely, byte-identical to before. When given, it is
+# updated in place with {requestId: ordinal} the same way tool_use_cache is, including across
+# the subprocess boundary (the subprocess always builds its OWN request_numbers dict — cheap,
+# same messages already being walked — and returns it via the Queue; the caller's dict is only
+# touched here if it actually asked for one).
+def parse_new_tool_calls_isolated(filepath: Path, last_position: int, tool_use_cache: dict, request_numbers: dict = None) -> Tuple[List[dict], int, List[dict], List[dict], List[dict], List[dict], List[dict], List[dict], List[dict]]:
     if last_position != 0:
-        return parse_new_tool_calls(filepath, last_position, tool_use_cache)
+        return parse_new_tool_calls(filepath, last_position, tool_use_cache, request_numbers)
     import multiprocessing as _mp
     import queue as _queue
     root = os.environ.get('MONITOR_CC_ROOT', '') or str(Path(__file__).parent.parent.parent)
@@ -65,18 +72,25 @@ def parse_new_tool_calls_isolated(filepath: Path, last_position: int, tool_use_c
     if result is None or result[0] == 'error':
         if result is not None:
             logging.warning('subprocess jsonl parse worker error: %s — falling back to in-parent', result[1])
-        return parse_new_tool_calls(filepath, last_position, tool_use_cache)
-    _, result_tuple, cache_state = result
+        return parse_new_tool_calls(filepath, last_position, tool_use_cache, request_numbers)
+    _, result_tuple, cache_state, request_numbers_state = result
     tool_use_cache.clear()
     tool_use_cache.update(cache_state)
+    if request_numbers is not None:
+        request_numbers.clear()
+        request_numbers.update(request_numbers_state)
     return result_tuple
 
 # ORCHESTRATOR
-def parse_new_tool_calls(filepath: Path, last_position: int, tool_use_cache: dict) -> Tuple[List[dict], int, List[dict], List[dict], List[dict], List[dict], List[dict], List[dict], List[dict]]:
+# `request_numbers` (2026-09): optional, additive dict mutated in place — see
+# parse_new_tool_calls_isolated's docstring-comment above for the full rationale.
+def parse_new_tool_calls(filepath: Path, last_position: int, tool_use_cache: dict, request_numbers: dict = None) -> Tuple[List[dict], int, List[dict], List[dict], List[dict], List[dict], List[dict], List[dict], List[dict]]:
     new_lines = read_new_lines(filepath, last_position)
     new_position = get_current_position(filepath)
     messages, malformed_lines = parse_jsonl_lines(new_lines)
     tool_calls = extract_tool_calls(messages, tool_use_cache)
+    if request_numbers is not None:
+        update_request_numbers(messages, request_numbers)
     user_prompts = extract_user_prompts(messages)
     user_media = extract_user_media(messages)
     thinking_blocks = extract_thinking_blocks(messages)
@@ -136,6 +150,30 @@ def parse_jsonl_lines(lines: List[str]) -> Tuple[List[dict], List[dict]]:
                 'raw_line': line
             })
     return messages, malformed_lines
+
+# Assign the next ordinal to each newly-seen requestId among qualifying assistant messages —
+# mutates `request_numbers` in place, same qualifying condition (non-zero cache_read/
+# cache_creation/input_tokens) jsonl_cache_turns.extract_cache_turns uses to build an api_call,
+# so the ordinal assigned here for a given requestId is the SAME number the tokens pane shows as
+# `REQ #N` for that request (verified 2026-09 against 840 real tool_use blocks across 6 sessions
+# in 2 projects: 0 disagreements — see process-docs/main_pane/). Keys are inserted in first-seen
+# order, so `len(request_numbers) + 1` IS the next ordinal — no separate counter needed. A single
+# GLOBAL counter across the whole file, not per-turn: a pure-text/thinking response with no tool
+# call still advances the count, exactly like format_cache_tracker's own request_num loop does.
+def update_request_numbers(messages: List[dict], request_numbers: dict) -> None:
+    for message in messages:
+        if message.get('type') != 'assistant':
+            continue
+        usage = message.get('message', {}).get('usage', {})
+        if not isinstance(usage, dict):
+            continue
+        if (usage.get('cache_read_input_tokens', 0) == 0
+                and usage.get('cache_creation_input_tokens', 0) == 0
+                and usage.get('input_tokens', 0) == 0):
+            continue
+        rid = message.get('requestId', '')
+        if rid and rid not in request_numbers:
+            request_numbers[rid] = len(request_numbers) + 1
 
 # Extract tool_use and tool_result pairs from messages
 def extract_tool_calls(messages: List[dict], tool_use_cache: dict) -> List[dict]:
@@ -219,6 +257,13 @@ def is_tool_result(block: dict) -> bool:
     return block.get('type') == 'tool_result'
 
 # Create tool call entry from tool_use block
+# `request_id` (2026-09, main-pane req-numbering milestone): additive — the owning message's own
+# `requestId`, used together with `request_numbers` (update_request_numbers) to look up the same
+# ordinal number the tokens pane shows as `REQ #N` for the same API request. Empty string for a
+# subagent/progress-derived entry whose outer message never carries the field directly (measured:
+# 0 occurrences of subagent tool_use in the real corpus this was verified against — see
+# process-docs/main_pane/ — so this path is a graceful, untested-in-practice fallback, not a
+# confirmed-correct extraction).
 def create_tool_use_entry(block: dict, message: dict, is_subagent: bool = False, agent_id: str = None) -> dict:
     return {
         'tool_name': block.get('name', 'Unknown'),
@@ -228,7 +273,8 @@ def create_tool_use_entry(block: dict, message: dict, is_subagent: bool = False,
         'timestamp': message.get('timestamp', ''),
         'call_number': message.get('call_number', 0),
         'is_subagent': is_subagent or message.get('isSidechain', False),
-        'agent_id': agent_id or message.get('agentId', None)
+        'agent_id': agent_id or message.get('agentId', None),
+        'request_id': message.get('requestId', ''),
     }
 
 # Extract spawned agent ID from toolUseResult in message

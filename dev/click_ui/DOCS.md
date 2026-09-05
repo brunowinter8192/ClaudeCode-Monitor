@@ -53,7 +53,7 @@ any change to `_format_worker_proxy_header`, `_handle_worker_proxy_mouse`,
 
 ---
 
-### p2_copy_click_probe.py (343 LOC)
+### p2_copy_click_probe.py (342 LOC)
 
 **Purpose:** Proves, per pane (main, tokens, warnings, workers), that after one real render pass
 the copy-row registry contains an entry for every row carrying a copyable unit, and that a
@@ -62,7 +62,13 @@ row — both paths run through the real serializer (`serialize_main_event`, `_se
 `_serialize_warnings`, `_serialize_workers`), compared against each other, nothing hardcoded.
 Also: a pure-function width-guard regression (`utils.append_copy_symbol`) plus one
 render-integration width-guard check per pane (narrow `pane_width` → no symbol, no row
-registration). Regression guards for two bugs found and fixed in this milestone: (1)
+registration). **Main pane (updated 2026-09, tool-calls-only redesign):** `test_main_pane_copy_click`
+now seeds a `tool_call` + `warning` + `session_banner` event — since `format_tool_call` collapsed
+to one block (`req N: Tool` + params + result, see `process-docs/main_pane/`), tool_call now
+registers a single `'all'` copy region through the SAME generic first-line branch every other
+event type already used, not a separate `'request'`/`'response'` two-region special case (that
+mechanism is gone along with the header pair it copied). Regression guards for two bugs found and
+fixed in an earlier milestone: (1)
 `warnings_render._serialize_warnings` expected a `('error', idx)` tuple but `error_line_map`
 stores a bare `int` — `y` silently copied `''` for every warnings row until fixed; (2)
 `worker_pane._handle_workers_key`'s `y`-branch resolution order made the

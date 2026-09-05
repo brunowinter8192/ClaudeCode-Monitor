@@ -232,7 +232,7 @@ branches), `_handle_proxy_search_release`, `_clear_proxy_search_selection`, or
 
 ---
 
-### p4_main_pane_parity_test.py (480 LOC)
+### p4_main_pane_parity_test.py (487 LOC)
 
 **Purpose:** Regression guard for the MAIN pane (`src/core/monitor.py`, `core/monitor_display.py`)
 reaching full parity with the proxy pane's reference search-bar implementation (rollout
@@ -272,7 +272,7 @@ consistent with how `p2`/`p3` never test `run_proxy_loop`'s own while-loop dispa
 
 **Output:** PASS/FAIL per check to stdout; writes `dev/pane_search/md/p4_main_pane_parity_test_<timestamp>.md`; exits 1 if any check fails.
 
-**Reads:** nothing external — seeds `src.core.monitor_display.main_event_buffer` with synthetic `system_message` events directly (uncolored body text, a clean surface for asserting the highlight wraps exactly the matched substring).
+**Reads:** nothing external — seeds `src.core.monitor_display.main_event_buffer` with synthetic `tool_call` events directly (2026-09: switched from `system_message`, which no longer renders — the main pane shows only tool calls now, see `process-docs/main_pane/`; the marker text lives in the `command` param line, which `format_parameters` renders with no color codes at all — the same uncolored "clean surface" property `system_message`'s body line used to have, for asserting the highlight wraps exactly the matched substring).
 **Writes:** `dev/pane_search/md/p4_main_pane_parity_test_<timestamp>.md`.
 **Called by:** run manually — regression guard for the main pane's search bar; re-run after any change to `core/monitor.py`'s search/mouse handlers, `core/monitor_display.py`'s `_main_search`/`render_main_buffer`/`_render_search_bar`, or `src/search_bar.py`.
 **Calls out:** `src.core.monitor`, `src.core.monitor_display`, `src.search_bar`, `src.constants` — loaded via `importlib.import_module`.
