@@ -118,9 +118,9 @@ Status: runs clean — 26/26 checks PASS on the current tree.
 
 ---
 
-### test_strip_fix.py (1326 LOC)
+### test_strip_fix.py (1471 LOC)
 
-**Purpose:** The largest suite in this directory (217 checks) for the template-based exact-match SR
+**Purpose:** The largest suite in this directory (250 checks) for the template-based exact-match SR
 strip (Phase B). Four groups: (1) 8 core SR templates × 3 cases each — real strip at top level, FP
 code-literal preserved, tool_result content preserved (SR family no longer descends into
 `tool_result`) — plus 4 content-shape tests, user-interrupt partial mode, plan-mode None-return, and
@@ -132,8 +132,16 @@ wrapped TN wake-up shape (`_unwrap_full_sr_wrapper`, `message_passes.py`) — re
 (`src/logs/dual_log/api_requests_opus_wise2627_1788533758_stripped.jsonl`, request_id
 `65c964d6-90c6-46ec-81de-190487d92e55`) asserts the wire content is exactly the bare wake-up text,
 plus regression pins for the two shapes that already worked (bare role='system' str, unwrapped
-role='user' list-text); (4) "tt"-prefixed tests for the `<total_tokens>` badge/render delta — whether
-a stripped/injected entry lights the `strip`/`inject` word in the rendered request-header line.
+role='user' list-text); (4) "tt"-prefixed tests (TT01–TT09) for the `<total_tokens>` badge/render
+delta — whether a stripped/injected entry lights the `strip`/`inject` word in the rendered
+request-header line — extended TT10–TT14 (2026-09-05) for the claude-f trailing-nudge widening:
+single/combined/repeated known nudge sentences badge neither word; a nudge mixed with real content
+(deferred-tools, the old feedback-hook message) or an UNKNOWN/uncatalogued sentence still badges
+both, proving the catalog-based shape test fails toward showing a strip rather than silently
+absorbing something new; two nudge-shaped messages in one delta stay quiet together, a third real
+strip in the same delta keeps it loud; `_is_total_tokens_nuke` (the lag-correction classifier)
+widens in step with the badge filter and still rejects real content; TT14 drives the real header
+renderer end to end for the new class, mirroring TT09.
 **Reads:** In-script synthetic fixtures only, except the W31–W33 fixture text which is copied
 verbatim from the real corpus (see above) rather than read from the log file at test time.
 **Writes:** stdout PASS/FAIL lines only.
