@@ -407,6 +407,102 @@ def t39_top_level_date_changed_still_stripped_via_final_sr_pass():
     check('T39_top_level_datechanged_mod_fired', 'stripped_all_sr_msg0' in mods, f'mods: {mods}')
 
 
+# ── ENV-CONTEXT SR: CC 2.1.258 TRAILING-SENTENCES FIX (2026-09) ──────────────
+# CC 2.1.258 appends two sentences after the email address before `# currentDate`. The old
+# `_ENV_CONTEXT_RE` required `\n` immediately after `gmail\.com\.`, so `fullmatch` failed and the
+# `_PRESERVE_PREAMBLE` guard (same preamble as CLAUDE.md context blocks) kept the whole block,
+# reaching the API in message 0 of every session. Fix: `[^\n]*` after the email sentence tolerates
+# any trailing text on that one line. Measured over `src/logs/dual_log/*_original.jsonl` (main
+# checkout, 2026-09): 1866 occurrences of the May-2026 form, 699 of the 2.1.258 form, both
+# top-level and both must strip; 242 occurrences of CC bundling `# claudeMd` content AND
+# `# userEmail` into ONE `<system-reminder>` block — must stay preserved (real CLAUDE.md content),
+# T44 pins this exact shape.
+
+def t40_env_context_may_2026_form_stripped():
+    body = (
+        "As you answer the user's questions, you can use the following context:\n"
+        "# userEmail\n"
+        "The user's email address is brunowinter7934@gmail.com.\n"
+        "# currentDate\n"
+        "Today's date is 2026-05-30.\n\n"
+        "      IMPORTANT: this context may or may not be relevant to your tasks. "
+        "You should not respond to this context unless it is highly relevant to your task."
+    )
+    sr = real_sr_text(body)
+    result = _strip_system_reminders(text_block(sr))
+    check('T40_env_context_may_form_stripped', _O not in result[0]['text'], repr(result[0]['text'])[:120])
+
+
+def t41_env_context_cc258_form_stripped():
+    body = (
+        "As you answer the user's questions, you can use the following context:\n"
+        "# userEmail\n"
+        "The user's email address is brunowinter7934@gmail.com. Use it only to identify the user, "
+        "such as for authorship, attribution, or filtering their own work. Never send it to an "
+        "unrelated service, such as in a request header, URL, or payload, unless the user explicitly asks.\n"
+        "# currentDate\n"
+        "Today's date is 2026-09-05.\n\n"
+        "      IMPORTANT: this context may or may not be relevant to your tasks. "
+        "You should not respond to this context unless it is highly relevant to your task."
+    )
+    sr = real_sr_text(body)
+    result = _strip_system_reminders(text_block(sr))
+    check('T41_env_context_cc258_form_stripped', _O not in result[0]['text'], repr(result[0]['text'])[:120])
+
+
+def t42_claudemd_context_block_preserved():
+    body = (
+        "As you answer the user's questions, you can use the following context:\n"
+        "# claudeMd\nCodebase and user instructions are shown below. Be sure to adhere to these "
+        "instructions. IMPORTANT: These instructions OVERRIDE any default behavior.\n\n"
+        "Contents of /Users/x/project/CLAUDE.md (project instructions, checked into the codebase):\n\n"
+        "# some-project\n\nProject-specific rules go here, not env-context at all."
+    )
+    sr = real_sr_text(body)
+    result = _strip_system_reminders(text_block(sr))
+    check('T42_claudemd_block_preserved', result[0]['text'] == sr, repr(result[0]['text'])[:120])
+
+
+def t43_env_context_different_email_preserved():
+    body = (
+        "As you answer the user's questions, you can use the following context:\n"
+        "# userEmail\n"
+        "The user's email address is someoneelse@example.com.\n"
+        "# currentDate\n"
+        "Today's date is 2026-09-05.\n\n"
+        "      IMPORTANT: this context may or may not be relevant to your tasks. "
+        "You should not respond to this context unless it is highly relevant to your task."
+    )
+    sr = real_sr_text(body)
+    result = _strip_system_reminders(text_block(sr))
+    check('T43_env_context_different_email_preserved', result[0]['text'] == sr, repr(result[0]['text'])[:120])
+
+
+# T44 — real corpus shape (src/logs/dual_log, main checkout, 2026-09, 242 occurrences): CC
+# bundles `# claudeMd` project content AND `# userEmail`/`# currentDate` into ONE SR block rather
+# than two separate blocks. `_ENV_CONTEXT_RE.fullmatch` correctly fails (the inner text is not
+# JUST the env-context block), so the `_PRESERVE_PREAMBLE` guard preserves the whole thing —
+# losing the CLAUDE.md content would be worse than the ~250 bytes of unstripped env-context noise.
+def t44_bundled_claudemd_and_env_context_preserved():
+    body = (
+        "As you answer the user's questions, you can use the following context:\n"
+        "# claudeMd\nCodebase and user instructions are shown below. Be sure to adhere to these "
+        "instructions.\n\nContents of /Users/x/wise2627/CLAUDE.md (project instructions, checked "
+        "into the codebase):\n\n# wise2627\n\nSome real project instructions here.\n"
+        "# userEmail\n"
+        "The user's email address is brunowinter7934@gmail.com. Use it only to identify the user, "
+        "such as for authorship, attribution, or filtering their own work. Never send it to an "
+        "unrelated service, such as in a request header, URL, or payload, unless the user explicitly asks.\n"
+        "# currentDate\n"
+        "Today's date is 2026-09-04.\n\n"
+        "      IMPORTANT: this context may or may not be relevant to your tasks. "
+        "You should not respond to this context unless it is highly relevant to your task."
+    )
+    sr = real_sr_text(body)
+    result = _strip_system_reminders(text_block(sr))
+    check('T44_bundled_claudemd_env_context_preserved', result[0]['text'] == sr, repr(result[0]['text'])[:120])
+
+
 # ── WAKEUP FALSE-POSITIVE TESTS ───────────────────────────────────────────────
 # Import via importlib — avoids block_dev_imports_src hook pattern (from src.)
 import importlib as _wakeup_il
@@ -1429,6 +1525,9 @@ if __name__ == '__main__':
         t35_final_sr_pass_tool_result_str_identity_preserved, t36_final_sr_pass_tool_result_list_identity_preserved,
         t37_occurrence8_fenced_env_context_in_tool_result_preserved,
         t38_top_level_task_tools_nag_still_stripped_via_first_pass, t39_top_level_date_changed_still_stripped_via_final_sr_pass,
+        t40_env_context_may_2026_form_stripped, t41_env_context_cc258_form_stripped,
+        t42_claudemd_context_block_preserved, t43_env_context_different_email_preserved,
+        t44_bundled_claudemd_and_env_context_preserved,
         w01_tn_in_tool_result_str, w02_tn_in_tool_result_list, w03_bgk_in_tool_result_str,
         w04_genuine_tn_completed_plain_string, w05_genuine_tn_failed_plain_string,
         w06_genuine_bgk_plain_string,

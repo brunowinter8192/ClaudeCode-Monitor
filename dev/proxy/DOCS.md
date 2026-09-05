@@ -118,13 +118,19 @@ Status: runs clean — 26/26 checks PASS on the current tree.
 
 ---
 
-### test_strip_fix.py (1471 LOC)
+### test_strip_fix.py (1570 LOC)
 
-**Purpose:** The largest suite in this directory (250 checks) for the template-based exact-match SR
-strip (Phase B). Four groups: (1) 8 core SR templates × 3 cases each — real strip at top level, FP
+**Purpose:** The largest suite in this directory (255 checks) for the template-based exact-match SR
+strip (Phase B). Five groups: (1) 8 core SR templates × 3 cases each — real strip at top level, FP
 code-literal preserved, tool_result content preserved (SR family no longer descends into
-`tool_result`) — plus 4 content-shape tests, user-interrupt partial mode, plan-mode None-return, and
-`_find_system_reminder_blocks` top-level-only extraction; (2) "w"-prefixed full-chain tests —
+`tool_result`) — plus 4 content-shape tests, user-interrupt partial mode, plan-mode None-return,
+`_find_system_reminder_blocks` top-level-only extraction, and T40–T44 (2026-09, CC 2.1.258
+`_ENV_CONTEXT_RE` fix): the May-2026 form strips, the 2.1.258 form (2 extra sentences after the
+email) strips, a CLAUDE.md context block with the same preamble is preserved, an env-context block
+with a DIFFERENT email is preserved (the hardcoded email literal never matches), and the real
+corpus shape where CC bundles `# claudeMd` project content AND `# userEmail`/`# currentDate` into
+ONE `<system-reminder>` block is preserved whole (`fullmatch` correctly never matches it — see
+`src/proxy/DOCS.md`'s `strip_sr.py` entry); (2) "w"-prefixed full-chain tests —
 task-notification, launch-ack, interrupt-marker, sn-notice and role-system strips run through the
 real per-message passes together, asserting neighbor content and exact real-corpus bodies survive;
 (3) "w31"–"w33" full-`apply_modification_rules`-chain tests (2026-09-04) for the `<system-reminder>`-
@@ -154,7 +160,32 @@ via `importlib` to satisfy `block_dev_imports_src`), `src/proxy/strip_bg_complet
 `src/proxy_display/parser.py` (`badge_flags`, `accumulate_dual_log`), `src/proxy_display/render_turn.py`
 (`_build_req_header_line`).
 
-Status: runs clean — 217/217 checks PASS on the current tree.
+Status: runs clean — 255/255 checks PASS on the current tree.
+
+---
+
+### replay_env_context_strip.py (192 LOC, new 2026-09)
+
+**Purpose:** Before/after replay for the CC 2.1.258 `_ENV_CONTEXT_RE` fix — scans every top-level
+standalone `<system-reminder>` block (str content or `list[type=='text']`, never `tool_result`,
+matching `_strip_system_reminders`'s own scope) across every dual-log entry, deduplicates by
+(file, exact inner text), and classifies each occurrence against BOTH the OLD (pre-fix, quoted
+verbatim in-script) and the live (post-fix) `_ENV_CONTEXT_RE` into 4 buckets: stripped; left-PURE
+(no `# claudeMd` — genuinely broken by CC 2.1.258, the bug); left-BUNDLED (`# claudeMd` present
+too — preserved by design, unaffected by the fix either way); and CLAUDE.md-preserved (no
+`# userEmail` hint at all).
+**Reads:** `src/logs/dual_log/*_original.jsonl` (main checkout, hardcoded absolute path — same
+convention as `replay_sn_notice_strip.py`, `src/logs/` is gitignored per-worktree).
+**Writes:** `dev/proxy/md/replay_env_context_strip.md`.
+**Run:** `python3 dev/proxy/replay_env_context_strip.py`
+**Calls out:** `src/proxy/strip_sr.py` (`_ENV_CONTEXT_RE`, `_PRESERVE_PREAMBLE`,
+`_STANDALONE_SR_RE`, `_INNER_SR_RE`, imported via `importlib`).
+
+Status (2026-09, 14 files, 2888 entries, unique-by-text): before — 7 stripped, 3 left-PURE
+(the bug), 3 left-BUNDLED, 0 CLAUDE.md-preserved; after — 10 stripped, 0 left-PURE, 3 left-BUNDLED
+(unchanged, correct), 0 CLAUDE.md-preserved (unchanged, correct — a rotating-corpus property, not
+evidence the guard stopped firing, see `process-docs/strip_efficacy_audit/`). The 3
+newly-stripped blocks are exactly the CC 2.1.258 form this task fixes.
 
 ---
 

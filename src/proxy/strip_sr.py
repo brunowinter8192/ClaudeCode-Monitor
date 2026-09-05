@@ -40,10 +40,14 @@ _PRESERVE_PREAMBLE = "As you answer the user's questions, you can use the follow
 # whitespace gap before IMPORTANT (tolerates minor indentation changes in future CC updates).
 # Email and all other text match literally. Must be checked BEFORE _PRESERVE_PREAMBLE guard
 # because this block shares the same preamble as CLAUDE.md context blocks.
+# `[^\n]*` after the email sentence (CC 2.1.258, measured 2026-09): CC appends 2 sentences —
+# "Use it only to identify the user, ... Never send it to an unrelated service, ..." — on the
+# SAME line, before the `\n` that precedes `# currentDate`. Tolerates any such trailing text on
+# that one line (including none, the pre-2.1.258 form) without loosening any other anchor.
 _ENV_CONTEXT_RE = re.compile(
     r"As you answer the user's questions, you can use the following context:\n"
     r"# userEmail\n"
-    r"The user's email address is brunowinter7934@gmail\.com\.\n"
+    r"The user's email address is brunowinter7934@gmail\.com\.[^\n]*\n"
     r"# currentDate\n"
     r"Today's date is \d{4}-\d{2}-\d{2}\.\s+"
     r"IMPORTANT: this context may or may not be relevant to your tasks\. "
