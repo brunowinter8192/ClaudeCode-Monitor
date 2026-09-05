@@ -36,11 +36,11 @@ is enforced against `cat` and not against the equivalent python read.
 
 ## Decision
 
-All five hooks stay as they are. One debatable block in a week does not justify an exemption,
-and the clean exemption ("file not yet in the collection's manifest") would need a manifest
-lookup inside the hook for a case with no observed damage. Recorded as a known inconsistency:
-if the pre-index `cat` block recurs during capture runs, the fix is a manifest-aware exemption
-in `block_rag_corpus_read.py`, not a blanket allow.
+All five hooks stay as they are. The debatable case was closed on the skill side, not in the
+hook: the websearch-capture-and-index skill (websearch repo) now scrapes and cleans in
+`/tmp/<COLLECTION>_staging/` and moves the surviving `.md` files into `data/documents/` only
+in its index step, so a pre-index `cat` never touches the corpus path and the hook's rule holds
+without an exemption.
 
 The five hooks keep their individual block messages. Each explains a different argument rule,
 unlike the chained-CLI family where one sentence covered every tool.
