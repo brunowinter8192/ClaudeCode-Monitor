@@ -81,8 +81,11 @@ def test_append_copy_symbol_width_guard():
     check("append_copy_symbol: leaves line unchanged when too narrow (no invisible hit zone)", narrow == "x" * 60)
 
 
-# Main pane: pre-existing tool_call request/response split (unchanged) + new first-line 'all'
-# coverage for every other event type; click vs 'y' parity via the real serializer
+# Main pane (2026-09 tool-calls-only redesign): tool_call is now ONE block (req N: Tool + params
+# + result), same as every other event type -- the old REQUEST/RESPONSE two-region special case
+# is gone, so tool_call now falls through the SAME generic first-line 'all' branch as warning/
+# session_banner (the only other event types the main pane still buffers). Click vs 'y' parity
+# via the real serializer.
 def test_main_pane_copy_click():
     captured = _patch_clipboard(mod_monitor)
     mod_main_display.main_event_buffer.clear()
@@ -91,34 +94,33 @@ def test_main_pane_copy_click():
     mod_main_display.main_event_buffer.append({
         'type': 'tool_call',
         'data': {'tool_use_id': 'tu1', 'output': 'file1\nfile2', 'tool_name': 'Bash',
-                  'input': {'command': 'ls'}, 'timestamp': '2026-01-01T00:00:00Z',
-                  'is_subagent': False, 'system_reminders': [], 'is_error': False},
+                  'input': {'command': 'ls'}, 'req_num': 5,
+                  'is_subagent': False, 'is_error': False},
         'call_number': 1,
     })
     mod_main_display.main_event_buffer.append({
-        'type': 'user_prompt', 'data': {'timestamp': '2026-01-01T00:01:00Z'}, 'call_number': None,
+        'type': 'warning',
+        'data': {'file_path': 'x.jsonl', 'line_number': 3, 'error_message': 'bad json', 'raw_line': '{...'},
+        'call_number': None,
     })
     mod_main_display.main_event_buffer.append({
-        'type': 'thinking',
-        'data': {'timestamp': '2026-01-01T00:02:00Z', 'thinking': 'reasoning about the task'},
-        'call_number': None,
+        'type': 'session_banner', 'data': {}, 'call_number': None,
     })
 
     mod_main_display.render_main_buffer(pane_height=50, pane_width=100, scroll_offset=0)
     regions = dict(mod_main_display._main_copy_rows)
 
     parts_seen = {v[1] for v in regions.values()}
-    check("main: tool_call event registers BOTH request and response rows (pre-existing, unchanged)",
-          {'request', 'response'}.issubset(parts_seen))
-    check("main: non-tool_call events (user_prompt, thinking) register 'all' rows (new)",
-          sum(1 for v in regions.values() if v[1] == 'all') == 2)
-    check("main: one copy region per non-blank event row-kind (4 total: req, resp, 2x all)",
-          len(regions) == 4)
+    check("main: every event (tool_call included) registers an 'all' copy region -- no more "
+          "request/response split",
+          parts_seen == {'all'})
+    check("main: one copy region per event (3 total: tool_call, warning, session_banner)",
+          len(regions) == 3)
 
     for phys_row, (eidx, part) in regions.items():
         mod_main_display.main_hover_row = phys_row
         key = mod_monitor.resolve_parent_key(mod_main_display.main_line_map, mod_main_display.main_hover_row)
-        y_text = mod_main_display.serialize_main_event(key, part) if part != 'all' else mod_main_display.serialize_main_event(key)
+        y_text = mod_main_display.serialize_main_event(key)
         captured.clear()
         mod_monitor.copy_to_clipboard(y_text)
         y_captured = captured[-1]
@@ -131,14 +133,11 @@ def test_main_pane_copy_click():
             check(f"main: click/y parity row {phys_row} (eidx={eidx}, part={part})",
                   captured[-1] == y_captured and y_captured != '')
 
-    # Width guard scope note: the pre-existing tool_call request/response branch (untouched by
-    # this milestone) registers _main_copy_rows unconditionally, even when the symbol doesn't
-    # fit -- a pre-existing gap out of scope here (see report). This milestone's OWN new code
-    # (the non-tool_call 'all' branch) is checked in isolation: it must register nothing.
+    # Width guard: no copy row registers anywhere when the symbol doesn't fit (tool_call now
+    # goes through the SAME width-guarded generic branch as every other event type).
     mod_main_display.render_main_buffer(pane_height=50, pane_width=10, scroll_offset=0)
-    all_part_rows = [v for v in mod_main_display._main_copy_rows.values() if v[1] == 'all']
-    check("main: width guard -- new 'all'-part rows register nothing when pane_width=10 (too narrow)",
-          len(all_part_rows) == 0)
+    check("main: width guard -- no copy rows register when pane_width=10 (too narrow)",
+          len(mod_main_display._main_copy_rows) == 0)
 
 
 # Tokens pane: one copy region per API-call row; click vs 'y' parity; width guard end-to-end

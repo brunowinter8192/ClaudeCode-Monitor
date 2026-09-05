@@ -1,33 +1,33 @@
 # INFRASTRUCTURE
 import re
-from typing import List, Optional
 
-# From utils.py: Timestamp formatting
-from ..utils import format_timestamp
 # From constants.py: Colors and config values
-from ..constants import GREEN, BLUE, YELLOW, CYAN, RED, PASTEL_PURPLE, PASTEL_ORANGE, WHITE, RESET
+from ..constants import GREEN, BLUE, YELLOW, CYAN, RED, RESET
 
 INDENT = '  '
 
 SCORE_PATTERN = re.compile(r'^-+ Result \d+ \(score: [\d.]+\) -+$')
 
 # ORCHESTRATOR
-def format_tool_call(tool_name: str, input_data: dict, output_data: str, tool_use_id: str, timestamp: str, call_number: int, is_subagent: bool = False, system_reminders: list = None, is_error: bool = False) -> str:
-    request = format_request(tool_name, input_data, tool_use_id, timestamp, call_number, is_subagent)
-    response = format_response(tool_name, output_data, tool_use_id, timestamp, call_number, is_subagent, system_reminders, is_error)
+# `req_num` (2026-09, main-pane redesign — tool-calls-only, req-numbered like the tokens pane):
+# the same ordinal the tokens pane shows as REQ #N for this tool_use's requestId (int), or '?'
+# when unresolved (see jsonl_parser.update_request_numbers / core/monitor_session.py). Replaces
+# the old per-monitor `call_number` in the header; no timestamp, no char counts, no →/← arrows.
+def format_tool_call(tool_name: str, input_data: dict, output_data: str, req_num, is_subagent: bool = False, is_error: bool = False) -> str:
+    request = format_request(tool_name, input_data, req_num, is_subagent)
+    response = format_response(output_data, is_error)
     return combine_request_response(request, response)
 
 # FUNCTIONS
 
-# Combine request and response sections with spacing
+# Combine the header+params block and the result block with one blank-line separator
 def combine_request_response(request: str, response: str) -> str:
     return f"{request}\n\n{response}"
 
-# Format REQUEST header with color based on agent type
-def format_request(tool_name: str, input_data: dict, tool_use_id: str, timestamp: str, call_number: int, is_subagent: bool = False) -> str:
-    time_str = format_timestamp(timestamp)
+# Format the "req N: ToolName" header (color by agent type) plus params
+def format_request(tool_name: str, input_data: dict, req_num, is_subagent: bool = False) -> str:
     color = BLUE if is_subagent else GREEN
-    header = f"{color}[{time_str}] REQUEST #{call_number} → {tool_name}{RESET}"
+    header = f"{color}req {req_num}: {tool_name}{RESET}"
 
     if tool_name == 'TodoWrite' and 'todos' in input_data:
         params = format_todo_list(input_data['todos'])
@@ -36,26 +36,14 @@ def format_request(tool_name: str, input_data: dict, tool_use_id: str, timestamp
     else:
         params = format_parameters(input_data)
 
-    return f"{header}\n{params}"
+    return f"{header}\n{params}" if params else header
 
-# Format RESPONSE header with color based on agent type
-def format_response(tool_name: str, output_data: str, tool_use_id: str, timestamp: str, call_number: int, is_subagent: bool = False, system_reminders: list = None, is_error: bool = False) -> str:
-    time_str = format_timestamp(timestamp)
-
+# Format the result body — red when the tool call errored, plain otherwise. No header: the
+# single "req N: ToolName" header above already identifies the call.
+def format_response(output_data: str, is_error: bool = False) -> str:
     if is_error:
-        header = f"{RED}[{time_str}] RESPONSE #{call_number} ← {tool_name} [ERROR]{RESET}"
-        content = format_error_output(output_data)
-    else:
-        color = BLUE if is_subagent else GREEN
-        header = f"{color}[{time_str}] RESPONSE #{call_number} ← {tool_name}{RESET}"
-        content = format_output(output_data)
-
-    reminders = format_system_reminders(system_reminders)
-
-    parts = [header, content]
-    if reminders:
-        parts.append(reminders)
-    return '\n'.join(parts)
+        return format_error_output(output_data)
+    return format_output(output_data)
 
 # Format todo list with colored status and icons
 def format_todo_list(todos: list) -> str:
@@ -110,7 +98,7 @@ def format_output(content: str) -> str:
             formatted_lines.append(f"{INDENT}{line}")
     return '\n'.join(formatted_lines)
 
-# Format error output content in red
+# Format error output content in red — the visible error marker (no separate [ERROR] header)
 def format_error_output(content: str) -> str:
     if not content:
         return f"{INDENT}{RED}(empty){RESET}"
@@ -119,29 +107,31 @@ def format_error_output(content: str) -> str:
     formatted_lines = '\n'.join(f"{INDENT}{RED}{line.expandtabs(8)}{RESET}" for line in lines)
     return formatted_lines
 
-# Format system reminders with pastel blue color
-def format_system_reminders(reminders: list) -> str:
-    if not reminders:
-        return ''
-    lines = []
-    for reminder in reminders:
-        for line in reminder.split('\n'):
-            line = line.expandtabs(8)
-            if line.strip():
-                lines.append(f"{INDENT}{PASTEL_PURPLE}{line}{RESET}")
-    return '\n'.join(lines)
-
-# Format parameter value preserving newlines for multiline strings
-def format_value(value) -> str:
-    if isinstance(value, str) and '\n' in value:
-        lines = value.split('\n')
-        return '\n' + '\n'.join(f"{INDENT}{line.expandtabs(8)}" for line in lines)
-    elif isinstance(value, dict):
-        return str(value)
-    elif isinstance(value, list):
-        return str(value)
-    else:
-        return str(value)
+# Format a parameter value: multi-line strings render as-is under the key (indented, unchanged
+# from before); dict/list values flatten to indented key:value / bullet lines rather than
+# Python-repr braces+quotes — unobserved in real tool usage (measured 2026-09: 840 real tool_use
+# blocks across 6 sessions in 2 projects, 0 dict/list-valued params — see process-docs/main_pane/)
+# but still avoided since a future tool call could carry one. `depth` only affects nested
+# dict/list indentation; every existing single-level caller passes no depth (default 1), so a
+# plain multi-line string renders byte-identical to before.
+def format_value(value, depth: int = 1) -> str:
+    pad = INDENT * depth
+    if isinstance(value, str):
+        if '\n' in value:
+            lines = value.split('\n')
+            return '\n' + '\n'.join(f"{pad}{line.expandtabs(8)}" for line in lines)
+        return value
+    if isinstance(value, dict):
+        if not value:
+            return '(empty)'
+        lines = [f"{pad}{k}: {format_value(v, depth + 1)}" for k, v in value.items()]
+        return '\n' + '\n'.join(lines)
+    if isinstance(value, list):
+        if not value:
+            return '(empty)'
+        lines = [f"{pad}- {format_value(v, depth + 1)}" for v in value]
+        return '\n' + '\n'.join(lines)
+    return str(value)
 
 # Get status icon for todo item
 def get_status_icon(status: str) -> str:

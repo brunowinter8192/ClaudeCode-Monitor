@@ -4,13 +4,12 @@ import time
 from typing import Optional
 
 from ..constants import (
-    RESET, GREEN, YELLOW, CYAN, DIM_YELLOW_BG,
+    RESET, GREEN, YELLOW, CYAN,
     SEARCH_MATCH_BG, SEARCH_CURRENT_BG,
     MODE_ALL, MODE_MAIN, MAIN_EVENT_BUFFER_CAP,
 )
 from ..format.formatter import format_tool_call
-from ..format.formatter_events import format_user_prompt, format_user_media, format_thinking, format_skill_activation, format_system_message
-from ..utils import truncate_visible, _ANSI_ESCAPE_RE, _cell_width, append_copy_symbol, highlight_query_in_line
+from ..utils import truncate_visible, _ANSI_ESCAPE_RE, append_copy_symbol, highlight_query_in_line
 # From search_bar.py: shared search-bar mechanics (SearchState, render_search_bar) — rollout
 # sub-milestone 2, retrofitting the main pane onto the proxy pane's reference implementation
 from .. import search_bar
@@ -21,7 +20,7 @@ main_event_buffer: list = []
 main_scroll_offset: int = 0
 main_hover_row: Optional[int] = None
 main_line_map: dict = {}            # phys_row → event_idx into main_event_buffer
-_main_copy_rows: dict = {}          # phys_row → (event_idx, part)  part ∈ {'request','response'}
+_main_copy_rows: dict = {}          # phys_row → (event_idx, 'all') — one copy region per event, same convention every other pane uses
 _main_copy_feedback_until: dict = {}  # (event_idx, part) → expiry float
 _main_pane_width: int = 80          # updated each render cycle; read by click handler
 
@@ -70,59 +69,24 @@ def format_warning(file_path: str, line_number: int, error_message: str, raw_lin
 def display_warning(warning: dict) -> None:
     _buffer_append('warning', warning)
 
-# Buffer user media event (items already grouped by caller)
-def display_user_media(media_items: list) -> None:
-    _buffer_append('user_media', {'items': media_items})
-
-# Buffer skill/command activation event
-def display_skill_activation(skill_item: dict) -> None:
-    _buffer_append('skill_activation', skill_item)
-
-# Buffer thinking block event
-def display_thinking(thinking_item: dict) -> None:
-    _buffer_append('thinking', thinking_item)
-
 # Buffer tool call event
 def display_tool_call(tool_call: dict, call_number: int) -> None:
     _buffer_append('tool_call', tool_call, call_number)
-
-# Buffer user prompt event
-def display_user_prompt_from_jsonl(prompt_item: dict) -> None:
-    _buffer_append('user_prompt', prompt_item)
-
-# Buffer system message event
-def display_system_message(sys_msg: dict) -> None:
-    _buffer_append('system_message', sys_msg)
 
 # Format buffered event to list of display strings (split by newline)
 def _format_event_to_lines(event: dict) -> list:
     t = event['type']
     d = event['data']
     if t == 'tool_call':
-        tool_use_id = d['tool_use_id']
         output_data = d['output'] or ''
         formatted = format_tool_call(
             tool_name=d['tool_name'],
             input_data=d['input'],
             output_data=output_data,
-            tool_use_id=tool_use_id,
-            timestamp=d['timestamp'],
-            call_number=event['call_number'],
+            req_num=d.get('req_num', '?'),
             is_subagent=d.get('is_subagent', False),
-            system_reminders=d.get('system_reminders', []),
             is_error=d.get('is_error', False),
         )
-    elif t == 'user_prompt':
-        ts = d.get('timestamp', '')
-        formatted = format_user_prompt(ts, strip_badge=False)
-    elif t == 'user_media':
-        formatted = format_user_media(d.get('items', []))
-    elif t == 'thinking':
-        formatted = format_thinking(d)
-    elif t == 'skill_activation':
-        formatted = format_skill_activation(d)
-    elif t == 'system_message':
-        formatted = format_system_message(d.get('timestamp', ''), d.get('text', ''))
     elif t == 'warning':
         formatted = format_warning(d['file_path'], d['line_number'], d['error_message'], d['raw_line'])
     elif t == 'session_banner':
@@ -262,29 +226,13 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
             elif eidx in state.match_set:
                 line = highlight_query_in_line(line, state.query, SEARCH_MATCH_BG)
 
-        # ⎘ copy-button injection (existing — ANSI strip accounts for prepended BG)
-        if eidx >= 0 and main_event_buffer[eidx]['type'] == 'tool_call':
-            stripped = _ANSI_ESCAPE_RE.sub('', line)
-            if '] REQUEST #' in stripped:
-                part = 'request'
-            elif '] RESPONSE #' in stripped:
-                part = 'response'
-            else:
-                part = None
-            if part is not None:
-                is_flash = _main_copy_feedback_until.get((eidx, part), 0) > time.time()
-                copy_sym = '✓' if is_flash else '⎘'
-                sym_cells = _cell_width(copy_sym)
-                visible_len = sum(_cell_width(ch) for ch in stripped)
-                pad = pane_width - 1 - sym_cells - visible_len  # 1 space gap + sym_cells
-                if pad >= 0:
-                    line = line + ' ' * pad + ' ' + copy_sym
-                _main_copy_rows[phys_row] = (eidx, part)
-        # ⎘ copy-button on the first line of any other event type — part='all', matching what
-        # the 'y' key already copies for these rows (serialize_main_event default). Registered
-        # ONLY when the symbol actually fits (unlike the tool_call branch above), so a too-narrow
-        # pane never leaves an invisible hit zone.
-        elif eidx >= 0 and eidx != prev_eidx:
+        # ⎘ copy-button on the first line of an event — part='all', matching what the 'y' key
+        # already copies for these rows (serialize_main_event default). tool_call is now ONE
+        # block (req N: Tool + params + result), same as every other event type — the old
+        # separate REQUEST/RESPONSE two-region special case is gone along with that split.
+        # Registered ONLY when the symbol actually fits, so a too-narrow pane never leaves an
+        # invisible hit zone.
+        if eidx >= 0 and eidx != prev_eidx:
             stripped = _ANSI_ESCAPE_RE.sub('', line)
             is_flash = _main_copy_feedback_until.get((eidx, 'all'), 0) > time.time()
             copy_sym = '✓' if is_flash else '⎘'
@@ -302,34 +250,27 @@ def render_main_buffer(pane_height: int, pane_width: int, scroll_offset: int) ->
     bar_line = _render_search_bar(pane_width)
     return f"{bar_line}\033[K{RESET}\n" + '\n'.join(result_lines)
 
-# Serialize a main-pane event to full untruncated text for clipboard
-# part='all' → header+INPUT+OUTPUT (y-hotkey); 'request' → header+INPUT; 'response' → header+OUTPUT
+# Serialize a main-pane event to full untruncated text for clipboard. `part` is always 'all' now
+# that tool_call is one block (req N: Tool + params + result) — the old 'request'/'response'
+# two-region split is gone along with the header pair it copied. Reuses format_tool_call directly
+# (ANSI stripped) rather than reconstructing the text a second time, so clipboard content can
+# never drift from what the pane actually shows.
 def serialize_main_event(event_idx: int, part: str = 'all') -> str:
-    import json
     if event_idx < 0 or event_idx >= len(main_event_buffer):
         return ''
     event = main_event_buffer[event_idx]
     t = event['type']
     d = event['data']
     if t == 'tool_call':
-        tool_name = d.get('tool_name', '?')
-        inp = d.get('input', {})
-        out = d.get('output', '') or ''
-        header = f"{tool_name}  call#{event.get('call_number', '?')}  [{d.get('timestamp', '')}]"
-        inp_text = json.dumps(inp, ensure_ascii=False, indent=2) if isinstance(inp, dict) else str(inp)
-        if part == 'request':
-            sections = [header, "---INPUT---", inp_text]
-        elif part == 'response':
-            sections = [header, "---OUTPUT---", out]
-        else:
-            sections = [header, "---INPUT---", inp_text, "---OUTPUT---", out]
-        return '\n'.join(sections)
-    elif t == 'user_prompt':
-        return f"[user_prompt] {d.get('timestamp', '')}"
-    elif t == 'thinking':
-        return d.get('text', '') or f"[thinking {d.get('chars', 0)}c]"
-    elif t == 'system_message':
-        return d.get('text', '')
+        formatted = format_tool_call(
+            tool_name=d.get('tool_name', '?'),
+            input_data=d.get('input', {}),
+            output_data=d.get('output', '') or '',
+            req_num=d.get('req_num', '?'),
+            is_subagent=d.get('is_subagent', False),
+            is_error=d.get('is_error', False),
+        )
+        return _ANSI_ESCAPE_RE.sub('', formatted)
     else:
         return f"[{t}]"
 

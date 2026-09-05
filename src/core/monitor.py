@@ -34,6 +34,7 @@ from .. import search_bar
 
 file_positions: Dict[Path, int] = {}
 tool_use_caches: Dict[Path, dict] = {}
+request_numbers_by_file: Dict[Path, dict] = {}  # {requestId: ordinal} per session file — see jsonl_parser.update_request_numbers
 call_counter = 0
 agent_to_task: Dict[str, str] = {}
 agent_to_type: Dict[str, str] = {}
@@ -101,7 +102,7 @@ def monitor_sessions() -> None:
 
 # Update tracking for new or removed sessions
 def update_session_tracking(sessions: list) -> None:
-    global file_positions, tool_use_caches
+    global file_positions, tool_use_caches, request_numbers_by_file
 
     current_files = set(sessions)
     tracked_files = set(file_positions.keys())
@@ -112,11 +113,14 @@ def update_session_tracking(sessions: list) -> None:
     for new_file in new_files:
         file_positions[new_file] = get_initial_position(new_file)
         tool_use_caches[new_file] = {}
+        request_numbers_by_file[new_file] = {}
 
     for removed_file in removed_files:
         del file_positions[removed_file]
         if removed_file in tool_use_caches:
             del tool_use_caches[removed_file]
+        if removed_file in request_numbers_by_file:
+            del request_numbers_by_file[removed_file]
 
 # Process all tracked session files
 def process_all_sessions(sessions: list) -> None:
@@ -207,6 +211,7 @@ def _main_ram_state() -> list:
     return [
         ('file_positions',          file_positions),
         ('tool_use_caches',         tool_use_caches),
+        ('request_numbers_by_file', request_numbers_by_file),
         ('agent_to_task',           agent_to_task),
         ('agent_to_type',           agent_to_type),
         ('buffered_subagent_calls', buffered_subagent_calls),
@@ -297,6 +302,7 @@ def _refresh_main_data(now: float, last_data_refresh: float, last_janitor_ts: fl
         current_main_session = newest
         file_positions[newest] = 0
         tool_use_caches[newest] = {}
+        request_numbers_by_file[newest] = {}
         _md.main_event_buffer.clear()
         _md.main_scroll_offset = 0
         _md.main_event_buffer.append({'type': 'session_banner', 'data': {}, 'call_number': None})

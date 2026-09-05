@@ -76,13 +76,20 @@ def check(label, condition):
 
 # FUNCTIONS
 
-# Synthetic system_message event — serialize_main_event('all') returns d['text'] verbatim (the
-# match target for _compute_search_matches), and _format_event_to_lines renders it as an
-# uncolored indented body line (format_system_message) — a clean surface for asserting
-# highlight_query_in_line wraps exactly the matched substring, nothing else on the line.
+# Synthetic tool_call event (2026-09: system_message no longer renders — the main pane shows
+# only tool calls now, see process-docs/main_pane/). serialize_main_event('all') reuses the real
+# format_tool_call and returns the marker inside the `command` param line; format_parameters
+# renders param lines with NO color codes at all — the same "clean surface" property the old
+# system_message body line had — for asserting highlight_query_in_line wraps exactly the matched
+# substring, nothing else on the line.
 def _make_event(marker: str = None, filler: str = 'plain content'):
     text = f"{filler} {marker}" if marker else filler
-    return {'type': 'system_message', 'data': {'timestamp': '2026-01-01T00:00:00Z', 'text': text}, 'call_number': None}
+    return {
+        'type': 'tool_call',
+        'data': {'tool_use_id': 'tu', 'tool_name': 'Bash', 'input': {'command': text},
+                  'output': '', 'req_num': 1, 'is_subagent': False, 'is_error': False},
+        'call_number': None,
+    }
 
 
 def _reset_state(query: str = ''):

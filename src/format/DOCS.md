@@ -14,17 +14,21 @@ from src.format.strip_marker import highlight_stripped        # inline DIM_YELLO
 from src.format import format_tool_call
 from src.format import format_request, format_response, combine_request_response
 from src.format import format_todo_list, format_parameters, format_task_parameters
-from src.format import format_output, format_error_output, format_system_reminders
+from src.format import format_output, format_error_output
 from src.format import format_value, get_status_icon, get_status_color, shorten_tool_name
-
-# Event formatting (formatter_events.py)
-from src.format import format_user_prompt, format_hook_annotation, format_system_message
-from src.format import format_user_media, format_skill_activation, format_thinking
 
 # Cache tracker rendering (token_format.py)
 from src.format import format_cache_tracker
 from src.format import _format_k          # compact "Xk" token count — used by workers/proxy_display
 ```
+
+**(2026-09) `formatter_events.py` removed entirely** — `format_user_prompt`, `format_hook_annotation`,
+`format_system_message`, `format_user_media`, `format_skill_activation`, `format_thinking` all had
+zero callers once `core/monitor_session.py` stopped displaying those event types (the main pane
+shows only tool calls now, see `core/DOCS.md` and `process-docs/main_pane/`); `format_hook_annotation`
+was already unreferenced before this change. `format_system_reminders` (`formatter.py`) was also
+removed — the `system_reminders` field it formatted was never populated anywhere in
+`jsonl_parser.py`/`jsonl_extractors.py`, so the function was dead on arrival even before this milestone.
 
 ## Modules
 
@@ -38,22 +42,36 @@ from src.format import _format_k          # compact "Xk" token count — used by
 
 ---
 
-### formatter.py (170 LOC)
+### formatter.py (160 LOC)
 
-**Purpose:** Format tool call request/response pairs as ANSI-colored terminal strings. Handles todo list rendering, parameter formatting, and status icons/colors.
+**Purpose:** Format one tool call as a single ANSI-colored block for the main pane — `req N:
+ToolName` header (GREEN, or BLUE for a subagent call), `key: value` param lines, a blank
+separator, then the result (RED when the call errored). **(2026-09, tool-calls-only redesign,
+see `process-docs/main_pane/`):** `format_tool_call(tool_name, input_data, output_data, req_num,
+is_subagent=False, is_error=False)` — dropped `tool_use_id` (was already unused in the function
+body before this change), `timestamp`/`call_number` (replaced by `req_num`, the same ordinal the
+tokens pane shows as `REQ #N` for the same request — resolved upstream in
+`core/monitor_session.py`, this module stays a pure function with no file-scoped lookups), and
+`system_reminders` (the field was never populated anywhere in `jsonl_parser.py`/
+`jsonl_extractors.py` — `format_system_reminders` was dead code, removed). `format_request`
+returns just the header when `input_data` is empty (no trailing blank param line).
+`format_response` no longer takes a header at all — the single `req N:` header above already
+identifies the call, so a separate `RESPONSE #N ← Tool [ERROR]` line would be redundant; an error
+is still visibly marked, via the same RED `format_error_output` as before. `format_value` gained
+an optional `depth: int = 1` param (default unchanged, so every pre-existing single-level caller —
+`format_parameters`, `format_task_parameters` — renders a multi-line string byte-identical to
+before) to flatten `dict`/`list` values into indented `key: value` / `- item` lines instead of
+Python-repr braces and quotes — unobserved in real tool usage (measured 2026-09: 840 real
+tool_use blocks across 6 sessions in 2 projects, 0 dict/list-valued params — see
+`process-docs/main_pane/`) but kept minimal rather than skipped, since a future tool call could
+carry one and the milestone explicitly bans JSON-style punctuation in the rendered output.
+Handles todo list rendering (`format_todo_list`, unchanged, kept per the milestone's own
+instruction to preserve special-casing that already produces readable output), Task-parameter
+`subagent_type` highlighting (`format_task_parameters`, unchanged), and status icons/colors.
 **Reads:** Tool call dicts passed as arguments. No shared state, no file I/O.
 **Writes:** Returns formatted strings. No stdout, no file writes.
-**Called by:** `core/monitor_display.py` (`format_tool_call`).
-**Calls out:** nothing (only `utils`, `constants`).
-
----
-
-### formatter_events.py (73 LOC)
-
-**Purpose:** Format non-tool-call events — user prompts, hook annotations, system messages, media items, skill activations, thinking blocks — as ANSI-colored strings. `format_user_prompt` accepts `strip_badge=True` to append a `DIM_YELLOW_BG [~]` marker when the corresponding proxy request had stripped content.
-**Reads:** Timestamps, text, hook output/script strings, item dicts passed as arguments.
-**Writes:** Returns formatted strings. No stdout, no file writes.
-**Called by:** `core/monitor_display.py` (`format_user_prompt`, `format_user_media`, `format_thinking`, `format_skill_activation`, `format_system_message`).
+**Called by:** `core/monitor_display.py` (`format_tool_call`, and `serialize_main_event` calling it
+directly for clipboard text, ANSI-stripped).
 **Calls out:** nothing (only `utils`, `constants`).
 
 ---
