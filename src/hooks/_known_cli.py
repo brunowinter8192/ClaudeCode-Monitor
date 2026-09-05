@@ -1,68 +1,85 @@
 # INFRASTRUCTURE
 import re
 
-# CLI tools this hook family orchestrates around. A Bash segment invoking one of these
-# (optionally env-var-prefixed) is never "foreign" to another such segment — cross-CLI
-# chaining in one Bash call is allowed (2026-08 relax: block_gh_cli_chained.py /
-# block_rag_cli_chained.py / block_websearch_scrape_chained.py / block_worker_cli_read_chained.py
-# used to require same-tool-only chains; sourced by grepping every `-cli\b`/bare-tool anchor
-# actually referenced across src/hooks/*.py). `bd` deliberately excluded — retired
-# (rewrite_bd_invalid_repo.py deleted 2026-08, bd is dead). `duallog` added 2026-09-04 for
-# block_duallog_chained.py, so a duallog call may chain with the other six tools and with itself.
-KNOWN_CLI_TOOLS = ("gh-cli", "rag-cli", "worker-cli", "reddit-cli", "linkedin", "websearch", "duallog")
+# The eight CLI tools `block_cli_chained.py` polices. Value is the set of PROTECTED
+# subcommands (bounded, context-destined output — piping/redirecting them defeats the
+# reason they exist) or None when EVERY invocation of that tool is protected (no
+# subcommand is safe to truncate/redirect):
+#   - gh-cli: get_issue/list_issues return a single bounded issue/list — the other 7
+#     search/research subcommands (search_repos, index_issues, repo_freshness, etc.)
+#     are unprotected (redirect for a log is fine, no isolated hook exists for them).
+#   - rag-cli: search returns a bounded ranked result set. index/delete/update_docs/
+#     list_documents run long or write files — redirect is how progress polling works
+#     (see block_rag_cli_index_isolated.py, untouched, a different hook for a different
+#     reason: auto-backgrounding, not output-boundedness).
+#   - worker-cli: capture/response return one worker's clean, bounded pane/response
+#     text (2026-06-22 capture redesign). status/list/send/merge/spawn/kill/revive/wait
+#     are unprotected.
+#   - reddit-cli: search_subreddits returns a bounded (`--limit`-capped, see
+#     block_search_subreddits_limit.py — that hook already forbids capping the result
+#     further) subreddit list meant to land in context whole. index_subreddits/deep are
+#     long-running fetch+index operations (analogous to rag-cli index) — unprotected.
+#   - websearch: scrape_url returns a page in full. search_web/search_engine_drilldown
+#     are unprotected.
+#   - linkedin: all 5 subcommands (get_company_info, get_company_posts, get_messages,
+#     get_thread, get_notifications) are bounded read/query calls (`--count`/`--days`/
+#     `--date`-capped) with no write/index-type subcommand — every invocation protected.
+#   - penny-cli: single-mode wrapper (`penny-cli --klasse "<Klasse>"`), no subcommands —
+#     every invocation protected.
+#   - duallog: every subcommand (sessions/msgs/expand/search) exists to show JSONL
+#     content in full — every invocation protected, no unprotected subset.
+PROTECTED_SUBCOMMANDS = {
+    "gh-cli": {"get_issue", "list_issues"},
+    "rag-cli": {"search"},
+    "worker-cli": {"capture", "response"},
+    "reddit-cli": {"search_subreddits"},
+    "websearch": {"scrape_url"},
+    "linkedin": None,
+    "penny-cli": None,
+    "duallog": None,
+}
+KNOWN_CLI_TOOLS = tuple(PROTECTED_SUBCOMMANDS.keys())
 
 _ASSIGN_TOKEN = r'[A-Za-z_][A-Za-z0-9_]*=\S*'
 _ASSIGN_PREFIX = rf'(?:{_ASSIGN_TOKEN}\s+)*'
+_TOOL_ALT = "|".join(re.escape(t) for t in KNOWN_CLI_TOOLS)
+# A segment is a known-CLI invocation: optional env-var-assignment prefix, then one of
+# the 8 tool names, then an optional subcommand token (captured), then whitespace or
+# end-of-segment. The tool name must be immediately followed by whitespace/end (not by
+# `-eval`/other identifier chars) — `(?:\s|$)` after the optional subcommand group
+# enforces this, since the subcommand group itself requires `\s+` to even engage.
 _KNOWN_CLI_RE = re.compile(
-    rf'^{_ASSIGN_PREFIX}(?:{"|".join(re.escape(t) for t in KNOWN_CLI_TOOLS)})(?:\s|$)'
+    rf'^{_ASSIGN_PREFIX}(?P<tool>{_TOOL_ALT})(?:\s+(?P<sub>[A-Za-z0-9_.-]+))?(?:\s|$)'
 )
-# Leading guard: `cd`, or a `test`/`[ ... ]` conditional (`[ -f x ] && rag-cli ...`) — gates a
-# following CLI call without being one itself. Matches block_rag_cli_chained.py's pre-existing
-# "cd, guards" allowance, generalized so every chained-CLI hook shares one definition.
-_GUARD_RE = re.compile(r'^cd\b|^\[.*\]$|^test\b')
-# Pure `echo`/`printf` segment — produces separator/label output only (e.g. a loop-iteration
-# marker) and can never filter or truncate another segment's output elsewhere in the same Bash
-# call. 2026-08 loop relax: chained-CLI hooks used to block any echo mixed into a known-CLI
-# chain (real case: `for n in ...; do echo "=== #$n ==="; gh-cli get_issue ...; done`).
-_ECHO_RE = re.compile(r'^(?:echo|printf)\b')
-# `for`/`while` loop headers — pure iteration scaffolding, never a CLI call themselves.
-_LOOP_HEADER_RE = re.compile(r'^(?:for|while)\b')
-# Bare `do`/`done` — own segment when the loop is written across newlines/semicolons.
-_DO_DONE_RE = re.compile(r'^(?:do|done)$')
-# `do <segment>` on one line (e.g. `do echo "..."` or `do gh-cli get_issue ...`) — the `do`
-# keyword directly prefixing an otherwise-allowed segment.
-_DO_PREFIX_RE = re.compile(r'^do\s+(.+)$')
 
 
 # FUNCTIONS
 
-# True if `segment` (already whitespace-stripped) invokes one of KNOWN_CLI_TOOLS, optionally
-# env-var-prefixed. Subcommand-agnostic — any subcommand of a known CLI counts.
+# Match `segment` (already whitespace-stripped) against a known-CLI invocation; return
+# the re.Match (with .group('tool')/.group('sub'), sub may be None) or None.
+def match_known_cli_segment(segment: str):
+    return _KNOWN_CLI_RE.match(segment)
+
+# True if `segment` invokes one of KNOWN_CLI_TOOLS, optionally env-var-prefixed.
 def is_known_cli_segment(segment: str) -> bool:
-    return bool(_KNOWN_CLI_RE.match(segment))
+    return match_known_cli_segment(segment) is not None
 
-# True if `segment` is a `cd` or `test`/`[ ... ]` guard — allowed alongside known-CLI segments
-# without itself being a CLI call.
-def is_guard_segment(segment: str) -> bool:
-    return bool(_GUARD_RE.match(segment))
-
-# True if `segment` is a pure `echo`/`printf` call — output-only, never filters or truncates.
-def is_echo_segment(segment: str) -> bool:
-    return bool(_ECHO_RE.match(segment))
-
-# True if `segment` is for/while loop scaffolding: a `for ...`/`while ...` header, a bare
-# `do`/`done`, or `do <segment>` where <segment> is itself a known-CLI call, guard, or echo/printf.
-def is_loop_scaffold_segment(segment: str) -> bool:
-    if _LOOP_HEADER_RE.match(segment) or _DO_DONE_RE.match(segment):
-        return True
-    match = _DO_PREFIX_RE.match(segment)
-    if not match:
+# True if `segment` invokes a PROTECTED subcommand of a known CLI (or the CLI itself
+# when every subcommand is protected). False for a non-CLI segment or an unprotected
+# subcommand of a known CLI.
+def is_protected_segment(segment: str) -> bool:
+    match = match_known_cli_segment(segment)
+    if match is None:
         return False
-    inner = match.group(1).strip()
-    return is_known_cli_segment(inner) or is_guard_segment(inner) or is_echo_segment(inner)
+    protected = PROTECTED_SUBCOMMANDS[match.group('tool')]
+    if protected is None:
+        return True
+    return match.group('sub') in protected
 
-# True if `segment` needs no further policing in a chained-CLI hook: a known-CLI call, a
-# cd/test guard, a pure echo/printf, or for/while/do/done loop scaffolding around one of those.
-def is_allowed_chain_segment(segment: str) -> bool:
-    return (is_known_cli_segment(segment) or is_guard_segment(segment)
-            or is_echo_segment(segment) or is_loop_scaffold_segment(segment))
+# Human-readable "<tool> <subcommand>" naming for block messages — drops the
+# subcommand when absent or when it is actually a flag (`--klasse`, `--help`), since
+# those are not a real subcommand name.
+def tool_sub_name(tool: str, sub) -> str:
+    if sub and not sub.startswith('-'):
+        return f"{tool} {sub}"
+    return tool
