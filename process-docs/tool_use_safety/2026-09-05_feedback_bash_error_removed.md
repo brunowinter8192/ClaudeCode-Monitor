@@ -11,13 +11,19 @@ failed Bash call. CC 2.1.258 changed how that message arrives on the wire: it no
 blanket nuke that strips CC's own noise messages. The hook's output never reached the model from
 that CC version onward.
 
-Two paths existed: exempt the message from the strip (a new preserve-guard, mirroring the
-existing mid-turn-user-message and Read-truncation-notice guards in `_apply_role_system_strip`),
-or remove the hook. The user decided on removal rather than adding another exemption — the hook's
-own message was fixed-text retry discipline, not user-authored content, and the strip pipeline
-already has several narrowly-scoped preserve-guards; adding a fourth for a hook whose value was
-never measured against providing that discipline through the system prompt instead was judged
-not worth the additional exemption surface.
+The user decided on removal rather than exempting the message from the strip, for a reason
+independent of the delivery break: the hook's trigger is the Bash call's exit code, and under
+the `;`-chaining rule (`shared-rules/global/tool-use.md`) that code is only the LAST segment's.
+A chain whose middle segment failed comes back green and never fires the hook; a chain whose
+last segment is a harmless "no" (grep with no match, a probe on a missing path) comes back red
+and fires it for nothing. The session's own log showed this: three fires on 2026-09-05, all on
+multi-segment probes with a guessed path, none on a genuine retry-worthy failure. With the exit
+code judged uninformative for the model — each segment is judged by its output, per that rule —
+a hook keyed on it had no reliable signal left to act on, regardless of whether its message
+reached the model. A Reddit survey the same day (r/ClaudeCode, r/codex, r/ClaudeAI) found no
+discussion of post-failure feedback hooks at all; the only exit-code threads were a `/tmp`-full
+case (exit 1 with no output, the one case where the code is the sole signal) and a destructive
+command hidden at the end of a long `&&` chain.
 
 ## What changed
 
