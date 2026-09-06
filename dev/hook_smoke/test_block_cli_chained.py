@@ -35,8 +35,12 @@ CASES = [
      "gh-cli list_issues owner repo 2>&1", 2),
     ("worker-cli capture redirect BLOCK",
      "worker-cli capture janitor > /tmp/out.txt", 2),
-    ("websearch scrape_url redirect BLOCK",
-     "websearch scrape_url URL > /tmp/f.md 2>&1", 2),
+    ("websearch scrape_url_chromium redirect BLOCK (2026-09-06: table used to name a "
+     "stale, non-existent subcommand `scrape_url` — this exact subcommand text is the "
+     "real one, cli.py has carried it for a while)",
+     "websearch scrape_url_chromium URL > /tmp/f.md 2>&1", 2),
+    ("websearch search_web redirect PASS (deliberately unprotected, real subcommand)",
+     'websearch search_web "some query" > /tmp/out.txt', 0),
     ("duallog sessions redirect BLOCK (every subcommand protected)",
      "duallog sessions > /tmp/out.txt", 2),
     ("linkedin get_messages redirect BLOCK (every subcommand protected)",
@@ -65,6 +69,31 @@ CASES = [
      "rag-cli index --collection x > /tmp/a.log 2>&1; tail -5 /tmp/b.log", 0),
     ("redirect with no same-call readback stays allowed PASS",
      "rag-cli index --collection x > /tmp/a.log 2>&1; git status --short", 0),
+
+    # --- interpreter-path bypass (2026-09-06): the wrapper name isn't the only way in;
+    # `cd <project-dir> && ./venv/bin/python cli.py <sub>` never matched `_KNOWN_CLI_RE`
+    # (which anchors on the WRAPPER name), so a protected subcommand escaped every rule
+    # by taking this path — the real incident: a main agent ran the first case 3 times ---
+    ("interpreter-path websearch scrape_url_chromium redirect BLOCK (the real incident, "
+     "verbatim shape)",
+     'cd /Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/websearch && '
+     './venv/bin/python cli.py scrape_url_chromium "https://example.com" '
+     '> /tmp/out.txt 2>&1', 2),
+    ("interpreter-path websearch scrape_url_chromium piped BLOCK (rule 1 applies to the "
+     "interpreter form too)",
+     'cd /Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/websearch && '
+     './venv/bin/python cli.py scrape_url_chromium "https://example.com" | head -40', 2),
+    ("interpreter-path gh-cli get_issue redirect BLOCK (mechanism generalizes beyond "
+     "websearch — different tool, `.venv` not `venv`, absolute path, no leading cd)",
+     '/Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/gh-cli/.venv/bin/python '
+     '/Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/gh-cli/cli.py '
+     'get_issue owner repo 5 > /tmp/out.txt', 2),
+    ("interpreter-path websearch search_web (unprotected subcommand) redirect PASS",
+     'cd /Users/brunowinter2000/Documents/ai/Meta/ClaudeCode/cli/websearch && '
+     './venv/bin/python cli.py search_web "some query" > /tmp/out.txt', 0),
+    ("interpreter-path with NO known project-dir marker PASS (a random project's own "
+     "cli.py is not mistaken for one of the 5 policed CLIs)",
+     'cd /tmp/some-other-project && ./venv/bin/python cli.py foo > /tmp/out.txt', 0),
 
     # --- allowed: chaining with ; or && is fine, for any CLI, with any other command ---
     ("mkdir before rag-cli index PASS (no allowlist of chain segments)",
