@@ -7,7 +7,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from _shell_strip import _strip_non_shell_active
 from _fire_log import log_fire
-from _known_cli import match_known_cli_segment, is_protected_segment, tool_sub_name
+from _known_cli import resolve_cli_segment, is_protected_segment, tool_sub_name
 
 # Chain-level separators: && || ; newline and space-bounded & (background). Deliberately
 # EXCLUDES `|` — chaining with any of these is always fine, for any CLI, with any other
@@ -61,12 +61,12 @@ def block_cli_chained_workflow() -> None:
         sys.exit(0)
     stripped = _strip_non_shell_active(command)
     chain_segments = _build_chain_segments(stripped, command)
-    if not any(_segment_stages_with_cli(seg) for seg in chain_segments):
+    if not any(_segment_stages_with_cli(seg, stripped) for seg in chain_segments):
         sys.exit(0)
 
-    _check_rule1_pipe(chain_segments, command, session_id)
-    _check_rule2_redirect(chain_segments, command, session_id)
-    _check_rule3_readback(chain_segments, command, session_id)
+    _check_rule1_pipe(chain_segments, stripped, command, session_id)
+    _check_rule2_redirect(chain_segments, stripped, command, session_id)
+    _check_rule3_readback(chain_segments, stripped, command, session_id)
     sys.exit(0)
 
 
@@ -123,35 +123,37 @@ def _build_chain_segments(stripped: str, original: str) -> list:
         })
     return segments
 
-# True if any pipe stage in this chain segment is a known-CLI invocation
-def _segment_stages_with_cli(segment: dict) -> bool:
+# True if any pipe stage in this chain segment is a known-CLI invocation, by wrapper
+# name or by the bare-interpreter `cli.py` form (resolved against `command_context`,
+# the whole shell-stripped Bash command).
+def _segment_stages_with_cli(segment: dict, command_context: str) -> bool:
     for s, e in segment['stage_spans']:
-        if match_known_cli_segment(segment['stripped'][s:e]) is not None:
+        if resolve_cli_segment(segment['stripped'][s:e], command_context) is not None:
             return True
     return False
 
 # Rule 1: a known-CLI stage that is NOT the last stage of its pipe run — its output
 # gets piped into something. Blocks with the WHOLE chain segment as evidence.
-def _check_rule1_pipe(chain_segments: list, command: str, session_id) -> None:
+def _check_rule1_pipe(chain_segments: list, command_context: str, command: str, session_id) -> None:
     for segment in chain_segments:
         stages = segment['stage_spans']
         for i, (s, e) in enumerate(stages[:-1]):
             stage_stripped = segment['stripped'][s:e]
-            if match_known_cli_segment(stage_stripped) is not None:
+            if resolve_cli_segment(stage_stripped, command_context) is not None:
                 blocked = segment['original'].strip()
                 _block(_RULE1_MESSAGE.format(segment=blocked), command, session_id)
 
 # Rule 2: a known-CLI stage in the LAST position of its pipe run (no pipe follows it)
 # that invokes a PROTECTED subcommand and carries a redirect operator.
-def _check_rule2_redirect(chain_segments: list, command: str, session_id) -> None:
+def _check_rule2_redirect(chain_segments: list, command_context: str, command: str, session_id) -> None:
     for segment in chain_segments:
         stages = segment['stage_spans']
         if not stages:
             continue
         s, e = stages[-1]
         stage_stripped = segment['stripped'][s:e]
-        match = match_known_cli_segment(stage_stripped)
-        if match is None or not is_protected_segment(stage_stripped):
+        match = resolve_cli_segment(stage_stripped, command_context)
+        if not is_protected_segment(match):
             continue
         if _REDIRECT_RE.search(stage_stripped):
             blocked = segment['original'][s:e].strip()
@@ -162,7 +164,7 @@ def _check_rule2_redirect(chain_segments: list, command: str, session_id) -> Non
 # known-CLI stage's own output redirect wrote to (protected or not — an unprotected
 # subcommand's redirect stays allowed alone, but reading it back in the same call is
 # the truncation risk this rule targets).
-def _check_rule3_readback(chain_segments: list, command: str, session_id) -> None:
+def _check_rule3_readback(chain_segments: list, command_context: str, command: str, session_id) -> None:
     redirected_files = set()
     for segment in chain_segments:
         stages = segment['stage_spans']
@@ -170,7 +172,7 @@ def _check_rule3_readback(chain_segments: list, command: str, session_id) -> Non
             continue
         s, e = stages[-1]
         stage_stripped = segment['stripped'][s:e]
-        if match_known_cli_segment(stage_stripped) is None:
+        if resolve_cli_segment(stage_stripped, command_context) is None:
             continue
         target_match = _REDIRECT_TARGET_RE.search(stage_stripped)
         if target_match:
